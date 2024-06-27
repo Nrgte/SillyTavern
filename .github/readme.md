@@ -1,5 +1,21 @@
 <a name="readme-top"></a>
 
+## About this fork
+
+This fork is based on SillyTavern 1.2.1 and adds voice controls to alltalk TTS.
+This fork only works for normal chats and group chats via web console.
+Alltalk TTS is the only working TTS in this fork. If you use any other TTS, please use the base ST version.
+
+## Install instructions
+
+1. Install SillyTavern normally according to the base install instructions below.
+2. After you've completed the base installation, go into the "public" folder and create a symbolic link called "alltalk_out" and point it to your alltalk TTS output directory.
+
+```Windows
+mklink /D alltalk_out "PATH_TO_YOUR_ALLTALK_TTS_OUTPUT_FOLDER"
+```
+
+
 English | [中文](readme-zh_cn.md) | [日本語](readme-ja_jp.md) | [Русский](readme-ru_ru.md)
 
 ![][cover]
