@@ -752,6 +752,7 @@ class AllTalkTtsProvider {
             } else {
                 // For standard method
                 const outputUrl = await this.fetchTtsGeneration(inputText, voiceId);
+                console.log("TTS Output URL = ", outputUrl);
                 const audioResponse = await fetch(outputUrl);
                 if (!audioResponse.ok) {
                     throw new Error(`HTTP ${audioResponse.status}: Failed to fetch audio data`);
@@ -764,6 +765,11 @@ class AllTalkTtsProvider {
         }
     }
 
+    async getTtsStreamingUrl(inputText, voiceId){
+        console.log("TTS Generation for ",inputText);
+         const outputUrl = await this.fetchTtsGeneration(inputText, voiceId);
+         return outputUrl;
+    }
 
     //####################//
     //  Generate Standard //

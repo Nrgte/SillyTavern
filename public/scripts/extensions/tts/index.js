@@ -428,8 +428,10 @@ async function processTtsQueue() {
         return;
     }
 
-    console.debug('New message found, running TTS');
     currentTtsJob = ttsJobQueue.shift();
+
+    return;
+    console.debug('New message found, running TTS');    
     let text = extension_settings.tts.narrate_translated_only ? (currentTtsJob?.extra?.display_text || currentTtsJob.mes) : currentTtsJob.mes;
 
     // Substitute macros
@@ -635,6 +637,7 @@ function onPassAsterisksClick() {
 
 async function loadTtsProvider(provider) {
     //Clear the current config and add new config
+    console.log("extension settings = ",extension_settings.tts);
     $('#tts_provider_settings').html('');
 
     if (!provider) {
@@ -669,6 +672,11 @@ export function saveTtsProviderSettings() {
     updateVoiceMap();
     saveSettingsDebounced();
     console.info(`Saved settings ${ttsProviderName} ${JSON.stringify(ttsProvider.settings)}`);
+}
+
+export async function getAlltalkTtsUrl (inputText, char){
+    console.log("TTS Provider = ", ttsProviderName);
+    return await ttsProvider.getTtsStreamingUrl(inputText, voiceMap[char])
 }
 
 
@@ -977,6 +985,8 @@ export async function initVoiceMap(unrestricted = false) {
     updateVoiceMap();
 }
 
+
+
 $(document).ready(function () {
     function addExtensionControls() {
         const settingsHtml = `
@@ -1088,6 +1098,10 @@ $(document).ready(function () {
         $(document).on('click', '.mes_narrate', onNarrateOneMessage);
     }
     addExtensionControls(); // No init dependencies
+});
+
+export function initTts(){
+
     loadSettings(); // Depends on Extension Controls and loadTtsProvider
     loadTtsProvider(extension_settings.tts.currentProvider); // No dependencies
     addAudioControl(); // Depends on Extension Controls
@@ -1131,4 +1145,4 @@ $(document).ready(function () {
     }));
 
     document.body.appendChild(audioElement);
-});
+}

@@ -236,6 +236,9 @@ import { ARGUMENT_TYPE, SlashCommandArgument } from './scripts/slash-commands/Sl
 import { SlashCommandBrowser } from './scripts/slash-commands/SlashCommandBrowser.js';
 import { initCustomSelectedSamplers, validateDisabledSamplers } from './scripts/samplerSelect.js';
 
+import { initTts, getAlltalkTtsUrl } from './scripts/extensions/tts/index.js'
+
+
 //exporting functions and vars for mods
 export {
     user_avatar,
@@ -889,6 +892,7 @@ async function firstLoadInit() {
     initLogprobs();
     doDailyExtensionUpdatesCheck();
     hideLoader();
+    initTts();
     await eventSource.emit(event_types.APP_READY);
 }
 
@@ -2127,6 +2131,13 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
     } else if (mes['is_user'] && mes['force_avatar']) {
         // Special case for persona images.
         avatarImg = mes['force_avatar'];
+    }
+
+    if (mes['tts_uri']) {
+        let autoplay = "";
+        if (chat.indexOf(mes) === chat.length - 1)
+            autoplay = "autoplay";
+        messageText = '<audio controls="" src="' + mes.tts_uri + '" ' + autoplay + '></audio><br>' + messageText;
     }
 
     messageText = messageFormatting(
@@ -4178,7 +4189,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         }
 
         //const getData = await response.json();
-        let getMessage = extractMessageFromData(data);
+        let getMessage = extractMessageFromData(data);    
         let title = extractTitleFromData(data);
         kobold_horde_model = title;
 
@@ -5248,7 +5259,14 @@ async function saveReply(type, getMessage, fromStreaming, title, swipes) {
 
     } else {
         console.debug('entering chat update routine for non-swipe post');
+        let ttsUrl = await getAlltalkTtsUrl(getMessage, name2);
+        console.log("New Message blubb: ", getMessage);
+        let newTtsUrl = ttsUrl.replace(/.*st_output/, "alltalk_out/st_output");
+        console.log("Message voice URL = ", newTtsUrl);
+        //getMessage = '<audio controls="" src="' + newTtsUrl + '" autoplay></audio><br>' + getMessage;
+
         chat[chat.length] = {};
+        chat[chat.length - 1]['tts_uri'] = newTtsUrl;
         chat[chat.length - 1]['extra'] = {};
         chat[chat.length - 1]['name'] = name2;
         chat[chat.length - 1]['is_user'] = false;
