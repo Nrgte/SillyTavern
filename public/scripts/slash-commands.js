@@ -67,6 +67,8 @@ export {
     executeSlashCommands, executeSlashCommandsWithOptions, getSlashCommandsHelp, registerSlashCommand,
 };
 
+import { getAlltalkTtsUrl } from './extensions/tts/index.js'
+
 export const parser = new SlashCommandParser();
 /**
  * @deprecated Use SlashCommandParser.addCommandObject() instead
@@ -2446,6 +2448,11 @@ export async function sendMessageAs(args, text) {
         original_avatar = default_avatar;
     }
 
+    console.debug('Adding new message for : ', name);
+    let ttsUrl = await getAlltalkTtsUrl(mesText, name);
+    let newTtsUrl = ttsUrl.replace(/.*st_output/, "alltalk_out/st_output");
+    console.log("Message voice URL = ", newTtsUrl);   
+
     const message = {
         name: name,
         is_user: false,
@@ -2454,6 +2461,7 @@ export async function sendMessageAs(args, text) {
         mes: substituteParams(mesText),
         force_avatar: force_avatar,
         original_avatar: original_avatar,
+        tts_uri: newTtsUrl,
         extra: {
             bias: bias.trim().length ? bias : null,
             gen_id: Date.now(),
@@ -2469,7 +2477,7 @@ export async function sendMessageAs(args, text) {
         await eventSource.emit(event_types.MESSAGE_RECEIVED, insertAt);
         await reloadCurrentChat();
         await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, insertAt);
-    } else {
+    } else {     
         chat.push(message);
         await eventSource.emit(event_types.MESSAGE_RECEIVED, (chat.length - 1));
         addOneMessage(message);

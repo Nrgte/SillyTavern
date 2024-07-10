@@ -2432,7 +2432,7 @@ export function getStoppingStrings(isImpersonate, isContinue) {
  * @returns
  */
 export async function generateQuietPrompt(quiet_prompt, quietToLoud, skipWIAN, quietImage = null, quietName = null, responseLength = null) {
-    console.log('got into genQuietPrompt');
+    console.log('got into genQuietPrompt. quietToLoud = ', quietToLoud);
     const responseLengthCustomized = typeof responseLength === 'number' && responseLength > 0;
     let originalResponseLength = -1;
     try {
@@ -3125,7 +3125,7 @@ function restoreResponseLength(api, responseLength) {
  * @typedef {{automatic_trigger?: boolean, force_name2?: boolean, quiet_prompt?: string, quietToLoud?: boolean, skipWIAN?: boolean, force_chid?: number, signal?: AbortSignal, quietImage?: string, maxLoops?: number, quietName?: string }} GenerateOptions
  */
 export async function Generate(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, maxLoops, quietName } = {}, dryRun = false) {
-    console.log('Generate entered');
+    console.log('Generate entered. Generating : ', type);
     eventSource.emit(event_types.GENERATION_STARTED, type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, maxLoops }, dryRun);
     setGenerationProgress(0);
     generation_started = new Date();
@@ -4170,6 +4170,9 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     return finishGenerating().then(onSuccess, onError);
 
     async function onSuccess(data) {
+
+        console.debug(`OnSuccess 1`);
+
         if (!data) return;
 
         if (data?.fromStream) {
@@ -4205,17 +4208,20 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         const displayIncomplete = type === 'quiet' && !quietToLoud;
         getMessage = cleanUpMessage(getMessage, isImpersonate, isContinue, displayIncomplete);
 
-        if (getMessage.length > 0 || data.allowEmptyResponse) {
+        if (getMessage.length > 0 || data.allowEmptyResponse) {            
             if (isImpersonate) {
+                console.debug(`OnSuccess impersonate`);
                 $('#send_textarea').val(getMessage)[0].dispatchEvent(new Event('input', { bubbles: true }));
                 generatedPromptCache = '';
                 await eventSource.emit(event_types.IMPERSONATE_READY, getMessage);
             }
             else if (type == 'quiet') {
+                console.debug(`OnSuccess quiet`);
                 unblockGeneration(type);
                 return getMessage;
             }
             else {
+                console.debug(`OnSuccess 3`);
                 // Without streaming we'll be having a full message on continuation. Treat it as a last chunk.
                 if (originalType !== 'continue') {
                     ({ type, getMessage } = await saveReply(type, getMessage, false, title, swipes));
@@ -4548,6 +4554,7 @@ export function removeMacros(str) {
  * @returns {Promise<void>} A promise that resolves when the message is inserted.
  */
 export async function sendMessageAsUser(messageText, messageBias, insertAt = null, compact = false, name = name1, avatar = user_avatar) {
+    console.debug("sendMessageAsUser : ", name);
     messageText = getRegexedString(messageText, regex_placement.USER_INPUT);
 
     const message = {
@@ -5188,6 +5195,9 @@ export function cleanUpMessage(getMessage, isImpersonate, isContinue, displayInc
 }
 
 async function saveReply(type, getMessage, fromStreaming, title, swipes) {
+
+    console.log("Adding a new reply");
+
     if (type != 'append' && type != 'continue' && type != 'appendFinal' && chat.length && (chat[chat.length - 1]['swipe_id'] === undefined ||
         chat[chat.length - 1]['is_user'])) {
         type = 'normal';
@@ -5202,6 +5212,7 @@ async function saveReply(type, getMessage, fromStreaming, title, swipes) {
     const img = extractImageFromMessage(getMessage);
     getMessage = img.getMessage;
     if (type === 'swipe') {
+        console.debug('Adding swipe message.');
         oldMessage = chat[chat.length - 1]['mes'];
         chat[chat.length - 1]['swipes'].length++;
         if (chat[chat.length - 1]['swipe_id'] === chat[chat.length - 1]['swipes'].length - 1) {
