@@ -11,6 +11,7 @@ Alltalk TTS is the only working TTS in this fork. If you use any other TTS, plea
 1. Install SillyTavern normally according to the base install instructions below.
 2. After you've completed the base installation, go into the "public" folder and create a symbolic link called "alltalk_out" and point it to your alltalk TTS output directory.
 
+Windows:
 ```Windows
 mklink /D alltalk_out "PATH_TO_YOUR_ALLTALK_TTS_OUTPUT_FOLDER"
 ```
