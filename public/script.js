@@ -2432,9 +2432,12 @@ export function getStoppingStrings(isImpersonate, isContinue) {
  * @returns
  */
 export async function generateQuietPrompt(quiet_prompt, quietToLoud, skipWIAN, quietImage = null, quietName = null, responseLength = null) {
-    console.log('got into genQuietPrompt. quietToLoud = ', quietToLoud);
+    console.debug('got into genQuietPrompt. quietName = ', quietName);
     const responseLengthCustomized = typeof responseLength === 'number' && responseLength > 0;
     let originalResponseLength = -1;
+    let forceCharacterId;
+    if (characters.findIndex(c => c.name == quietName) >= 0)
+        forceCharacterId = characters.findIndex(c => c.name == quietName);
     try {
         /** @type {GenerateOptions} */
         const options = {
@@ -2442,6 +2445,7 @@ export async function generateQuietPrompt(quiet_prompt, quietToLoud, skipWIAN, q
             quietToLoud,
             skipWIAN: skipWIAN,
             force_name2: true,
+            force_chid: forceCharacterId,
             quietImage: quietImage,
             quietName: quietName,
         };
@@ -3125,7 +3129,7 @@ function restoreResponseLength(api, responseLength) {
  * @typedef {{automatic_trigger?: boolean, force_name2?: boolean, quiet_prompt?: string, quietToLoud?: boolean, skipWIAN?: boolean, force_chid?: number, signal?: AbortSignal, quietImage?: string, maxLoops?: number, quietName?: string }} GenerateOptions
  */
 export async function Generate(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, maxLoops, quietName } = {}, dryRun = false) {
-    console.log('Generate entered. Generating : ', type);
+    console.log('Generate entered. Generating for : ', { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, maxLoops, quietName } );
     eventSource.emit(event_types.GENERATION_STARTED, type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, maxLoops }, dryRun);
     setGenerationProgress(0);
     generation_started = new Date();
@@ -4192,7 +4196,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         }
 
         //const getData = await response.json();
-        let getMessage = extractMessageFromData(data);    
+        let getMessage = extractMessageFromData(data);   
         let title = extractTitleFromData(data);
         kobold_horde_model = title;
 
