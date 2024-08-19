@@ -14,7 +14,7 @@ import {
     saveChatConditional,
     saveItemizedPrompts,
 } from '../script.js';
-import { humanizedDateTime } from './RossAscends-mods.js';
+import { humanizedDateTime, getMessageTimeStamp } from './RossAscends-mods.js';
 import {
     getGroupPastChats,
     group_activation_strategy,
@@ -24,6 +24,7 @@ import {
     saveGroupBookmarkChat,
     selected_group,
 } from './group-chats.js';
+import { Popup } from './popup.js';
 import { createTagMapFromList } from './tags.js';
 
 import {
@@ -239,8 +240,7 @@ async function convertSoloToGroupChat() {
         return;
     }
 
-    const confirm = await callPopup('Are you sure you want to convert this chat to a group chat?', 'confirm');
-
+    const confirm = await Popup.show.confirm('Convert to group chat', 'Are you sure you want to convert this chat to a group chat?<br />This cannot be reverted.');
     if (!confirm) {
         return;
     }
@@ -297,7 +297,7 @@ async function convertSoloToGroupChat() {
     if (groupChat.length === 0) {
         const newMessage = {
             ...system_messages[system_message_types.GROUP],
-            send_date: humanizedDateTime(),
+            send_date: getMessageTimeStamp(),
             extra: { type: system_message_types.GROUP },
         };
         groupChat.push(newMessage);
@@ -336,6 +336,7 @@ async function convertSoloToGroupChat() {
 
     if (!createChatResponse.ok) {
         console.error('Group chat creation unsuccessful');
+        toastr.error('Group chat creation unsuccessful');
         return;
     }
 

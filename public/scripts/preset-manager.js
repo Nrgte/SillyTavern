@@ -1,6 +1,5 @@
 import {
     amount_gen,
-    callPopup,
     characters,
     eventSource,
     event_types,
@@ -19,9 +18,12 @@ import {
 import { groups, selected_group } from './group-chats.js';
 import { instruct_presets } from './instruct-mode.js';
 import { kai_settings } from './kai-settings.js';
+import { Popup } from './popup.js';
 import { context_presets, getContextSettings, power_user } from './power-user.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument } from './slash-commands/SlashCommandArgument.js';
+import { enumIcons } from './slash-commands/SlashCommandCommonEnumsProvider.js';
+import { SlashCommandEnumValue, enumTypes } from './slash-commands/SlashCommandEnumValue.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import {
     textgenerationwebui_preset_names,
@@ -140,7 +142,10 @@ class PresetManager {
      * @param {string} value Preset option value
      */
     selectPreset(value) {
-        $(this.select).find(`option[value=${value}]`).prop('selected', true);
+        const option = $(this.select).filter(function() {
+            return $(this).val() === value;
+        });
+        option.prop('selected', true);
         $(this.select).val(value).trigger('change');
     }
 
@@ -160,11 +165,8 @@ class PresetManager {
 
     async savePresetAs() {
         const inputValue = this.getSelectedPresetName();
-        const popupText = `
-            <h3>Preset name:</h3>
-            ${!this.isNonGenericApi() ? '<h4>Hint: Use a character/group name to bind preset to a specific chat.</h4>' : ''}`;
-        const name = await callPopup(popupText, 'input', inputValue);
-
+        const popupText = !this.isNonGenericApi() ? '<h4>Hint: Use a character/group name to bind preset to a specific chat.</h4>' : '';
+        const name = await Popup.show.input('Preset name:', popupText, inputValue);
         if (!name) {
             console.log('Preset name not provided');
             return;
@@ -177,17 +179,19 @@ class PresetManager {
     async savePreset(name, settings) {
         const preset = settings ?? this.getPresetSettings(name);
 
-        const res = await fetch('/api/presets/save', {
+        const response = await fetch('/api/presets/save', {
             method: 'POST',
             headers: getRequestHeaders(),
             body: JSON.stringify({ preset, name, apiId: this.apiId }),
         });
 
-        if (!res.ok) {
-            toastr.error('Failed to save preset');
+        if (!response.ok) {
+            toastr.error('Check the server connection and reload the page to prevent data loss.', 'Preset could not be saved');
+            console.error('Preset could not be saved', response);
+            throw new Error('Preset could not be saved');
         }
 
-        const data = await res.json();
+        const data = await response.json();
         name = data.name;
 
         this.updateList(name, preset);
@@ -297,6 +301,9 @@ class PresetManager {
 
         const filteredKeys = [
             'preset',
+            'streaming',
+            'truncation_length',
+            'n',
             'streaming_url',
             'stopping_strings',
             'can_use_tokenization',
@@ -322,8 +329,10 @@ class PresetManager {
             'infermaticai_model',
             'dreamgen_model',
             'openrouter_model',
+            'featherless_model',
             'max_tokens_second',
             'openrouter_providers',
+            'openrouter_allow_fallbacks',
         ];
         const settings = Object.assign({}, getSettingsByApiId(this.apiId));
 
@@ -364,7 +373,7 @@ class PresetManager {
         if (Object.keys(preset_names).length) {
             const nextPresetName = Object.keys(preset_names)[0];
             const newValue = preset_names[nextPresetName];
-            $(this.select).find(`option[value="${newValue}"]`).attr('selected', true);
+            $(this.select).find(`option[value="${newValue}"]`).attr('selected', 'true');
             $(this.select).trigger('change');
         }
 
@@ -479,11 +488,12 @@ export async function initPresetManager() {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({ name: 'preset',
         callback: presetCommandCallback,
         returns: 'current preset',
-        namedArgumentList: [],
         unnamedArgumentList: [
-            new SlashCommandArgument(
-                'name', [ARGUMENT_TYPE.STRING], false,
-            ),
+            SlashCommandArgument.fromProps({
+                description: 'name',
+                typeList: [ARGUMENT_TYPE.STRING],
+                enumProvider: () => getPresetManager().getAllPresets().map(preset => new SlashCommandEnumValue(preset, null, enumTypes.enum, enumIcons.preset)),
+            }),
         ],
         helpString: `
             <div>
@@ -588,8 +598,7 @@ export async function initPresetManager() {
             return;
         }
 
-        const confirm = await callPopup('Delete the preset? This action is irreversible and your current settings will be overwritten.', 'confirm');
-
+        const confirm = await Popup.show.confirm('Delete the preset?', 'This action is irreversible and your current settings will be overwritten.');
         if (!confirm) {
             return;
         }
@@ -632,8 +641,7 @@ export async function initPresetManager() {
                 return;
             }
 
-            const confirm = await callPopup('<h3>Are you sure?</h3>Resetting a <b>default preset</b> will restore the default settings.', 'confirm');
-
+            const confirm = await Popup.show.confirm('Are you sure?', 'Resetting a <b>default preset</b> will restore the default settings.');
             if (!confirm) {
                 return;
             }
@@ -644,8 +652,7 @@ export async function initPresetManager() {
             presetManager.selectPreset(option);
             toastr.success('Default preset restored');
         } else {
-            const confirm = await callPopup('<h3>Are you sure?</h3>Resetting a <b>custom preset</b> will restore to the last saved state.', 'confirm');
-
+            const confirm = await Popup.show.confirm('Are you sure?', 'Resetting a <b>custom preset</b> will restore to the last saved state.');
             if (!confirm) {
                 return;
             }

@@ -11,7 +11,7 @@ import {
     generateQuietPrompt,
     is_send_press,
     saveSettingsDebounced,
-    substituteParams,
+    substituteParamsExtended,
     generateRaw,
     getMaxContextSize,
 } from '../../../script.js';
@@ -23,7 +23,7 @@ import { debounce_timeout } from '../../constants.js';
 import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
 import { SlashCommand } from '../../slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '../../slash-commands/SlashCommandArgument.js';
-import { resolveVariable } from '../../variables.js';
+import { MacrosParser } from '../../macros.js';
 export { MODULE_NAME };
 
 const MODULE_NAME = '1_memory';
@@ -43,8 +43,7 @@ const formatMemoryValue = function (value) {
     value = value.trim();
 
     if (extension_settings.memory.template) {
-        let result = extension_settings.memory.template.replace(/{{summary}}/i, value);
-        return substituteParams(result);
+        return substituteParamsExtended(extension_settings.memory.template, { summary: value });
     } else {
         return `Summary: ${value}`;
     }
@@ -447,7 +446,7 @@ async function summarizeCallback(args, text) {
     }
 
     const source = args.source || extension_settings.memory.source;
-    const prompt = substituteParams((resolveVariable(args.prompt) || extension_settings.memory.prompt)?.replace(/{{words}}/gi, extension_settings.memory.promptWords));
+    const prompt = substituteParamsExtended((args.prompt || extension_settings.memory.prompt), { words: extension_settings.memory.promptWords });
 
     try {
         switch (source) {
@@ -534,7 +533,7 @@ async function summarizeChatMain(context, force, skipWIAN) {
     }
 
     console.log('Summarizing chat, messages since last summary: ' + messagesSinceLastSummary, 'words since last summary: ' + wordsSinceLastSummary);
-    const prompt = extension_settings.memory.prompt?.replace(/{{words}}/gi, extension_settings.memory.promptWords);
+    const prompt = substituteParamsExtended(extension_settings.memory.prompt, { words: extension_settings.memory.promptWords });
 
     if (!prompt) {
         console.debug('Summarization prompt is empty. Skipping summarization.');
@@ -804,7 +803,11 @@ function setMemoryContext(value, saveToMessage, index = null) {
     const context = getContext();
     context.setExtensionPrompt(MODULE_NAME, formatMemoryValue(value), extension_settings.memory.position, extension_settings.memory.depth, false, extension_settings.memory.role);
     $('#memory_contents').val(value);
-    console.log('Summary set to: ' + value, 'Position: ' + extension_settings.memory.position, 'Depth: ' + extension_settings.memory.depth, 'Role: ' + extension_settings.memory.role);
+
+    const summaryLog = value
+        ? `Summary set to: ${value}. Position: ${extension_settings.memory.position}. Depth: ${extension_settings.memory.depth}. Role: ${extension_settings.memory.role}`
+        : 'Summary has no content';
+    console.debug(summaryLog);
 
     if (saveToMessage && context.chat.length) {
         const idx = index ?? context.chat.length - 2;
@@ -900,7 +903,7 @@ function setupListeners() {
 jQuery(async function () {
     async function addExtensionControls() {
         const settingsHtml = await renderExtensionTemplateAsync('memory', 'settings', { defaultSettings });
-        $('#extensions_settings2').append(settingsHtml);
+        $('#summarize_container').append(settingsHtml);
         setupListeners();
         $('#summaryExtensionPopoutButton').off('click').on('click', function (e) {
             doPopout(e);
@@ -910,7 +913,7 @@ jQuery(async function () {
 
     await addExtensionControls();
     loadSettings();
-    eventSource.on(event_types.MESSAGE_RECEIVED, onChatEvent);
+    eventSource.makeLast(event_types.CHARACTER_MESSAGE_RENDERED, onChatEvent);
     eventSource.on(event_types.MESSAGE_DELETED, onChatEvent);
     eventSource.on(event_types.MESSAGE_EDITED, onChatEvent);
     eventSource.on(event_types.MESSAGE_SWIPED, onChatEvent);
@@ -920,7 +923,12 @@ jQuery(async function () {
         callback: summarizeCallback,
         namedArgumentList: [
             new SlashCommandNamedArgument('source', 'API to use for summarization', [ARGUMENT_TYPE.STRING], false, false, '', ['main', 'extras']),
-            new SlashCommandNamedArgument('prompt', 'prompt to use for summarization', [ARGUMENT_TYPE.STRING, ARGUMENT_TYPE.VARIABLE_NAME], false, false, ''),
+            SlashCommandNamedArgument.fromProps({
+                name: 'prompt',
+                description: 'prompt to use for summarization',
+                typeList: [ARGUMENT_TYPE.STRING],
+                defaultValue: '',
+            }),
         ],
         unnamedArgumentList: [
             new SlashCommandArgument('text to summarize', [ARGUMENT_TYPE.STRING], false, false, ''),
@@ -928,4 +936,6 @@ jQuery(async function () {
         helpString: 'Summarizes the given text. If no text is provided, the current chat will be summarized. Can specify the source and the prompt to use.',
         returns: ARGUMENT_TYPE.STRING,
     }));
+
+    MacrosParser.registerMacro('summary', () => getLatestMemoryFromChat(getContext().chat));
 });

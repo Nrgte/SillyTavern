@@ -1,5 +1,5 @@
 import { saveSettings, callPopup, substituteParams, getRequestHeaders, chat_metadata, this_chid, characters, saveCharacterDebounced, menu_type, eventSource, event_types, getExtensionPromptByName, saveMetadata, getCurrentChatId, extension_prompt_roles } from '../script.js';
-import { download, debounce, initScrollHeight, resetScrollHeight, parseJsonFile, extractDataFromPng, getFileBuffer, getCharaFilename, getSortableDelay, escapeRegex, PAGINATION_TEMPLATE, navigation_option, waitUntilCondition, isTrueBoolean, setValueByPath, flashHighlight, select2ModifyOptions, getSelect2OptionId, dynamicSelect2DataViaAjax, highlightRegex, select2ChoiceClickSubscribe, isFalseBoolean, equalsIgnoreCaseAndAccents, getSanitizedFilename, checkOverwriteExistingData } from './utils.js';
+import { download, debounce, initScrollHeight, resetScrollHeight, parseJsonFile, extractDataFromPng, getFileBuffer, getCharaFilename, getSortableDelay, escapeRegex, PAGINATION_TEMPLATE, navigation_option, waitUntilCondition, isTrueBoolean, setValueByPath, flashHighlight, select2ModifyOptions, getSelect2OptionId, dynamicSelect2DataViaAjax, highlightRegex, select2ChoiceClickSubscribe, isFalseBoolean, getSanitizedFilename, checkOverwriteExistingData, getStringHash, parseStringArray, cancelDebounce } from './utils.js';
 import { extension_settings, getContext } from './extensions.js';
 import { NOTE_MODULE_NAME, metadata_keys, shouldWIAddPrompt } from './authors-note.js';
 import { isMobile } from './RossAscends-mods.js';
@@ -7,12 +7,16 @@ import { FILTER_TYPES, FilterHelper } from './filters.js';
 import { getTokenCountAsync } from './tokenizers.js';
 import { power_user } from './power-user.js';
 import { getTagKeyForEntity } from './tags.js';
-import { resolveVariable } from './variables.js';
 import { debounce_timeout } from './constants.js';
 import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from './slash-commands/SlashCommandArgument.js';
+import { SlashCommandEnumValue, enumTypes } from './slash-commands/SlashCommandEnumValue.js';
+import { commonEnumProviders, enumIcons } from './slash-commands/SlashCommandCommonEnumsProvider.js';
+import { SlashCommandClosure } from './slash-commands/SlashCommandClosure.js';
+import { callGenericPopup, Popup, POPUP_TYPE } from './popup.js';
+import { StructuredCloneMap } from './util/StructuredCloneMap.js';
 
 export {
     world_info,
@@ -20,6 +24,7 @@ export {
     world_info_depth,
     world_info_min_activations,
     world_info_min_activations_depth_max,
+    world_info_include_names,
     world_info_recursive,
     world_info_overflow_alert,
     world_info_case_sensitive,
@@ -46,6 +51,28 @@ const world_info_logic = {
     AND_ALL: 3,
 };
 
+/**
+ * @enum {number} Possible states of the WI evaluation
+ */
+const scan_state = {
+    /**
+     * The scan will be stopped.
+     */
+    NONE: 0,
+    /**
+     * Initial state.
+     */
+    INITIAL: 1,
+    /**
+     * The scan is triggered by a recursion step.
+     */
+    RECURSION: 2,
+    /**
+     * The scan is triggered by a min activations depth skew.
+     */
+    MIN_ACTIVATIONS: 3,
+};
+
 const WI_ENTRY_EDIT_TEMPLATE = $('#entry_edit_template .world_entry');
 
 let world_info = {};
@@ -57,6 +84,7 @@ let world_info_min_activations = 0; // if > 0, will continue seeking chat until 
 let world_info_min_activations_depth_max = 0; // used when (world_info_min_activations > 0)
 
 let world_info_budget = 25;
+let world_info_include_names = true;
 let world_info_recursive = false;
 let world_info_overflow_alert = false;
 let world_info_case_sensitive = false;
@@ -80,25 +108,44 @@ const METADATA_KEY = 'world_info';
 const DEFAULT_DEPTH = 4;
 const DEFAULT_WEIGHT = 100;
 const MAX_SCAN_DEPTH = 1000;
+const KNOWN_DECORATORS = ['@@activate', '@@dont_activate'];
+
+// Typedef area
+/**
+ * @typedef {object} WIScanEntry The entry that triggered the scan
+ * @property {number} [scanDepth] The depth of the scan
+ * @property {boolean} [caseSensitive] If the scan is case sensitive
+ * @property {boolean} [matchWholeWords] If the scan should match whole words
+ * @property {boolean} [useGroupScoring] If the scan should use group scoring
+ * @property {number} [uid] The UID of the entry that triggered the scan
+ * @property {string} [world] The world info book of origin of the entry
+ * @property {string[]} [key] The primary keys to scan for
+ * @property {string[]} [keysecondary] The secondary keys to scan for
+ * @property {number} [selectiveLogic] The logic to use for selective activation
+ * @property {number} [sticky] The sticky value of the entry
+ * @property {number} [cooldown] The cooldown of the entry
+ * @property {number} [delay] The delay of the entry
+ * @property {string[]} [decorators] Array of decorators for the entry
+ */
+
+/**
+ * @typedef {object} WITimedEffect Timed effect for world info
+ * @property {number} hash Hash of the entry that triggered the effect
+ * @property {number} start The chat index where the effect starts
+ * @property {number} end The chat index where the effect ends
+ * @property {boolean} protected The protected effect can't be removed if the chat does not advance
+ */
+
+/**
+ * @typedef TimedEffectType Type of timed effect
+ * @type {'sticky'|'cooldown'|'delay'}
+ */
+// End typedef area
 
 /**
  * Represents a scanning buffer for one evaluation of World Info.
  */
 class WorldInfoBuffer {
-    // Typedef area
-    /**
-     * @typedef {object} WIScanEntry The entry that triggered the scan
-     * @property {number} [scanDepth] The depth of the scan
-     * @property {boolean} [caseSensitive] If the scan is case sensitive
-     * @property {boolean} [matchWholeWords] If the scan should match whole words
-     * @property {boolean} [useGroupScoring] If the scan should use group scoring
-     * @property {number} [uid] The UID of the entry that triggered the scan
-     * @property {string[]} [key] The primary keys to scan for
-     * @property {string[]} [keysecondary] The secondary keys to scan for
-     * @property {number} [selectiveLogic] The logic to use for selective activation
-     */
-    // End typedef area
-
     /**
      * @type {object[]} Array of entries that need to be activated no matter what
      */
@@ -115,12 +162,17 @@ class WorldInfoBuffer {
     #recurseBuffer = [];
 
     /**
+     * @type {string[]} Array of strings added by prompt injections that are valid for the current scan
+     */
+    #injectBuffer = [];
+
+    /**
      * @type {number} The skew of the global scan depth. Used in "min activations"
      */
     #skew = 0;
 
     /**
-     * @type {number} The starting depth of the global scan depth. Incremented by "min activations" feature to not repeat scans. When > 0 it means a complete scan was done up to #startDepth already, and `advanceScanPosition` was called.
+     * @type {number} The starting depth of the global scan depth.
      */
     #startDepth = 0;
 
@@ -163,27 +215,33 @@ class WorldInfoBuffer {
     /**
      * Gets all messages up to the given depth + recursion buffer.
      * @param {WIScanEntry} entry The entry that triggered the scan
+     * @param {number} scanState The state of the scan
      * @returns {string} A slice of buffer until the given depth (inclusive)
      */
-    get(entry) {
+    get(entry, scanState) {
         let depth = entry.scanDepth ?? this.getDepth();
         if (depth <= this.#startDepth) {
             return '';
         }
 
         if (depth < 0) {
-            console.error(`Invalid WI scan depth ${depth}. Must be >= 0`);
+            console.error(`[WI] Invalid WI scan depth ${depth}. Must be >= 0`);
             return '';
         }
 
         if (depth > MAX_SCAN_DEPTH) {
-            console.warn(`Invalid WI scan depth ${depth}. Truncating to ${MAX_SCAN_DEPTH}`);
+            console.warn(`[WI] Invalid WI scan depth ${depth}. Truncating to ${MAX_SCAN_DEPTH}`);
             depth = MAX_SCAN_DEPTH;
         }
 
         let result = this.#depthBuffer.slice(this.#startDepth, depth).join('\n');
 
-        if (this.#recurseBuffer.length > 0) {
+        if (this.#injectBuffer.length > 0) {
+            result += '\n' + this.#injectBuffer.join('\n');
+        }
+
+        // Min activations should not include the recursion buffer
+        if (this.#recurseBuffer.length > 0 && scanState !== scan_state.MIN_ACTIVATIONS) {
             result += '\n' + this.#recurseBuffer.join('\n');
         }
 
@@ -238,10 +296,25 @@ class WorldInfoBuffer {
     }
 
     /**
-     * Increments skew and sets startDepth to previous depth.
+     * Adds an injection to the buffer.
+     * @param {string} message The injection to add
      */
-    advanceScanPosition() {
-        this.#startDepth = this.getDepth();
+    addInject(message) {
+        this.#injectBuffer.push(message);
+    }
+
+    /**
+     * Checks if the recursion buffer is not empty.
+     * @returns {boolean} Returns true if the recursion buffer is not empty, otherwise false
+     */
+    hasRecurse() {
+        return this.#recurseBuffer.length > 0;
+    }
+
+    /**
+     * Increments skew to advance the scan range.
+     */
+    advanceScan() {
         this.#skew++;
     }
 
@@ -263,19 +336,20 @@ class WorldInfoBuffer {
     }
 
     /**
-     * Clears the force activations buffer.
+     * Clean-up the external effects for entries.
      */
-    cleanExternalActivations() {
+    resetExternalEffects() {
         WorldInfoBuffer.externalActivations.splice(0, WorldInfoBuffer.externalActivations.length);
     }
 
     /**
      * Gets the match score for the given entry.
      * @param {WIScanEntry} entry Entry to check
+     * @param {number} scanState The state of the scan
      * @returns {number} The number of key activations for the given entry
      */
-    getScore(entry) {
-        const bufferState = this.get(entry);
+    getScore(entry, scanState) {
+        const bufferState = this.get(entry, scanState);
         let numberOfPrimaryKeys = 0;
         let numberOfSecondaryKeys = 0;
         let primaryScore = 0;
@@ -322,6 +396,324 @@ class WorldInfoBuffer {
     }
 }
 
+/**
+ * Represents a timed effects manager for World Info.
+ */
+class WorldInfoTimedEffects {
+    /**
+     * Cache for entry hashes. Uses weak map to avoid memory leaks.
+     * @type {WeakMap<WIScanEntry, number>}
+     */
+    #entryHashCache = new WeakMap();
+
+    /**
+     * Array of chat messages.
+     * @type {string[]}
+     */
+    #chat = [];
+
+    /**
+     * Array of entries.
+     * @type {WIScanEntry[]}
+     */
+    #entries = [];
+
+    /**
+     * Buffer for active timed effects.
+     * @type {Record<TimedEffectType, WIScanEntry[]>}
+     */
+    #buffer = {
+        'sticky': [],
+        'cooldown': [],
+        'delay': [],
+    };
+
+    /**
+     * Callbacks for effect types ending.
+     * @type {Record<TimedEffectType, (entry: WIScanEntry) => void>}
+     */
+    #onEnded = {
+        /**
+         * Callback for when a sticky entry ends.
+         * Sets an entry on cooldown immediately if it has a cooldown.
+         * @param {WIScanEntry} entry Entry that ended sticky
+         */
+        'sticky': (entry) => {
+            if (!entry.cooldown) {
+                return;
+            }
+
+            const key = this.#getEntryKey(entry);
+            const effect = this.#getEntryTimedEffect('cooldown', entry, true);
+            chat_metadata.timedWorldInfo.cooldown[key] = effect;
+            console.log(`[WI] Adding cooldown entry ${key} on ended sticky: start=${effect.start}, end=${effect.end}, protected=${effect.protected}`);
+            // Set the cooldown immediately for this evaluation
+            this.#buffer.cooldown.push(entry);
+        },
+
+        /**
+         * Callback for when a cooldown entry ends.
+         * No-op, essentially.
+         * @param {WIScanEntry} entry Entry that ended cooldown
+         */
+        'cooldown': (entry) => {
+            console.debug('[WI] Cooldown ended for entry', entry.uid);
+        },
+
+        'delay': () => { },
+    };
+
+    /**
+     * Initialize the timed effects with the given messages.
+     * @param {string[]} chat Array of chat messages
+     * @param {WIScanEntry[]} entries Array of entries
+     */
+    constructor(chat, entries) {
+        this.#chat = chat;
+        this.#entries = entries;
+        this.#ensureChatMetadata();
+    }
+
+    /**
+     * Verify correct structure of chat metadata.
+     */
+    #ensureChatMetadata() {
+        if (!chat_metadata.timedWorldInfo) {
+            chat_metadata.timedWorldInfo = {};
+        }
+
+        ['sticky', 'cooldown'].forEach(type => {
+            // Ensure the property exists and is an object
+            if (!chat_metadata.timedWorldInfo[type] || typeof chat_metadata.timedWorldInfo[type] !== 'object') {
+                chat_metadata.timedWorldInfo[type] = {};
+            }
+
+            // Clean up invalid entries
+            Object.entries(chat_metadata.timedWorldInfo[type]).forEach(([key, value]) => {
+                if (!value || typeof value !== 'object') {
+                    delete chat_metadata.timedWorldInfo[type][key];
+                }
+            });
+        });
+    }
+
+    /**
+    * Gets a hash for a WI entry.
+    * @param {WIScanEntry} entry WI entry
+    * @returns {number} String hash
+    */
+    #getEntryHash(entry) {
+        if (this.#entryHashCache.has(entry)) {
+            return this.#entryHashCache.get(entry);
+        }
+
+        const hash = getStringHash(JSON.stringify(entry));
+        this.#entryHashCache.set(entry, hash);
+        return hash;
+    }
+
+    /**
+     * Gets a unique-ish key for a WI entry.
+     * @param {WIScanEntry} entry WI entry
+     * @returns {string} String key for the entry
+     */
+    #getEntryKey(entry) {
+        return `${entry.world}.${entry.uid}`;
+    }
+
+    /**
+     * Gets a timed effect for a WI entry.
+     * @param {TimedEffectType} type Type of timed effect
+     * @param {WIScanEntry} entry WI entry
+     * @param {boolean} isProtected If the effect should be protected
+     * @returns {WITimedEffect} Timed effect for the entry
+     */
+    #getEntryTimedEffect(type, entry, isProtected) {
+        return {
+            hash: this.#getEntryHash(entry),
+            start: this.#chat.length,
+            end: this.#chat.length + Number(entry[type]),
+            protected: !!isProtected,
+        };
+    }
+
+    /**
+     * Processes entries for a given type of timed effect.
+     * @param {TimedEffectType} type Identifier for the type of timed effect
+     * @param {WIScanEntry[]} buffer Buffer to store the entries
+     * @param {(entry: WIScanEntry) => void} onEnded Callback for when a timed effect ends
+     */
+    #checkTimedEffectOfType(type, buffer, onEnded) {
+        /** @type {[string, WITimedEffect][]} */
+        const effects = Object.entries(chat_metadata.timedWorldInfo[type]);
+        for (const [key, value] of effects) {
+            console.log(`[WI] Processing ${type} entry ${key}`, value);
+            const entry = this.#entries.find(x => String(this.#getEntryHash(x)) === String(value.hash));
+
+            if (this.#chat.length <= Number(value.start) && !value.protected) {
+                console.log(`[WI] Removing ${type} entry ${key} from timedWorldInfo: chat not advanced`, value);
+                delete chat_metadata.timedWorldInfo[type][key];
+                continue;
+            }
+
+            // Missing entries (they could be from another character's lorebook)
+            if (!entry) {
+                if (this.#chat.length >= Number(value.end)) {
+                    console.log(`[WI] Removing ${type} entry from timedWorldInfo: entry not found and interval passed`, entry);
+                    delete chat_metadata.timedWorldInfo[type][key];
+                }
+                continue;
+            }
+
+            // Ignore invalid entries (not configured for timed effects)
+            if (!entry[type]) {
+                console.log(`[WI] Removing ${type} entry from timedWorldInfo: entry not ${type}`, entry);
+                delete chat_metadata.timedWorldInfo[type][key];
+                continue;
+            }
+
+            if (this.#chat.length >= Number(value.end)) {
+                console.log(`[WI] Removing ${type} entry from timedWorldInfo: ${type} interval passed`, entry);
+                delete chat_metadata.timedWorldInfo[type][key];
+                if (typeof onEnded === 'function') {
+                    onEnded(entry);
+                }
+                continue;
+            }
+
+            buffer.push(entry);
+            console.log(`[WI] Timed effect "${type}" applied to entry`, entry);
+        }
+    }
+
+    /**
+     * Processes entries for the "delay" timed effect.
+     * @param {WIScanEntry[]} buffer Buffer to store the entries
+     */
+    #checkDelayEffect(buffer) {
+        for (const entry of this.#entries) {
+            if (!entry.delay) {
+                continue;
+            }
+
+            if (this.#chat.length < entry.delay) {
+                buffer.push(entry);
+                console.log('[WI] Timed effect "delay" applied to entry', entry);
+            }
+        }
+
+    }
+
+    /**
+     * Checks for timed effects on chat messages.
+     */
+    checkTimedEffects() {
+        this.#checkTimedEffectOfType('sticky', this.#buffer.sticky, this.#onEnded.sticky.bind(this));
+        this.#checkTimedEffectOfType('cooldown', this.#buffer.cooldown, this.#onEnded.cooldown.bind(this));
+        this.#checkDelayEffect(this.#buffer.delay);
+    }
+
+    /**
+     * Gets raw timed effect metadatum for a WI entry.
+     * @param {TimedEffectType} type Type of timed effect
+     * @param {WIScanEntry} entry WI entry
+     * @returns {WITimedEffect} Timed effect for the entry
+     */
+    getEffectMetadata(type, entry) {
+        if (!this.isValidEffectType(type)) {
+            return null;
+        }
+
+        const key = this.#getEntryKey(entry);
+        return chat_metadata.timedWorldInfo[type][key];
+    }
+
+    /**
+     * Sets a timed effect for a WI entry.
+     * @param {TimedEffectType} type Type of timed effect
+     * @param {WIScanEntry} entry WI entry to check
+     */
+    #setTimedEffectOfType(type, entry) {
+        // Skip if entry does not have the type (sticky or cooldown)
+        if (!entry[type]) {
+            return;
+        }
+
+        const key = this.#getEntryKey(entry);
+
+        if (!chat_metadata.timedWorldInfo[type][key]) {
+            const effect = this.#getEntryTimedEffect(type, entry, false);
+            chat_metadata.timedWorldInfo[type][key] = effect;
+
+            console.log(`[WI] Adding ${type} entry ${key}: start=${effect.start}, end=${effect.end}, protected=${effect.protected}`);
+        }
+    }
+
+    /**
+     * Sets timed effects on chat messages.
+     * @param {WIScanEntry[]} activatedEntries Entries that were activated
+     */
+    setTimedEffects(activatedEntries) {
+        for (const entry of activatedEntries) {
+            this.#setTimedEffectOfType('sticky', entry);
+            this.#setTimedEffectOfType('cooldown', entry);
+        }
+    }
+
+    /**
+     * Force set a timed effect for a WI entry.
+     * @param {TimedEffectType} type Type of timed effect
+     * @param {WIScanEntry} entry WI entry
+     * @param {boolean} newState The state of the effect
+     */
+    setTimedEffect(type, entry, newState) {
+        if (!this.isValidEffectType(type)) {
+            return;
+        }
+
+        const key = this.#getEntryKey(entry);
+        delete chat_metadata.timedWorldInfo[type][key];
+
+        if (newState) {
+            const effect = this.#getEntryTimedEffect(type, entry, false);
+            chat_metadata.timedWorldInfo[type][key] = effect;
+            console.log(`[WI] Adding ${type} entry ${key}: start=${effect.start}, end=${effect.end}, protected=${effect.protected}`);
+        }
+    }
+
+    /**
+     * Check if the string is a valid timed effect type.
+     * @param {string} type Name of the timed effect
+     * @returns {boolean} Is recognized type
+     */
+    isValidEffectType(type) {
+        return typeof type === 'string' && ['sticky', 'cooldown', 'delay'].includes(type.trim().toLowerCase());
+    }
+
+    /**
+     * Check if the current entry is sticky activated.
+     * @param {TimedEffectType} type Type of timed effect
+     * @param {WIScanEntry} entry WI entry to check
+     * @returns {boolean} True if the entry is active
+     */
+    isEffectActive(type, entry) {
+        if (!this.isValidEffectType(type)) {
+            return false;
+        }
+
+        return this.#buffer[type]?.some(x => this.#getEntryHash(x) === this.#getEntryHash(entry)) ?? false;
+    }
+
+    /**
+     * Clean-up previously set timed effects.
+     */
+    cleanUp() {
+        for (const buffer of Object.values(this.#buffer)) {
+            buffer.splice(0, buffer.length);
+        }
+    }
+}
+
 export function getWorldInfoSettings() {
     return {
         world_info,
@@ -329,6 +721,7 @@ export function getWorldInfoSettings() {
         world_info_min_activations,
         world_info_min_activations_depth_max,
         world_info_budget,
+        world_info_include_names,
         world_info_recursive,
         world_info_overflow_alert,
         world_info_case_sensitive,
@@ -354,11 +747,12 @@ export const wi_anchor_position = {
     after: 1,
 };
 
-const worldInfoCache = {};
+/** @type {StructuredCloneMap<string,object>} */
+const worldInfoCache = new StructuredCloneMap({ cloneOnGet: true, cloneOnSet: false });
 
 /**
  * Gets the world info based on chat messages.
- * @param {string[]} chat The chat messages to scan.
+ * @param {string[]} chat The chat messages to scan, in reverse order.
  * @param {number} maxContext The maximum context size of the generation.
  * @param {boolean} isDryRun If true, the function will not emit any events.
  * @typedef {{worldInfoString: string, worldInfoBefore: string, worldInfoAfter: string, worldInfoExamples: any[], worldInfoDepth: any[]}} WIPromptResult
@@ -367,7 +761,7 @@ const worldInfoCache = {};
 async function getWorldInfoPrompt(chat, maxContext, isDryRun) {
     let worldInfoString = '', worldInfoBefore = '', worldInfoAfter = '';
 
-    const activatedWorldInfo = await checkWorldInfo(chat, maxContext);
+    const activatedWorldInfo = await checkWorldInfo(chat, maxContext, isDryRun);
     worldInfoBefore = activatedWorldInfo.worldInfoBefore;
     worldInfoAfter = activatedWorldInfo.worldInfoAfter;
     worldInfoString = worldInfoBefore + worldInfoAfter;
@@ -395,6 +789,8 @@ function setWorldInfoSettings(settings, data) {
         world_info_min_activations_depth_max = Number(settings.world_info_min_activations_depth_max);
     if (settings.world_info_budget !== undefined)
         world_info_budget = Number(settings.world_info_budget);
+    if (settings.world_info_include_names !== undefined)
+        world_info_include_names = Boolean(settings.world_info_include_names);
     if (settings.world_info_recursive !== undefined)
         world_info_recursive = Boolean(settings.world_info_recursive);
     if (settings.world_info_overflow_alert !== undefined)
@@ -444,6 +840,7 @@ function setWorldInfoSettings(settings, data) {
     $('#world_info_budget_counter').val(world_info_budget);
     $('#world_info_budget').val(world_info_budget);
 
+    $('#world_info_include_names').prop('checked', world_info_include_names);
     $('#world_info_recursive').prop('checked', world_info_recursive);
     $('#world_info_overflow_alert').prop('checked', world_info_overflow_alert);
     $('#world_info_case_sensitive').prop('checked', world_info_case_sensitive);
@@ -474,9 +871,11 @@ function setWorldInfoSettings(settings, data) {
     $('#world_info').trigger('change');
     $('#world_editor_select').trigger('change');
 
-    eventSource.on(event_types.CHAT_CHANGED, () => {
+    eventSource.on(event_types.CHAT_CHANGED, async () => {
         const hasWorldInfo = !!chat_metadata[METADATA_KEY] && world_names.includes(chat_metadata[METADATA_KEY]);
         $('.chat_lorebook_button').toggleClass('world_set', hasWorldInfo);
+        // Pre-cache the world info data for the chat for quicker first prompt generation
+        await getSortedEntries();
     });
 
     eventSource.on(event_types.WORLDINFO_FORCE_ACTIVATE, (entries) => {
@@ -488,11 +887,27 @@ function setWorldInfoSettings(settings, data) {
 }
 
 function registerWorldInfoSlashCommands() {
-    function reloadEditor(file) {
+    /**
+     * Reloads the editor with the specified world info file
+     * @param {string} file - The file to load in the editor
+     * @param {boolean} [loadIfNotSelected=false] - Indicates whether to load the file even if it's not currently selected
+     */
+    function reloadEditor(file, loadIfNotSelected = false) {
+        const currentIndex = Number($('#world_editor_select').val());
         const selectedIndex = world_names.indexOf(file);
-        if (selectedIndex !== -1) {
+        if (selectedIndex !== -1 && (loadIfNotSelected || currentIndex === selectedIndex)) {
             $('#world_editor_select').val(selectedIndex).trigger('change');
         }
+    }
+
+    /**
+     * Gets a *rough* approximation of the current chat context.
+     * Normally, it is provided externally by the prompt builder.
+     * Don't use for anything critical!
+     * @returns {string[]}
+     */
+    function getScanningChat() {
+        return getContext().chat.filter(x => !x.is_system).map(x => x.mes);
     }
 
     async function getEntriesFromFile(file) {
@@ -541,7 +956,7 @@ function registerWorldInfoSlashCommands() {
     }
 
     async function findBookEntryCallback(args, value) {
-        const file = resolveVariable(args.file);
+        const file = args.file;
         const field = args.field || 'key';
 
         const entries = await getEntriesFromFile(file);
@@ -585,7 +1000,7 @@ function registerWorldInfoSlashCommands() {
     }
 
     async function getEntryFieldCallback(args, uid) {
-        const file = resolveVariable(args.file);
+        const file = args.file;
         const field = args.field || 'content';
 
         const entries = await getEntriesFromFile(file);
@@ -613,14 +1028,14 @@ function registerWorldInfoSlashCommands() {
         }
 
         if (Array.isArray(fieldValue)) {
-            return fieldValue.map(x => substituteParams(x)).join(', ');
+            return JSON.stringify(fieldValue.map(x => substituteParams(x)));
         }
 
         return substituteParams(String(fieldValue));
     }
 
     async function createEntryCallback(args, content) {
-        const file = resolveVariable(args.file);
+        const file = args.file;
         const key = args.key;
 
         const data = await loadWorldInfoData(file);
@@ -642,15 +1057,15 @@ function registerWorldInfoSlashCommands() {
             entry.content = content;
         }
 
-        await saveWorldInfo(file, data, true);
+        await saveWorldInfo(file, data);
         reloadEditor(file);
 
-        return entry.uid;
+        return String(entry.uid);
     }
 
     async function setEntryFieldCallback(args, value) {
-        const file = resolveVariable(args.file);
-        const uid = resolveVariable(args.uid);
+        const file = args.file;
+        const uid = args.uid;
         const field = args.field || 'content';
 
         if (value === undefined) {
@@ -680,7 +1095,7 @@ function registerWorldInfoSlashCommands() {
         }
 
         if (Array.isArray(entry[field])) {
-            entry[field] = value.split(',').map(x => x.trim()).filter(x => x);
+            entry[field] = parseStringArray(value);
         } else if (typeof entry[field] === 'boolean') {
             entry[field] = isTrueBoolean(value);
         } else if (typeof entry[field] === 'number') {
@@ -693,25 +1108,177 @@ function registerWorldInfoSlashCommands() {
             setOriginalDataValue(data, uid, originalDataKeyMap[field], entry[field]);
         }
 
-        await saveWorldInfo(file, data, true);
+        await saveWorldInfo(file, data);
         reloadEditor(file);
         return '';
     }
 
-    SlashCommandParser.addCommandObject(SlashCommand.fromProps({ name: 'world',
+    async function getTimedEffectCallback(args, value) {
+        if (!getCurrentChatId()) {
+            throw new Error('This command can only be used in chat');
+        }
+
+        const file = args.file;
+        const uid = value;
+        const effect = args.effect;
+
+        const entries = await getEntriesFromFile(file);
+
+        if (!entries) {
+            return '';
+        }
+
+        /** @type {WIScanEntry} */
+        const entry = structuredClone(entries.find(x => String(x.uid) === String(uid)));
+
+        if (!entry) {
+            toastr.warning('Valid UID is required');
+            return '';
+        }
+
+        entry.world = file; // Required by the timed effects manager
+        const chat = getScanningChat();
+        const timedEffects = new WorldInfoTimedEffects(chat, [entry]);
+
+        if (!timedEffects.isValidEffectType(effect)) {
+            toastr.warning('Valid effect type is required');
+            return '';
+        }
+
+        const data = timedEffects.getEffectMetadata(effect, entry);
+
+        if (String(args.format).trim().toLowerCase() === ARGUMENT_TYPE.NUMBER) {
+            return String(data ? (data.end - chat.length) : 0);
+        }
+
+        return String(!!data);
+    }
+
+    async function setTimedEffectCallback(args, value) {
+        if (!getCurrentChatId()) {
+            throw new Error('This command can only be used in chat');
+        }
+
+        const file = args.file;
+        const uid = args.uid;
+        const effect = args.effect;
+
+        if (value === undefined) {
+            toastr.warning('New state is required');
+            return '';
+        }
+
+        const entries = await getEntriesFromFile(file);
+
+        if (!entries) {
+            return '';
+        }
+
+        /** @type {WIScanEntry} */
+        const entry = structuredClone(entries.find(x => String(x.uid) === String(uid)));
+
+        if (!entry) {
+            toastr.warning('Valid UID is required');
+            return '';
+        }
+
+        entry.world = file; // Required by the timed effects manager
+        const chat = getScanningChat();
+        const timedEffects = new WorldInfoTimedEffects(chat, [entry]);
+
+        if (!timedEffects.isValidEffectType(effect)) {
+            toastr.warning('Valid effect type is required');
+            return '';
+        }
+
+        if (!entry[effect]) {
+            toastr.warning('This entry does not have the selected effect. Configure it in the editor first.');
+            return '';
+        }
+
+        const getNewEffectState = () => {
+            const currentState = !!timedEffects.getEffectMetadata(effect, entry);
+
+            if (['toggle', 't', ''].includes(value.trim().toLowerCase())) {
+                return !currentState;
+            }
+
+            if (isTrueBoolean(value)) {
+                return true;
+            }
+
+            if (isFalseBoolean(value)) {
+                return false;
+            }
+
+            return currentState;
+        };
+
+        const newEffectState = getNewEffectState();
+        timedEffects.setTimedEffect(effect, entry, newEffectState);
+
+        await saveMetadata();
+        toastr.success(`Timed effect "${effect}" for entry ${entry.uid} is now ${newEffectState ? 'active' : 'inactive'}`);
+
+        return '';
+    }
+
+    /** A collection of local enum providers for this context of world info */
+    const localEnumProviders = {
+        /** All possible fields that can be set in a WI entry */
+        wiEntryFields: () => Object.entries(newEntryDefinition).map(([key, value]) =>
+            new SlashCommandEnumValue(key, `[${value.type}] default: ${(typeof value.default === 'string' ? `'${value.default}'` : value.default)}`,
+                enumTypes.enum, enumIcons.getDataTypeIcon(value.type))),
+
+        /** All existing UIDs based on the file argument as world name */
+        wiUids: (/** @type {import('./slash-commands/SlashCommandExecutor.js').SlashCommandExecutor} */ executor) => {
+            const file = executor.namedArgumentList.find(it => it.name == 'file')?.value;
+            if (file instanceof SlashCommandClosure) throw new Error('Argument \'file\' does not support closures');
+            // Try find world from cache
+            if (!worldInfoCache.has(file)) return [];
+            const world = worldInfoCache.get(file);
+            if (!world) return [];
+            return Object.entries(world.entries).map(([uid, data]) =>
+                new SlashCommandEnumValue(uid, `${data.comment ? `${data.comment}: ` : ''}${data.key.join(', ')}${data.keysecondary?.length ? ` [${Object.entries(world_info_logic).find(([_, value]) => value == data.selectiveLogic)[0]}] ${data.keysecondary.join(', ')}` : ''} [${getWiPositionString(data)}]`,
+                    enumTypes.enum, enumIcons.getWiStatusIcon(data)));
+        },
+
+        timedEffects: () => [
+            new SlashCommandEnumValue('sticky', 'Stays active for N messages', enumTypes.enum, '📌'),
+            new SlashCommandEnumValue('cooldown', 'Cooldown for N messages', enumTypes.enum, '⌛'),
+        ],
+    };
+
+    function getWiPositionString(entry) {
+        switch (entry.position) {
+            case world_info_position.before: return '↑Char';
+            case world_info_position.after: return '↓Char';
+            case world_info_position.EMTop: return '↑EM';
+            case world_info_position.EMBottom: return '↓EM';
+            case world_info_position.ANTop: return '↑AT';
+            case world_info_position.ANBottom: return '↓AT';
+            case world_info_position.atDepth: return `@D${enumIcons.getRoleIcon(entry.role)}`;
+            default: return '<Unknown>';
+        }
+    }
+
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'world',
         callback: onWorldInfoChange,
         namedArgumentList: [
             new SlashCommandNamedArgument(
-                'state', 'set world state', [ARGUMENT_TYPE.STRING], false, false, null, ['off', 'toggle'],
+                'state', 'set world state', [ARGUMENT_TYPE.STRING], false, false, null, commonEnumProviders.boolean('onOffToggle')(),
             ),
             new SlashCommandNamedArgument(
                 'silent', 'suppress toast messages', [ARGUMENT_TYPE.BOOLEAN], false,
             ),
         ],
         unnamedArgumentList: [
-            new SlashCommandArgument(
-                'name', [ARGUMENT_TYPE.STRING], false,
-            ),
+            SlashCommandArgument.fromProps({
+                description: 'world name',
+                typeList: [ARGUMENT_TYPE.STRING],
+                enumProvider: commonEnumProviders.worlds,
+            }),
         ],
         helpString: `
             <div>
@@ -720,23 +1287,34 @@ function registerWorldInfoSlashCommands() {
         `,
         aliases: [],
     }));
-    SlashCommandParser.addCommandObject(SlashCommand.fromProps({ name: 'getchatbook',
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'getchatbook',
         callback: getChatBookCallback,
         returns: 'lorebook name',
         helpString: 'Get a name of the chat-bound lorebook or create a new one if was unbound, and pass it down the pipe.',
         aliases: ['getchatlore', 'getchatwi'],
     }));
-    SlashCommandParser.addCommandObject(SlashCommand.fromProps({ name: 'findentry',
+
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'findentry',
         aliases: ['findlore', 'findwi'],
         returns: 'UID',
         callback: findBookEntryCallback,
         namedArgumentList: [
-            new SlashCommandNamedArgument(
-                'file', 'bookName', ARGUMENT_TYPE.STRING, true,
-            ),
-            new SlashCommandNamedArgument(
-                'field', 'field value for fuzzy match (default: key)', ARGUMENT_TYPE.STRING, false, false, 'key',
-            ),
+            SlashCommandNamedArgument.fromProps({
+                name: 'file',
+                description: 'book name',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: true,
+                enumProvider: commonEnumProviders.worlds,
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'field',
+                description: 'field value for fuzzy match (default: key)',
+                typeList: [ARGUMENT_TYPE.STRING],
+                defaultValue: 'key',
+                enumList: localEnumProviders.wiEntryFields(),
+            }),
         ],
         unnamedArgumentList: [
             new SlashCommandArgument(
@@ -757,22 +1335,34 @@ function registerWorldInfoSlashCommands() {
             </div>
         `,
     }));
-    SlashCommandParser.addCommandObject(SlashCommand.fromProps({ name: 'getentryfield',
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'getentryfield',
         aliases: ['getlorefield', 'getwifield'],
         callback: getEntryFieldCallback,
         returns: 'field value',
         namedArgumentList: [
-            new SlashCommandNamedArgument(
-                'file', 'bookName', ARGUMENT_TYPE.STRING, true,
-            ),
-            new SlashCommandNamedArgument(
-                'field', 'field to retrieve (default: content)', ARGUMENT_TYPE.STRING, false, false, 'content',
-            ),
+            SlashCommandNamedArgument.fromProps({
+                name: 'file',
+                description: 'book name',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: true,
+                enumProvider: commonEnumProviders.worlds,
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'field',
+                description: 'field to retrieve (default: content)',
+                typeList: [ARGUMENT_TYPE.STRING],
+                defaultValue: 'content',
+                enumList: localEnumProviders.wiEntryFields(),
+            }),
         ],
         unnamedArgumentList: [
-            new SlashCommandArgument(
-                'UID', ARGUMENT_TYPE.STRING, true,
-            ),
+            SlashCommandArgument.fromProps({
+                description: 'record UID',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: true,
+                enumProvider: localEnumProviders.wiUids,
+            }),
         ],
         helpString: `
             <div>
@@ -788,14 +1378,19 @@ function registerWorldInfoSlashCommands() {
             </div>
         `,
     }));
-    SlashCommandParser.addCommandObject(SlashCommand.fromProps({ name: 'createentry',
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'createentry',
         callback: createEntryCallback,
         aliases: ['createlore', 'createwi'],
         returns: 'UID of the new record',
         namedArgumentList: [
-            new SlashCommandNamedArgument(
-                'file', 'book name', [ARGUMENT_TYPE.STRING], true,
-            ),
+            SlashCommandNamedArgument.fromProps({
+                name: 'file',
+                description: 'book name',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: true,
+                enumProvider: commonEnumProviders.worlds,
+            }),
             new SlashCommandNamedArgument(
                 'key', 'record key', [ARGUMENT_TYPE.STRING], false,
             ),
@@ -819,19 +1414,32 @@ function registerWorldInfoSlashCommands() {
             </div>
         `,
     }));
-    SlashCommandParser.addCommandObject(SlashCommand.fromProps({ name: 'setentryfield',
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'setentryfield',
         callback: setEntryFieldCallback,
         aliases: ['setlorefield', 'setwifield'],
         namedArgumentList: [
-            new SlashCommandNamedArgument(
-                'file', 'book name', [ARGUMENT_TYPE.STRING], true,
-            ),
-            new SlashCommandNamedArgument(
-                'uid', 'record UID', [ARGUMENT_TYPE.STRING], true,
-            ),
-            new SlashCommandNamedArgument(
-                'field', 'field name', [ARGUMENT_TYPE.STRING], true, false, 'content',
-            ),
+            SlashCommandNamedArgument.fromProps({
+                name: 'file',
+                description: 'book name',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: true,
+                enumProvider: commonEnumProviders.worlds,
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'uid',
+                description: 'record UID',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: true,
+                enumProvider: localEnumProviders.wiUids,
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'field',
+                description: 'field name (default: content)',
+                typeList: [ARGUMENT_TYPE.STRING],
+                defaultValue: 'content',
+                enumList: localEnumProviders.wiEntryFields(),
+            }),
         ],
         unnamedArgumentList: [
             new SlashCommandArgument(
@@ -852,7 +1460,110 @@ function registerWorldInfoSlashCommands() {
             </div>
         `,
     }));
-
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'wi-set-timed-effect',
+        callback: setTimedEffectCallback,
+        namedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'file',
+                description: 'book name',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: true,
+                enumProvider: commonEnumProviders.worlds,
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'uid',
+                description: 'record UID',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: true,
+                enumProvider: localEnumProviders.wiUids,
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'effect',
+                description: 'effect name',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: true,
+                enumProvider: localEnumProviders.timedEffects,
+            }),
+        ],
+        unnamedArgumentList: [
+            SlashCommandArgument.fromProps({
+                description: 'new state of the effect',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: true,
+                acceptsMultiple: false,
+                enumList: commonEnumProviders.boolean('onOffToggle')(),
+            }),
+        ],
+        helpString: `
+            <div>
+                Set a timed effect for the record with the UID from the specified book. The duration must be set in the entry itself.
+                Will only be applied for the current chat. Enabling an effect that was already active refreshes the duration.
+                If the last chat message is swiped or deleted, the effect will be removed.
+            </div>
+            <div>
+                <strong>Example:</strong>
+                <ul>
+                    <li>
+                        <pre><code>/wi-set-timed-effect file=chatLore uid=123 effect=sticky on</code></pre>
+                    </li>
+                </ul>
+            </div>
+        `,
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'wi-get-timed-effect',
+        callback: getTimedEffectCallback,
+        helpString: `
+            <div>
+                Get the current state of the timed effect for the record with the UID from the specified book.
+            </div>
+            <div>
+                <strong>Example:</strong>
+                <ul>
+                    <li>
+                        <code>/wi-get-timed-effect file=chatLore format=bool effect=sticky 123</code> - returns true or false if the effect is active or not
+                    </li>
+                    <li>
+                        <code>/wi-get-timed-effect file=chatLore format=number effect=sticky 123</code> - returns the remaining duration of the effect, or 0 if inactive
+                    </li>
+                </ul>
+            </div>
+        `,
+        returns: 'state of the effect',
+        namedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'file',
+                description: 'book name',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: true,
+                enumProvider: commonEnumProviders.worlds,
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'effect',
+                description: 'effect name',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: true,
+                enumProvider: localEnumProviders.timedEffects,
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'format',
+                description: 'output format',
+                isRequired: false,
+                typeList: [ARGUMENT_TYPE.STRING],
+                defaultValue: ARGUMENT_TYPE.BOOLEAN,
+                enumList: [ARGUMENT_TYPE.BOOLEAN, ARGUMENT_TYPE.NUMBER],
+            }),
+        ],
+        unnamedArgumentList: [
+            SlashCommandArgument.fromProps({
+                description: 'record UID',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: true,
+                enumProvider: localEnumProviders.wiUids,
+            }),
+        ],
+    }));
 }
 
 // World Info Editor
@@ -871,8 +1582,8 @@ async function loadWorldInfoData(name) {
         return;
     }
 
-    if (worldInfoCache[name]) {
-        return worldInfoCache[name];
+    if (worldInfoCache.has(name)) {
+        return worldInfoCache.get(name);
     }
 
     const response = await fetch('/api/worldinfo/get', {
@@ -884,7 +1595,7 @@ async function loadWorldInfoData(name) {
 
     if (response.ok) {
         const data = await response.json();
-        worldInfoCache[name] = data;
+        worldInfoCache.set(name, data);
         return data;
     }
 
@@ -936,32 +1647,38 @@ function sortEntries(data) {
 
     if (!data.length) return data;
 
+    /** @type {(a: any, b: any) => number} */
+    let primarySort;
+
+    // Secondary and tertiary it will always be sorted by Order descending, and last UID ascending
+    // This is the most sensible approach for sorts where the primary sort has a lot of equal values
+    const secondarySort = (a, b) => b.order - a.order;
+    const tertiarySort = (a, b) => a.uid - b.uid;
+
     // If we have a search term for WI, we are sorting by weighting scores
     if (sortRule === 'search') {
-        data.sort((a, b) => {
+        primarySort = (a, b) => {
             const aScore = worldInfoFilter.getScore(FILTER_TYPES.WORLD_INFO_SEARCH, a.uid);
             const bScore = worldInfoFilter.getScore(FILTER_TYPES.WORLD_INFO_SEARCH, b.uid);
-            return (aScore - bScore);
-        });
+            return aScore - bScore;
+        };
     }
     else if (sortRule === 'custom') {
-        // First by display index, then by order, then by uid
-        data.sort((a, b) => {
+        // First by display index
+        primarySort = (a, b) => {
             const aValue = a.displayIndex;
             const bValue = b.displayIndex;
-
-            return (aValue - bValue || b.order - a.order || a.uid - b.uid);
-        });
+            return aValue - bValue;
+        };
     } else if (sortRule === 'priority') {
-        // First constant, then normal, then disabled. Then sort by order
-        data.sort((a, b) => {
+        // First constant, then normal, then disabled.
+        primarySort = (a, b) => {
             const aValue = a.constant ? 0 : a.disable ? 2 : 1;
             const bValue = b.constant ? 0 : b.disable ? 2 : 1;
-
-            return (aValue - bValue || b.order - a.order);
-        });
+            return aValue - bValue;
+        };
     } else {
-        const primarySort = (a, b) => {
+        primarySort = (a, b) => {
             const aValue = a[sortField];
             const bValue = b[sortField];
 
@@ -979,25 +1696,11 @@ function sortEntries(data) {
             // Sort numbers
             return orderSign * (Number(aValue) - Number(bValue));
         };
-        const secondarySort = (a, b) => a.order - b.order;
-        const tertiarySort = (a, b) => a.uid - b.uid;
-
-        data.sort((a, b) => {
-            const primary = primarySort(a, b);
-
-            if (primary !== 0) {
-                return primary;
-            }
-
-            const secondary = secondarySort(a, b);
-
-            if (secondary !== 0) {
-                return secondary;
-            }
-
-            return tertiarySort(a, b);
-        });
     }
+
+    data.sort((a, b) => {
+        return primarySort(a, b) || secondarySort(a, b) || tertiarySort(a, b);
+    });
 
     return data;
 }
@@ -1061,8 +1764,7 @@ function displayWorldEntries(name, data, navigation = navigation_option.none, fl
     // Regardless of whether success is displayed or not. Make sure the delete button is available.
     // Do not put this code behind.
     $('#world_popup_delete').off('click').on('click', async () => {
-        const confirmation = await callPopup(`<h3>Delete the World/Lorebook: "${name}"?</h3>This action is irreversible!`, 'confirm');
-
+        const confirmation = await Popup.show.confirm(`Delete the World/Lorebook: "${name}"?`, 'This action is irreversible!');
         if (!confirmation) {
             return;
         }
@@ -1110,14 +1812,21 @@ function displayWorldEntries(name, data, navigation = navigation_option.none, fl
         return entriesArray;
     }
 
+    const storageKey = 'WI_PerPage';
+    const perPageDefault = 25;
     let startPage = 1;
 
     if (navigation === navigation_option.previous) {
         startPage = $('#world_info_pagination').pagination('getCurrentPageNum');
     }
 
-    const storageKey = 'WI_PerPage';
-    const perPageDefault = 25;
+    if (typeof navigation === 'number' && Number(navigation) >= 0) {
+        const data = getDataArray();
+        const uidIndex = data.findIndex(x => x.uid === navigation);
+        const perPage = Number(localStorage.getItem(storageKey)) || perPageDefault;
+        startPage = Math.floor(uidIndex / perPage) + 1;
+    }
+
     $('#world_info_pagination').pagination({
         dataSource: getDataArray,
         pageSize: Number(localStorage.getItem(storageKey)) || perPageDefault,
@@ -1131,7 +1840,7 @@ function displayWorldEntries(name, data, navigation = navigation_option.none, fl
         nextText: '>',
         formatNavigator: PAGINATION_TEMPLATE,
         showNavigator: true,
-        callback: function (/** @type {object[]} */ page) {
+        callback: async function (/** @type {object[]} */ page) {
             // We save costly performance by removing all events before emptying. Because we know there are no relevant event handlers reacting on removing elements
             // This prevents jQuery from actually going through all registered events on the controls for each entry when removing it
             worldEntriesList.find('*').off();
@@ -1178,15 +1887,8 @@ function displayWorldEntries(name, data, navigation = navigation_option.none, fl
         },
     });
 
-
-
     if (typeof navigation === 'number' && Number(navigation) >= 0) {
         const selector = `#world_popup_entries_list [uid="${navigation}"]`;
-        const data = getDataArray();
-        const uidIndex = data.findIndex(x => x.uid === navigation);
-        const perPage = Number(localStorage.getItem(storageKey)) || perPageDefault;
-        const page = Math.floor(uidIndex / perPage) + 1;
-        $('#world_info_pagination').pagination('go', page);
         waitUntilCondition(() => document.querySelector(selector) !== null).finally(() => {
             const element = $(selector);
 
@@ -1224,8 +1926,52 @@ function displayWorldEntries(name, data, navigation = navigation_option.none, fl
 
         if (counter > 0) {
             toastr.info(`Backfilled ${counter} titles`);
+            await saveWorldInfo(name, data);
+            updateEditor(navigation_option.previous);
+        }
+    });
+
+    $('#world_apply_current_sorting').off('click').on('click', async () => {
+        const entryCount = Object.keys(data.entries).length;
+        const moreThan100 = entryCount > 100;
+
+        let content = '<span>Apply your current sorting to the "Order" field. The Order values will go down from the chosen number.</span>';
+        if (moreThan100) {
+            content += `<div class="m-t-1"><i class="fa-solid fa-triangle-exclamation" style="color: #FFD43B;"></i> More than 100 entries in this world. If you don't choose a number higher than that, the lower entries will default to 0.<br />(Usual default: 100)<br />Minimum: ${entryCount}</div>`;
+        }
+
+        const result = await Popup.show.input('Apply Current Sorting', content, '100', { okButton: 'Apply', cancelButton: 'Cancel' });
+        if (!result) return;
+
+        const start = Number(result);
+        if (isNaN(start) || start < 0) {
+            toastr.error('Invalid number: ' + result, 'Apply Current Sorting');
+            return;
+        }
+        if (start < entryCount) {
+            toastr.warning('A number lower than the entry count has been chosen. All entries below that will default to 0.', 'Apply Current Sorting');
+        }
+
+        // We need to sort the entries here, as the data source isn't sorted
+        const entries = Object.values(data.entries);
+        sortEntries(entries);
+
+        let updated = 0, current = start;
+        for (const entry of entries) {
+            const newOrder = Math.max(current--, 0);
+            if (entry.order === newOrder) continue;
+
+            entry.order = newOrder;
+            setOriginalDataValue(data, entry.order, 'order', entry.order);
+            updated++;
+        }
+
+        if (updated > 0) {
+            toastr.info(`Updated ${updated} Order values`, 'Apply Custom Sorting');
             await saveWorldInfo(name, data, true);
             updateEditor(navigation_option.previous);
+        } else {
+            toastr.info('All values up to date', 'Apply Custom Sorting');
         }
     });
 
@@ -1239,7 +1985,7 @@ function displayWorldEntries(name, data, navigation = navigation_option.none, fl
 
     $('#world_duplicate').off('click').on('click', async () => {
         const tempName = getFreeWorldName();
-        const finalName = await callPopup('<h3>Create a new World Info?</h3>Enter a name for the new file:', 'input', tempName);
+        const finalName = await Popup.show.input('Create a new World Info?', 'Enter a name for the new file:', tempName);
 
         if (finalName) {
             await saveWorldInfo(finalName, data, true);
@@ -1284,7 +2030,7 @@ function displayWorldEntries(name, data, navigation = navigation_option.none, fl
 
             console.table(Object.keys(data.entries).map(uid => data.entries[uid]).map(x => ({ uid: x.uid, key: x.key.join(','), displayIndex: x.displayIndex })));
 
-            await saveWorldInfo(name, data, true);
+            await saveWorldInfo(name, data);
         },
     });
     //$("#world_popup_entries_list").disableSelection();
@@ -1316,6 +2062,9 @@ const originalDataKeyMap = {
     'vectorized': 'extensions.vectorized',
     'groupOverride': 'extensions.group_override',
     'groupWeight': 'extensions.group_weight',
+    'sticky': 'extensions.sticky',
+    'cooldown': 'extensions.cooldown',
+    'delay': 'extensions.delay',
 };
 
 /** Checks the state of the current search, and adds/removes the search sorting option accordingly */
@@ -1402,9 +2151,17 @@ function splitKeywordsAndRegexes(input) {
 function customTokenizer(input, _selection, callback) {
     let current = input.term;
 
+    let insideRegex = false, regexClosed = false;
+
     // Go over the input and check the current state, if we can get a token
     for (let i = 0; i < current.length; i++) {
         let char = current[i];
+
+        // If we find an unascaped slash, set the current regex state
+        if (char === '/' && (i === 0 || current[i - 1] !== '\\')) {
+            if (!insideRegex) insideRegex = true;
+            else if (!regexClosed) regexClosed = true;
+        }
 
         // If a comma is typed, we tokenize the input.
         // unless we are inside a possible regex, which would allow commas inside
@@ -1412,12 +2169,11 @@ function customTokenizer(input, _selection, callback) {
             // We take everything up till now and consider this a token
             const token = current.slice(0, i).trim();
 
-            // Now how we test if this is a valid regex? And not a finished one, but a half-finished one?
-            // Easy, if someone typed a comma it can't be a delimiter escape.
-            // So we just check if this opening with a slash, and if so, we "close" the regex and try to parse it.
-            // So if we are inside a valid regex, we can't take the token now, we continue processing until the regex is closed,
-            // or this is not a valid regex anymore
-            if (token.startsWith('/') && isValidRegex(token + '/')) {
+            // Now how we test if this is a regex? And not a finished one, but a half-finished one?
+            // We use the state remembered from above to check whether the delimiter was opened but not closed yet.
+            // We don't check validity here if we are inside a regex, because it might only get valid after its finished. (Closing brackets, etc)
+            // Validity will be finally checked when the next comma is typed.
+            if (insideRegex && !regexClosed) {
                 continue;
             }
 
@@ -1437,6 +2193,8 @@ function customTokenizer(input, _selection, callback) {
 
             // Now remove the token from the current input, and the comma too
             current = current.slice(i + 1);
+            insideRegex = false;
+            regexClosed = false;
             i = 0;
         }
     }
@@ -1544,7 +2302,7 @@ function getWorldEntry(name, data, entry) {
                 templateResult: item => templateStyling(item, { searchStyle: true }),
                 templateSelection: item => templateStyling(item),
             });
-            input.on('change', function (_, { skipReset, noSave } = {}) {
+            input.on('change', async function (_, { skipReset, noSave } = {}) {
                 const uid = $(this).data('uid');
                 /** @type {string[]} */
                 const keys = ($(this).select2('data')).map(x => x.text);
@@ -1553,7 +2311,7 @@ function getWorldEntry(name, data, entry) {
                 if (!noSave) {
                     data.entries[uid][entryPropName] = keys;
                     setOriginalDataValue(data, uid, originalDataValueName, data.entries[uid][entryPropName]);
-                    saveWorldInfo(name, data);
+                    await saveWorldInfo(name, data);
                 }
             });
             input.on('select2:select', /** @type {function(*):void} */ event => updateWorldEntryKeyOptionsCache([event.params.data]));
@@ -1584,14 +2342,14 @@ function getWorldEntry(name, data, entry) {
             template.find(`select[name="${entryPropName}"]`).hide();
             input.show();
 
-            input.on('input', function (_, { skipReset, noSave } = {}) {
+            input.on('input', async function (_, { skipReset, noSave } = {}) {
                 const uid = $(this).data('uid');
                 const value = String($(this).val());
                 !skipReset && resetScrollHeight(this);
                 if (!noSave) {
                     data.entries[uid][entryPropName] = splitKeywordsAndRegexes(value);
                     setOriginalDataValue(data, uid, originalDataValueName, data.entries[uid][entryPropName]);
-                    saveWorldInfo(name, data);
+                    await saveWorldInfo(name, data);
                 }
             });
             input.val(entry[entryPropName].join(', ')).trigger('input', { skipReset: true });
@@ -1630,12 +2388,12 @@ function getWorldEntry(name, data, entry) {
         event.stopPropagation();
     });
 
-    selectiveLogicDropdown.on('input', function () {
+    selectiveLogicDropdown.on('input', async function () {
         const uid = $(this).data('uid');
         const value = Number($(this).val());
         data.entries[uid].selectiveLogic = !isNaN(value) ? value : world_info_logic.AND_ANY;
         setOriginalDataValue(data, uid, 'selectiveLogic', data.entries[uid].selectiveLogic);
-        saveWorldInfo(name, data);
+        await saveWorldInfo(name, data);
     });
 
     template
@@ -1650,7 +2408,7 @@ function getWorldEntry(name, data, entry) {
     // exclude characters checkbox
     const characterExclusionInput = template.find('input[name="character_exclusion"]');
     characterExclusionInput.data('uid', entry.uid);
-    characterExclusionInput.on('input', function () {
+    characterExclusionInput.on('input', async function () {
         const uid = $(this).data('uid');
         const value = $(this).prop('checked');
         characterFilterLabel.text(value ? 'Exclude Character(s)' : 'Filter to Character(s)');
@@ -1684,7 +2442,7 @@ function getWorldEntry(name, data, entry) {
         }
 
         setOriginalDataValue(data, uid, 'character_filter', data.entries[uid].characterFilter);
-        saveWorldInfo(name, data);
+        await saveWorldInfo(name, data);
     });
     characterExclusionInput.prop('checked', entry.characterFilter?.isExclude ?? false).trigger('input');
 
@@ -1746,24 +2504,24 @@ function getWorldEntry(name, data, entry) {
             );
         }
         setOriginalDataValue(data, uid, 'character_filter', data.entries[uid].characterFilter);
-        saveWorldInfo(name, data);
+        await saveWorldInfo(name, data);
     });
 
     // comment
     const commentInput = template.find('textarea[name="comment"]');
     const commentToggle = template.find('input[name="addMemo"]');
     commentInput.data('uid', entry.uid);
-    commentInput.on('input', function (_, { skipReset } = {}) {
+    commentInput.on('input', async function (_, { skipReset } = {}) {
         const uid = $(this).data('uid');
         const value = $(this).val();
         !skipReset && resetScrollHeight(this);
         data.entries[uid].comment = value;
 
         setOriginalDataValue(data, uid, 'comment', data.entries[uid].comment);
-        saveWorldInfo(name, data);
+        await saveWorldInfo(name, data);
     });
     commentToggle.data('uid', entry.uid);
-    commentToggle.on('input', function () {
+    commentToggle.on('input', async function () {
         const uid = $(this).data('uid');
         const value = $(this).prop('checked');
         //console.log(value)
@@ -1771,7 +2529,7 @@ function getWorldEntry(name, data, entry) {
             .closest('.world_entry')
             .find('.commentContainer');
         data.entries[uid].addMemo = value;
-        saveWorldInfo(name, data);
+        await saveWorldInfo(name, data);
         value ? commentContainer.show() : commentContainer.hide();
     });
 
@@ -1789,13 +2547,13 @@ function getWorldEntry(name, data, entry) {
 
     const contentInput = template.find('textarea[name="content"]');
     contentInput.data('uid', entry.uid);
-    contentInput.on('input', function (_, { skipCount } = {}) {
+    contentInput.on('input', async function (_, { skipCount } = {}) {
         const uid = $(this).data('uid');
         const value = $(this).val();
         data.entries[uid].content = value;
 
         setOriginalDataValue(data, uid, 'content', data.entries[uid].content);
-        saveWorldInfo(name, data);
+        await saveWorldInfo(name, data);
 
         if (skipCount) {
             return;
@@ -1819,13 +2577,13 @@ function getWorldEntry(name, data, entry) {
     // selective
     const selectiveInput = template.find('input[name="selective"]');
     selectiveInput.data('uid', entry.uid);
-    selectiveInput.on('input', function () {
+    selectiveInput.on('input', async function () {
         const uid = $(this).data('uid');
         const value = $(this).prop('checked');
         data.entries[uid].selective = value;
 
         setOriginalDataValue(data, uid, 'selective', data.entries[uid].selective);
-        saveWorldInfo(name, data);
+        await saveWorldInfo(name, data);
 
         const keysecondary = $(this)
             .closest('.world_entry')
@@ -1854,12 +2612,12 @@ function getWorldEntry(name, data, entry) {
     /*
     const constantInput = template.find('input[name="constant"]');
     constantInput.data("uid", entry.uid);
-    constantInput.on("input", function () {
+    constantInput.on("input", async function () {
         const uid = $(this).data("uid");
         const value = $(this).prop("checked");
         data.entries[uid].constant = value;
         setOriginalDataValue(data, uid, "constant", data.entries[uid].constant);
-        saveWorldInfo(name, data);
+        await saveWorldInfo(name, data);
     });
     constantInput.prop("checked", entry.constant).trigger("input");
     */
@@ -1867,14 +2625,14 @@ function getWorldEntry(name, data, entry) {
     // order
     const orderInput = template.find('input[name="order"]');
     orderInput.data('uid', entry.uid);
-    orderInput.on('input', function () {
+    orderInput.on('input', async function () {
         const uid = $(this).data('uid');
         const value = Number($(this).val());
 
         data.entries[uid].order = !isNaN(value) ? value : 0;
         updatePosOrdDisplay(uid);
         setOriginalDataValue(data, uid, 'insertion_order', data.entries[uid].order);
-        saveWorldInfo(name, data);
+        await saveWorldInfo(name, data);
     });
     orderInput.val(entry.order).trigger('input');
     orderInput.css('width', 'calc(3em + 15px)');
@@ -1882,13 +2640,13 @@ function getWorldEntry(name, data, entry) {
     // group
     const groupInput = template.find('input[name="group"]');
     groupInput.data('uid', entry.uid);
-    groupInput.on('input', function () {
+    groupInput.on('input', async function () {
         const uid = $(this).data('uid');
         const value = String($(this).val()).trim();
 
         data.entries[uid].group = value;
         setOriginalDataValue(data, uid, 'extensions.group', data.entries[uid].group);
-        saveWorldInfo(name, data);
+        await saveWorldInfo(name, data);
     });
     groupInput.val(entry.group ?? '').trigger('input');
     setTimeout(() => createEntryInputAutocomplete(groupInput, getInclusionGroupCallback(data), { allowMultiple: true }), 1);
@@ -1896,19 +2654,19 @@ function getWorldEntry(name, data, entry) {
     // inclusion priority
     const groupOverrideInput = template.find('input[name="groupOverride"]');
     groupOverrideInput.data('uid', entry.uid);
-    groupOverrideInput.on('input', function () {
+    groupOverrideInput.on('input', async function () {
         const uid = $(this).data('uid');
         const value = $(this).prop('checked');
         data.entries[uid].groupOverride = value;
         setOriginalDataValue(data, uid, 'extensions.group_override', data.entries[uid].groupOverride);
-        saveWorldInfo(name, data);
+        await saveWorldInfo(name, data);
     });
     groupOverrideInput.prop('checked', entry.groupOverride).trigger('input');
 
     // group weight
     const groupWeightInput = template.find('input[name="groupWeight"]');
     groupWeightInput.data('uid', entry.uid);
-    groupWeightInput.on('input', function () {
+    groupWeightInput.on('input', async function () {
         const uid = $(this).data('uid');
         let value = Number($(this).val());
         const min = Number($(this).attr('min'));
@@ -1925,9 +2683,48 @@ function getWorldEntry(name, data, entry) {
 
         data.entries[uid].groupWeight = !isNaN(value) ? Math.abs(value) : 1;
         setOriginalDataValue(data, uid, 'extensions.group_weight', data.entries[uid].groupWeight);
-        saveWorldInfo(name, data);
+        await saveWorldInfo(name, data);
     });
     groupWeightInput.val(entry.groupWeight ?? DEFAULT_WEIGHT).trigger('input');
+
+    // sticky
+    const sticky = template.find('input[name="sticky"]');
+    sticky.data('uid', entry.uid);
+    sticky.on('input', async function () {
+        const uid = $(this).data('uid');
+        const value = Number($(this).val());
+        data.entries[uid].sticky = !isNaN(value) ? value : null;
+
+        setOriginalDataValue(data, uid, 'extensions.sticky', data.entries[uid].sticky);
+        await saveWorldInfo(name, data);
+    });
+    sticky.val(entry.sticky > 0 ? entry.sticky : '').trigger('input');
+
+    // cooldown
+    const cooldown = template.find('input[name="cooldown"]');
+    cooldown.data('uid', entry.uid);
+    cooldown.on('input', async function () {
+        const uid = $(this).data('uid');
+        const value = Number($(this).val());
+        data.entries[uid].cooldown = !isNaN(value) ? value : null;
+
+        setOriginalDataValue(data, uid, 'extensions.cooldown', data.entries[uid].cooldown);
+        await saveWorldInfo(name, data);
+    });
+    cooldown.val(entry.cooldown > 0 ? entry.cooldown : '').trigger('input');
+
+    // delay
+    const delay = template.find('input[name="delay"]');
+    delay.data('uid', entry.uid);
+    delay.on('input', async function () {
+        const uid = $(this).data('uid');
+        const value = Number($(this).val());
+        data.entries[uid].delay = !isNaN(value) ? value : null;
+
+        setOriginalDataValue(data, uid, 'extensions.delay', data.entries[uid].delay);
+        await saveWorldInfo(name, data);
+    });
+    delay.val(entry.delay > 0 ? entry.delay : '').trigger('input');
 
     // probability
     if (entry.probability === undefined) {
@@ -1938,14 +2735,14 @@ function getWorldEntry(name, data, entry) {
     const depthInput = template.find('input[name="depth"]');
     depthInput.data('uid', entry.uid);
 
-    depthInput.on('input', function () {
+    depthInput.on('input', async function () {
         const uid = $(this).data('uid');
         const value = Number($(this).val());
 
         data.entries[uid].depth = !isNaN(value) ? value : 0;
         updatePosOrdDisplay(uid);
         setOriginalDataValue(data, uid, 'extensions.depth', data.entries[uid].depth);
-        saveWorldInfo(name, data);
+        await saveWorldInfo(name, data);
     });
     depthInput.val(entry.depth ?? DEFAULT_DEPTH).trigger('input');
     depthInput.css('width', 'calc(3em + 15px)');
@@ -1957,7 +2754,7 @@ function getWorldEntry(name, data, entry) {
 
     const probabilityInput = template.find('input[name="probability"]');
     probabilityInput.data('uid', entry.uid);
-    probabilityInput.on('input', function () {
+    probabilityInput.on('input', async function () {
         const uid = $(this).data('uid');
         const value = Number($(this).val());
 
@@ -1973,7 +2770,7 @@ function getWorldEntry(name, data, entry) {
         }
 
         setOriginalDataValue(data, uid, 'extensions.probability', data.entries[uid].probability);
-        saveWorldInfo(name, data);
+        await saveWorldInfo(name, data);
     });
     probabilityInput.val(entry.probability).trigger('input');
     probabilityInput.css('width', 'calc(3em + 15px)');
@@ -1985,14 +2782,14 @@ function getWorldEntry(name, data, entry) {
 
     const probabilityToggle = template.find('input[name="useProbability"]');
     probabilityToggle.data('uid', entry.uid);
-    probabilityToggle.on('input', function () {
+    probabilityToggle.on('input', async function () {
         const uid = $(this).data('uid');
         const value = $(this).prop('checked');
         data.entries[uid].useProbability = value;
         const probabilityContainer = $(this)
             .closest('.world_entry')
             .find('.probabilityContainer');
-        saveWorldInfo(name, data);
+        await saveWorldInfo(name, data);
         value ? probabilityContainer.show() : probabilityContainer.hide();
 
         if (value && data.entries[uid].probability === null) {
@@ -2021,7 +2818,7 @@ function getWorldEntry(name, data, entry) {
         // Prevent closing the drawer on clicking the input
         event.stopPropagation();
     });
-    positionInput.on('input', function () {
+    positionInput.on('input', async function () {
         const uid = $(this).data('uid');
         const value = Number($(this).val());
         data.entries[uid].position = !isNaN(value) ? value : 0;
@@ -2043,7 +2840,7 @@ function getWorldEntry(name, data, entry) {
         // Write the original value as extensions field
         setOriginalDataValue(data, uid, 'extensions.position', data.entries[uid].position);
         setOriginalDataValue(data, uid, 'extensions.role', data.entries[uid].role);
-        saveWorldInfo(name, data);
+        await saveWorldInfo(name, data);
     });
 
     const roleValue = entry.position === world_info_position.atDepth ? String(entry.role ?? extension_prompt_roles.SYSTEM) : '';
@@ -2059,12 +2856,12 @@ function getWorldEntry(name, data, entry) {
     /*
     const disableInput = template.find('input[name="disable"]');
     disableInput.data("uid", entry.uid);
-    disableInput.on("input", function () {
+    disableInput.on("input", async function () {
         const uid = $(this).data("uid");
         const value = $(this).prop("checked");
         data.entries[uid].disable = value;
         setOriginalDataValue(data, uid, "enabled", !data.entries[uid].disable);
-        saveWorldInfo(name, data);
+        await saveWorldInfo(name, data);
     });
     disableInput.prop("checked", entry.disable).trigger("input");
     */
@@ -2076,7 +2873,7 @@ function getWorldEntry(name, data, entry) {
         // Prevent closing the drawer on clicking the input
         event.stopPropagation();
     });
-    entryStateSelector.on('input', function () {
+    entryStateSelector.on('input', async function () {
         const uid = entry.uid;
         const value = $(this).val();
         switch (value) {
@@ -2117,17 +2914,17 @@ function getWorldEntry(name, data, entry) {
                 template.addClass('disabledWIEntry');
                 break;
         }
-        saveWorldInfo(name, data);
+        await saveWorldInfo(name, data);
 
     });
 
     const entryState = function () {
-        if (entry.constant === true) {
+        if (entry.disable === true) {
+            return 'disabled';
+        } else if (entry.constant === true) {
             return 'constant';
         } else if (entry.vectorized === true) {
             return 'vectorized';
-        } else if (entry.disable === true) {
-            return 'disabled';
         } else {
             return 'normal';
         }
@@ -2137,52 +2934,50 @@ function getWorldEntry(name, data, entry) {
         .prop('selected', true)
         .trigger('input');
 
-    saveWorldInfo(name, data);
-
     // exclude recursion
     const excludeRecursionInput = template.find('input[name="exclude_recursion"]');
     excludeRecursionInput.data('uid', entry.uid);
-    excludeRecursionInput.on('input', function () {
+    excludeRecursionInput.on('input', async function () {
         const uid = $(this).data('uid');
         const value = $(this).prop('checked');
         data.entries[uid].excludeRecursion = value;
         setOriginalDataValue(data, uid, 'extensions.exclude_recursion', data.entries[uid].excludeRecursion);
-        saveWorldInfo(name, data);
+        await saveWorldInfo(name, data);
     });
     excludeRecursionInput.prop('checked', entry.excludeRecursion).trigger('input');
 
     // prevent recursion
     const preventRecursionInput = template.find('input[name="prevent_recursion"]');
     preventRecursionInput.data('uid', entry.uid);
-    preventRecursionInput.on('input', function () {
+    preventRecursionInput.on('input', async function () {
         const uid = $(this).data('uid');
         const value = $(this).prop('checked');
         data.entries[uid].preventRecursion = value;
         setOriginalDataValue(data, uid, 'extensions.prevent_recursion', data.entries[uid].preventRecursion);
-        saveWorldInfo(name, data);
+        await saveWorldInfo(name, data);
     });
     preventRecursionInput.prop('checked', entry.preventRecursion).trigger('input');
 
     // delay until recursion
     const delayUntilRecursionInput = template.find('input[name="delay_until_recursion"]');
     delayUntilRecursionInput.data('uid', entry.uid);
-    delayUntilRecursionInput.on('input', function () {
+    delayUntilRecursionInput.on('input', async function () {
         const uid = $(this).data('uid');
         const value = $(this).prop('checked');
         data.entries[uid].delayUntilRecursion = value;
         setOriginalDataValue(data, uid, 'extensions.delay_until_recursion', data.entries[uid].delayUntilRecursion);
-        saveWorldInfo(name, data);
+        await saveWorldInfo(name, data);
     });
     delayUntilRecursionInput.prop('checked', entry.delayUntilRecursion).trigger('input');
 
     // duplicate button
     const duplicateButton = template.find('.duplicate_entry_button');
     duplicateButton.data('uid', entry.uid);
-    duplicateButton.on('click', function () {
+    duplicateButton.on('click', async function () {
         const uid = $(this).data('uid');
         const entry = duplicateWorldInfoEntry(data, uid);
         if (entry) {
-            saveWorldInfo(name, data);
+            await saveWorldInfo(name, data);
             updateEditor(entry.uid);
         }
     });
@@ -2190,18 +2985,18 @@ function getWorldEntry(name, data, entry) {
     // delete button
     const deleteButton = template.find('.delete_entry_button');
     deleteButton.data('uid', entry.uid);
-    deleteButton.on('click', function () {
+    deleteButton.on('click', async function () {
         const uid = $(this).data('uid');
         deleteWorldInfoEntry(data, uid);
         deleteOriginalDataValue(data, uid);
-        saveWorldInfo(name, data);
+        await saveWorldInfo(name, data);
         updateEditor(navigation_option.previous);
     });
 
     // scan depth
     const scanDepthInput = template.find('input[name="scanDepth"]');
     scanDepthInput.data('uid', entry.uid);
-    scanDepthInput.on('input', function () {
+    scanDepthInput.on('input', async function () {
         const uid = $(this).data('uid');
         const isEmpty = $(this).val() === '';
         const value = Number($(this).val());
@@ -2221,59 +3016,59 @@ function getWorldEntry(name, data, entry) {
 
         data.entries[uid].scanDepth = !isEmpty && !isNaN(value) && value >= 0 && value <= MAX_SCAN_DEPTH ? Math.floor(value) : null;
         setOriginalDataValue(data, uid, 'extensions.scan_depth', data.entries[uid].scanDepth);
-        saveWorldInfo(name, data);
+        await saveWorldInfo(name, data);
     });
     scanDepthInput.val(entry.scanDepth ?? null).trigger('input');
 
     // case sensitive select
     const caseSensitiveSelect = template.find('select[name="caseSensitive"]');
     caseSensitiveSelect.data('uid', entry.uid);
-    caseSensitiveSelect.on('input', function () {
+    caseSensitiveSelect.on('input', async function () {
         const uid = $(this).data('uid');
         const value = $(this).val();
 
         data.entries[uid].caseSensitive = value === 'null' ? null : value === 'true';
         setOriginalDataValue(data, uid, 'extensions.case_sensitive', data.entries[uid].caseSensitive);
-        saveWorldInfo(name, data);
+        await saveWorldInfo(name, data);
     });
     caseSensitiveSelect.val((entry.caseSensitive === null || entry.caseSensitive === undefined) ? 'null' : entry.caseSensitive ? 'true' : 'false').trigger('input');
 
     // match whole words select
     const matchWholeWordsSelect = template.find('select[name="matchWholeWords"]');
     matchWholeWordsSelect.data('uid', entry.uid);
-    matchWholeWordsSelect.on('input', function () {
+    matchWholeWordsSelect.on('input', async function () {
         const uid = $(this).data('uid');
         const value = $(this).val();
 
         data.entries[uid].matchWholeWords = value === 'null' ? null : value === 'true';
         setOriginalDataValue(data, uid, 'extensions.match_whole_words', data.entries[uid].matchWholeWords);
-        saveWorldInfo(name, data);
+        await saveWorldInfo(name, data);
     });
     matchWholeWordsSelect.val((entry.matchWholeWords === null || entry.matchWholeWords === undefined) ? 'null' : entry.matchWholeWords ? 'true' : 'false').trigger('input');
 
     // use group scoring select
     const useGroupScoringSelect = template.find('select[name="useGroupScoring"]');
     useGroupScoringSelect.data('uid', entry.uid);
-    useGroupScoringSelect.on('input', function () {
+    useGroupScoringSelect.on('input', async function () {
         const uid = $(this).data('uid');
         const value = $(this).val();
 
         data.entries[uid].useGroupScoring = value === 'null' ? null : value === 'true';
         setOriginalDataValue(data, uid, 'extensions.use_group_scoring', data.entries[uid].useGroupScoring);
-        saveWorldInfo(name, data);
+        await saveWorldInfo(name, data);
     });
     useGroupScoringSelect.val((entry.useGroupScoring === null || entry.useGroupScoring === undefined) ? 'null' : entry.useGroupScoring ? 'true' : 'false').trigger('input');
 
     // automation id
     const automationIdInput = template.find('input[name="automationId"]');
     automationIdInput.data('uid', entry.uid);
-    automationIdInput.on('input', function () {
+    automationIdInput.on('input', async function () {
         const uid = $(this).data('uid');
         const value = $(this).val();
 
         data.entries[uid].automationId = value;
         setOriginalDataValue(data, uid, 'extensions.automation_id', data.entries[uid].automationId);
-        saveWorldInfo(name, data);
+        await saveWorldInfo(name, data);
     });
     automationIdInput.val(entry.automationId ?? '').trigger('input');
     setTimeout(() => createEntryInputAutocomplete(automationIdInput, getAutomationIdCallback(data)), 1);
@@ -2416,7 +3211,8 @@ function duplicateWorldInfoEntry(data, uid) {
     }
 
     // Exclude uid and gather the rest of the properties
-    const { uid: _, ...originalData } = data.entries[uid];
+    const originalData = Object.assign({}, data.entries[uid]);
+    delete originalData.uid;
 
     // Create new entry and copy over data
     const entry = createWorldInfoEntry(data.name, data);
@@ -2442,36 +3238,56 @@ function deleteWorldInfoEntry(data, uid) {
     delete data.entries[uid];
 }
 
-const newEntryTemplate = {
-    key: [],
-    keysecondary: [],
-    comment: '',
-    content: '',
-    constant: false,
-    vectorized: false,
-    selective: true,
-    selectiveLogic: world_info_logic.AND_ANY,
-    addMemo: false,
-    order: 100,
-    position: 0,
-    disable: false,
-    excludeRecursion: false,
-    preventRecursion: false,
-    delayUntilRecursion: false,
-    probability: 100,
-    useProbability: true,
-    depth: DEFAULT_DEPTH,
-    group: '',
-    groupOverride: false,
-    groupWeight: DEFAULT_WEIGHT,
-    scanDepth: null,
-    caseSensitive: null,
-    matchWholeWords: null,
-    useGroupScoring: null,
-    automationId: '',
-    role: 0,
+/**
+ * Definitions of types for new WI entries
+ *
+ * Use `newEntryTemplate` if you just need the template that contains default values
+ *
+ * @type {{[key: string]: { default: any, type: string }}}
+ */
+const newEntryDefinition = {
+    key: { default: [], type: 'array' },
+    keysecondary: { default: [], type: 'array' },
+    comment: { default: '', type: 'string' },
+    content: { default: '', type: 'string' },
+    constant: { default: false, type: 'boolean' },
+    vectorized: { default: false, type: 'boolean' },
+    selective: { default: true, type: 'boolean' },
+    selectiveLogic: { default: world_info_logic.AND_ANY, type: 'enum' },
+    addMemo: { default: false, type: 'boolean' },
+    order: { default: 100, type: 'number' },
+    position: { default: 0, type: 'number' },
+    disable: { default: false, type: 'boolean' },
+    excludeRecursion: { default: false, type: 'boolean' },
+    preventRecursion: { default: false, type: 'boolean' },
+    delayUntilRecursion: { default: false, type: 'boolean' },
+    probability: { default: 100, type: 'number' },
+    useProbability: { default: true, type: 'boolean' },
+    depth: { default: DEFAULT_DEPTH, type: 'number' },
+    group: { default: '', type: 'string' },
+    groupOverride: { default: false, type: 'boolean' },
+    groupWeight: { default: DEFAULT_WEIGHT, type: 'number' },
+    scanDepth: { default: null, type: 'number?' },
+    caseSensitive: { default: null, type: 'boolean?' },
+    matchWholeWords: { default: null, type: 'boolean?' },
+    useGroupScoring: { default: null, type: 'boolean?' },
+    automationId: { default: '', type: 'string' },
+    role: { default: 0, type: 'enum' },
+    sticky: { default: null, type: 'number?' },
+    cooldown: { default: null, type: 'number?' },
+    delay: { default: null, type: 'number?' },
 };
 
+const newEntryTemplate = Object.fromEntries(
+    Object.entries(newEntryDefinition).map(([key, value]) => [key, value.default]),
+);
+
+/**
+ * Creates a new world info entry from template.
+ * @param {string} _name Name of the WI (unused)
+ * @param {any} data WI data
+ * @returns {object | undefined} New entry object or undefined if failed
+ */
 function createWorldInfoEntry(_name, data) {
     const newUid = getFreeWorldEntryUid(data);
 
@@ -2487,6 +3303,9 @@ function createWorldInfoEntry(_name, data) {
 }
 
 async function _save(name, data) {
+    // Prevent double saving if both immediate and debounced save are called
+    cancelDebounce(saveWorldDebounced);
+
     await fetch('/api/worldinfo/edit', {
         method: 'POST',
         headers: getRequestHeaders(),
@@ -2495,12 +3314,13 @@ async function _save(name, data) {
     eventSource.emit(event_types.WORLDINFO_UPDATED, name, data);
 }
 
-async function saveWorldInfo(name, data, immediately) {
+async function saveWorldInfo(name, data, immediately = false) {
     if (!name || !data) {
         return;
     }
 
-    delete worldInfoCache[name];
+    // Update cache immediately, so any future call can pull from this
+    worldInfoCache.set(name, data);
 
     if (immediately) {
         return await _save(name, data);
@@ -2511,7 +3331,7 @@ async function saveWorldInfo(name, data, immediately) {
 
 async function renameWorldInfo(name, data) {
     const oldName = name;
-    const newName = await callPopup('<h3>Rename World Info</h3>Enter a new name:', 'input', oldName);
+    const newName = await Popup.show.input('Rename World Info', 'Enter a new name:', oldName);
 
     if (oldName === newName || !newName) {
         console.debug('World info rename cancelled');
@@ -2654,14 +3474,12 @@ async function createNewWorldInfo(worldName, { interactive = false } = {}) {
 async function getCharacterLore() {
     const character = characters[this_chid];
     const name = character?.name;
+    /** @type {Set<string>} */
     let worldsToSearch = new Set();
 
     const baseWorldName = character?.data?.extensions?.world;
     if (baseWorldName) {
         worldsToSearch.add(baseWorldName);
-    } else {
-        console.debug(`Character ${name}'s base world could not be found or is empty! Skipping...`);
-        return [];
     }
 
     // TODO: Maybe make the utility function not use the window context?
@@ -2671,40 +3489,48 @@ async function getCharacterLore() {
         worldsToSearch = new Set([...worldsToSearch, ...extraCharLore.extraBooks]);
     }
 
+    if (!worldsToSearch.size) {
+        return [];
+    }
+
     let entries = [];
     for (const worldName of worldsToSearch) {
         if (selected_world_info.includes(worldName)) {
-            console.debug(`Character ${name}'s world ${worldName} is already activated in global world info! Skipping...`);
+            console.debug(`[WI] Character ${name}'s world ${worldName} is already activated in global world info! Skipping...`);
             continue;
         }
 
         if (chat_metadata[METADATA_KEY] === worldName) {
-            console.debug(`Character ${name}'s world ${worldName} is already activated in chat lore! Skipping...`);
+            console.debug(`[WI] Character ${name}'s world ${worldName} is already activated in chat lore! Skipping...`);
             continue;
         }
 
         const data = await loadWorldInfoData(worldName);
-        const newEntries = data ? Object.keys(data.entries).map((x) => data.entries[x]).map(x => ({ ...x, world: worldName })) : [];
+        const newEntries = data ? Object.keys(data.entries).map((x) => data.entries[x]).map(({ uid, ...rest }) => ({ uid, world: worldName, ...rest })) : [];
         entries = entries.concat(newEntries);
+
+        if (!newEntries.length) {
+            console.debug(`[WI] Character ${name}'s world ${worldName} could not be found or is empty`);
+        }
     }
 
-    console.debug(`Character ${characters[this_chid]?.name} lore (${baseWorldName}) has ${entries.length} world info entries`);
+    console.debug(`[WI] Character ${name}'s lore has ${entries.length} world info entries`, [...worldsToSearch]);
     return entries;
 }
 
 async function getGlobalLore() {
-    if (!selected_world_info) {
+    if (!selected_world_info?.length) {
         return [];
     }
 
     let entries = [];
     for (const worldName of selected_world_info) {
         const data = await loadWorldInfoData(worldName);
-        const newEntries = data ? Object.keys(data.entries).map((x) => data.entries[x]).map(x => ({ ...x, world: worldName })) : [];
+        const newEntries = data ? Object.keys(data.entries).map((x) => data.entries[x]).map(({ uid, ...rest }) => ({ uid, world: worldName, ...rest })) : [];
         entries = entries.concat(newEntries);
     }
 
-    console.debug(`Global world info has ${entries.length} entries`);
+    console.debug(`[WI] Global world info has ${entries.length} entries`, selected_world_info);
 
     return entries;
 }
@@ -2717,14 +3543,14 @@ async function getChatLore() {
     }
 
     if (selected_world_info.includes(chatWorld)) {
-        console.debug(`Chat world ${chatWorld} is already activated in global world info! Skipping...`);
+        console.debug(`[WI] Chat world ${chatWorld} is already activated in global world info! Skipping...`);
         return [];
     }
 
     const data = await loadWorldInfoData(chatWorld);
-    const entries = data ? Object.keys(data.entries).map((x) => data.entries[x]).map(x => ({ ...x, world: chatWorld })) : [];
+    const entries = data ? Object.keys(data.entries).map((x) => data.entries[x]).map(({ uid, ...rest }) => ({ uid, world: chatWorld, ...rest })) : [];
 
-    console.debug(`Chat lore has ${entries.length} entries`);
+    console.debug(`[WI] Chat lore has ${entries.length} entries`, [chatWorld]);
 
     return entries;
 }
@@ -2748,7 +3574,7 @@ export async function getSortedEntries() {
                 entries = [...globalLore.sort(sortFn), ...characterLore.sort(sortFn)];
                 break;
             default:
-                console.error('Unknown WI insertion strategy: ', world_info_character_strategy, 'defaulting to evenly');
+                console.error('[WI] Unknown WI insertion strategy:', world_info_character_strategy, 'defaulting to evenly');
                 entries = [...globalLore, ...characterLore].sort(sortFn);
                 break;
         }
@@ -2756,7 +3582,13 @@ export async function getSortedEntries() {
         // Chat lore always goes first
         entries = [...chatLore.sort(sortFn), ...entries];
 
-        console.debug(`Sorted ${entries.length} world lore entries using strategy ${world_info_character_strategy}`);
+        // Parse decorators
+        entries = entries.map((entry) => {
+            const [decorators, content] = parseDecorators(entry.content);
+            return { ...entry, decorators, content };
+        });
+
+        console.debug(`[WI] Found ${entries.length} world lore entries. Sorted by strategy`, Object.entries(world_info_insertion_strategy).find((x) => x[1] === world_info_character_strategy));
 
         // Need to deep clone the entries to avoid modifying the cached data
         return structuredClone(entries);
@@ -2767,16 +3599,75 @@ export async function getSortedEntries() {
     }
 }
 
+
+/**
+ * Parse decorators from worldinfo content
+ * @param {string} content The content to parse
+ * @returns {[string[],string]} The decorators found in the content and the content without decorators
+*/
+function parseDecorators(content) {
+    /**
+     * Check if the decorator is known
+     * @param {string} data string to check
+     * @returns {boolean} true if the decorator is known
+    */
+    const isKnownDecorator = (data) => {
+        if (data.startsWith('@@@')) {
+            data = data.substring(1);
+        }
+
+        for (let i = 0; i < KNOWN_DECORATORS.length; i++) {
+            if (data.startsWith(KNOWN_DECORATORS[i])) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    if (content.startsWith('@@')) {
+        let newContent = content;
+        const splited = content.split('\n');
+        let decorators = [];
+        let fallbacked = false;
+
+        for (let i = 0; i < splited.length; i++) {
+            if (splited[i].startsWith('@@')) {
+                if (splited[i].startsWith('@@@') && !fallbacked) {
+                    continue;
+                }
+
+                if (isKnownDecorator(splited[i])) {
+                    decorators.push(splited[i].startsWith('@@@') ? splited[i].substring(1) : splited[i]);
+                    fallbacked = false;
+                }
+                else {
+                    fallbacked = true;
+                }
+            } else {
+                newContent = splited.slice(i).join('\n');
+                break;
+            }
+        }
+        return [decorators, newContent];
+    }
+
+    return [[], content];
+
+}
+
 /**
  * Performs a scan on the chat and returns the world info activated.
- * @param {string[]} chat The chat messages to scan.
+ * @param {string[]} chat The chat messages to scan, in reverse order.
  * @param {number} maxContext The maximum context size of the generation.
+ * @param {boolean} isDryRun Whether to perform a dry run.
  * @typedef {{ worldInfoBefore: string, worldInfoAfter: string, EMEntries: any[], WIDepthEntries: any[], allActivatedEntries: Set<any> }} WIActivated
  * @returns {Promise<WIActivated>} The world info activated.
  */
-async function checkWorldInfo(chat, maxContext) {
+async function checkWorldInfo(chat, maxContext, isDryRun) {
     const context = getContext();
     const buffer = new WorldInfoBuffer(chat);
+
+    console.debug(`[WI] --- START WI SCAN (on ${chat.length} messages) ---`);
 
     // Combine the chat
 
@@ -2786,12 +3677,12 @@ async function checkWorldInfo(chat, maxContext) {
         if (context.extensionPrompts[key]?.scan) {
             const prompt = getExtensionPromptByName(key);
             if (prompt) {
-                buffer.addRecurse(prompt);
+                buffer.addInject(prompt);
             }
         }
     }
 
-    let needsToScan = true;
+    let scanState = scan_state.INITIAL;
     let token_budget_overflowed = false;
     let count = 0;
     let allActivatedEntries = new Set();
@@ -2801,31 +3692,62 @@ async function checkWorldInfo(chat, maxContext) {
     let budget = Math.round(world_info_budget * maxContext / 100) || 1;
 
     if (world_info_budget_cap > 0 && budget > world_info_budget_cap) {
-        console.debug(`Budget ${budget} exceeds cap ${world_info_budget_cap}, using cap`);
+        console.debug(`[WI] Budget ${budget} exceeds cap ${world_info_budget_cap}, using cap`);
         budget = world_info_budget_cap;
     }
 
-    console.debug(`Context size: ${maxContext}; WI budget: ${budget} (max% = ${world_info_budget}%, cap = ${world_info_budget_cap})`);
+    console.debug(`[WI] Context size: ${maxContext}; WI budget: ${budget} (max% = ${world_info_budget}%, cap = ${world_info_budget_cap})`);
     const sortedEntries = await getSortedEntries();
+    const timedEffects = new WorldInfoTimedEffects(chat, sortedEntries);
+
+    !isDryRun && timedEffects.checkTimedEffects();
 
     if (sortedEntries.length === 0) {
         return { worldInfoBefore: '', worldInfoAfter: '', WIDepthEntries: [], EMEntries: [], allActivatedEntries: new Set() };
     }
 
-    while (needsToScan) {
-        // Track how many times the loop has run
+    console.debug(`[WI] --- SEARCHING ENTRIES (on ${sortedEntries.length} entries) ---`);
+
+    while (scanState) {
+        // Track how many times the loop has run. May be useful for debugging.
         count++;
 
+        console.debug(`[WI] Loop #${count}. Search state`, Object.entries(scan_state).find(x => x[1] === scanState));
+
+        // Until decided otherwise, we set the loop to stop scanning after this
+        let nextScanState = scan_state.NONE;
+
+        // Loop and find all entries that can activate here
         let activatedNow = new Set();
 
         for (let entry of sortedEntries) {
+            // Logging preparation
+            let headerLogged = false;
+            function log(...args) {
+                if (!headerLogged) {
+                    console.debug(`[WI] Entry ${entry.uid}`, `from '${entry.world}' processing`, entry);
+                    headerLogged = true;
+                }
+                console.debug(`[WI] Entry ${entry.uid}`, ...args);
+            }
+
+            // Already processed, considered and then skipped entries should still be skipped
+            if (failedProbabilityChecks.has(entry) || allActivatedEntries.has(entry)) {
+                continue;
+            }
+
+            if (entry.disable == true) {
+                log('disabled');
+                continue;
+            }
+
             // Check if this entry applies to the character or if it's excluded
             if (entry.characterFilter && entry.characterFilter?.names?.length > 0) {
                 const nameIncluded = entry.characterFilter.names.includes(getCharaFilename());
                 const filtered = entry.characterFilter.isExclude ? nameIncluded : !nameIncluded;
 
                 if (filtered) {
-                    console.debug(`WI entry ${entry.uid} filtered out by character`);
+                    log('filtered out by character');
                     continue;
                 }
             }
@@ -2842,169 +3764,264 @@ async function checkWorldInfo(chat, maxContext) {
                         const filtered = entry.characterFilter.isExclude ? includesTag : !includesTag;
 
                         if (filtered) {
-                            console.debug(`WI entry ${entry.uid} filtered out by tag`);
+                            log('filtered out by tag');
                             continue;
                         }
                     }
                 }
             }
 
-            if (failedProbabilityChecks.has(entry)) {
+            const isSticky = timedEffects.isEffectActive('sticky', entry);
+            const isCooldown = timedEffects.isEffectActive('cooldown', entry);
+            const isDelay = timedEffects.isEffectActive('delay', entry);
+
+            if (isDelay) {
+                log('suppressed by delay');
                 continue;
             }
 
-            if (allActivatedEntries.has(entry) || entry.disable == true || (count > 1 && world_info_recursive && entry.excludeRecursion) || (count == 1 && entry.delayUntilRecursion)) {
+            if (isCooldown && !isSticky) {
+                log('suppressed by cooldown');
                 continue;
             }
 
-            if (entry.constant || buffer.isExternallyActivated(entry)) {
+            // Only use checks for recursion flags if the scan step was activated by recursion
+            if (scanState !== scan_state.RECURSION && entry.delayUntilRecursion) {
+                log('suppressed by delay until recursion');
+                continue;
+            }
+
+            if (scanState === scan_state.RECURSION && world_info_recursive && entry.excludeRecursion) {
+                log('suppressed by exclude recursion');
+                continue;
+            }
+
+            if (entry.decorators.includes('@@activate')) {
+                log('activated by @@activate decorator');
                 activatedNow.add(entry);
                 continue;
             }
 
-            if (Array.isArray(entry.key) && entry.key.length) { //check for keywords existing
-                // If selectiveLogic isn't found, assume it's AND, only do this once per entry
-                const selectiveLogic = entry.selectiveLogic ?? 0;
+            if (entry.decorators.includes('@@dont_activate')) {
+                log('suppressed by @@dont_activate decorator');
+                continue;
+            }
 
-                primary: for (let key of entry.key) {
-                    const substituted = substituteParams(key);
-                    const textToScan = buffer.get(entry);
+            // Now do checks for immediate activations
+            if (entry.constant) {
+                log('activated because of constant');
+                activatedNow.add(entry);
+                continue;
+            }
 
-                    if (substituted && buffer.matchKeys(textToScan, substituted.trim(), entry)) {
-                        console.debug(`WI UID ${entry.uid} found by primary match: ${substituted}.`);
+            if (buffer.isExternallyActivated(entry)) {
+                log('externally activated');
+                activatedNow.add(entry);
+                continue;
+            }
 
-                        //selective logic begins
-                        if (
-                            entry.selective && //all entries are selective now
-                            Array.isArray(entry.keysecondary) && //always true
-                            entry.keysecondary.length //ignore empties
-                        ) {
-                            console.debug(`WI UID:${entry.uid} found. Checking logic: ${entry.selectiveLogic}`);
-                            let hasAnyMatch = false;
-                            let hasAllMatch = true;
-                            secondary: for (let keysecondary of entry.keysecondary) {
-                                const secondarySubstituted = substituteParams(keysecondary);
-                                const hasSecondaryMatch = secondarySubstituted && buffer.matchKeys(textToScan, secondarySubstituted.trim(), entry);
-                                console.debug(`WI UID:${entry.uid}: Filtering for secondary keyword - "${secondarySubstituted}".`);
+            if (isSticky) {
+                log('activated because active sticky');
+                activatedNow.add(entry);
+                continue;
+            }
 
-                                if (hasSecondaryMatch) {
-                                    hasAnyMatch = true;
-                                }
+            if (!Array.isArray(entry.key) || !entry.key.length) {
+                log('has no keys defined, skipped');
+                continue;
+            }
 
-                                if (!hasSecondaryMatch) {
-                                    hasAllMatch = false;
-                                }
+            // Cache the text to scan before the loop, it won't change its content
+            const textToScan = buffer.get(entry, scanState);
 
-                                // Simplified AND ANY / NOT ALL if statement. (Proper fix for PR#1356 by Bronya)
-                                // If AND ANY logic and the main checks pass OR if NOT ALL logic and the main checks do not pass
-                                if ((selectiveLogic === world_info_logic.AND_ANY && hasSecondaryMatch) || (selectiveLogic === world_info_logic.NOT_ALL && !hasSecondaryMatch)) {
-                                    // Differ both logic statements in the debugger
-                                    if (selectiveLogic === world_info_logic.AND_ANY) {
-                                        console.debug(`(AND ANY Check) Activating WI Entry ${entry.uid}. Found match for word: ${substituted} ${secondarySubstituted}`);
-                                    } else {
-                                        console.debug(`(NOT ALL Check) Activating WI Entry ${entry.uid}. Found match for word "${substituted}" without secondary keyword: ${secondarySubstituted}`);
-                                    }
-                                    activatedNow.add(entry);
-                                    break secondary;
-                                }
-                            }
+            // PRIMARY KEYWORDS
+            let primaryKeyMatch = entry.key.find(key => {
+                const substituted = substituteParams(key);
+                return substituted && buffer.matchKeys(textToScan, substituted.trim(), entry);
+            });
 
-                            // Handle NOT ANY logic
-                            if (selectiveLogic === world_info_logic.NOT_ANY && !hasAnyMatch) {
-                                console.debug(`(NOT ANY Check) Activating WI Entry ${entry.uid}, no secondary keywords found.`);
-                                activatedNow.add(entry);
-                            }
+            if (!primaryKeyMatch) {
+                // Don't write logs for simple no-matches
+                continue;
+            }
 
-                            // Handle AND ALL logic
-                            if (selectiveLogic === world_info_logic.AND_ALL && hasAllMatch) {
-                                console.debug(`(AND ALL Check) Activating WI Entry ${entry.uid}, all secondary keywords found.`);
-                                activatedNow.add(entry);
-                            }
-                        } else {
-                            // Handle cases where secondary is empty
-                            console.debug(`WI UID ${entry.uid}: Activated without filter logic.`);
-                            activatedNow.add(entry);
-                            break primary;
-                        }
+            const hasSecondaryKeywords = (
+                entry.selective && //all entries are selective now
+                Array.isArray(entry.keysecondary) && //always true
+                entry.keysecondary.length //ignore empties
+            );
+
+            if (!hasSecondaryKeywords) {
+                // Handle cases where secondary is empty
+                log('activated by primary key match', primaryKeyMatch);
+                activatedNow.add(entry);
+                continue;
+            }
+
+
+            // SECONDARY KEYWORDS
+            const selectiveLogic = entry.selectiveLogic ?? 0; // If selectiveLogic isn't found, assume it's AND, only do this once per entry
+            log('Entry with primary key match', primaryKeyMatch, 'has secondary keywords. Checking with logic logic', Object.entries(world_info_logic).find(x => x[1] === entry.selectiveLogic));
+
+            /** @type {() => boolean} */
+            function matchSecondaryKeys() {
+                let hasAnyMatch = false;
+                let hasAllMatch = true;
+                for (let keysecondary of entry.keysecondary) {
+                    const secondarySubstituted = substituteParams(keysecondary);
+                    const hasSecondaryMatch = secondarySubstituted && buffer.matchKeys(textToScan, secondarySubstituted.trim(), entry);
+
+                    if (hasSecondaryMatch) hasAnyMatch = true;
+                    if (!hasSecondaryMatch) hasAllMatch = false;
+
+                    // Simplified AND ANY / NOT ALL if statement. (Proper fix for PR#1356 by Bronya)
+                    // If AND ANY logic and the main checks pass OR if NOT ALL logic and the main checks do not pass
+                    if (selectiveLogic === world_info_logic.AND_ANY && hasSecondaryMatch) {
+                        log('activated. (AND ANY) Found match secondary keyword', secondarySubstituted);
+                        return true;
+                    }
+                    if (selectiveLogic === world_info_logic.NOT_ALL && !hasSecondaryMatch) {
+                        log('activated. (NOT ALL) Found not matching secondary keyword', secondarySubstituted);
+                        return true;
                     }
                 }
+
+                // Handle NOT ANY logic
+                if (selectiveLogic === world_info_logic.NOT_ANY && !hasAnyMatch) {
+                    log('activated. (NOT ANY) No secondary keywords found', entry.keysecondary);
+                    return true;
+                }
+
+                // Handle AND ALL logic
+                if (selectiveLogic === world_info_logic.AND_ALL && hasAllMatch) {
+                    log('activated. (AND ALL) All secondary keywords found', entry.keysecondary);
+                    return true;
+                }
+
+                return false;
             }
+
+            const matched = matchSecondaryKeys();
+            if (!matched) {
+                log('skipped. Secondary keywords not satisfied', entry.keysecondary);
+                continue;
+            }
+
+            // Success logging was already done inside the function, so just add the entry
+            activatedNow.add(entry);
+            continue;
         }
 
-        needsToScan = world_info_recursive && activatedNow.size > 0;
+        console.debug(`[WI] Search done. Found ${activatedNow.size} possible entries.`);
         const newEntries = [...activatedNow]
             .sort((a, b) => sortedEntries.indexOf(a) - sortedEntries.indexOf(b));
         let newContent = '';
         const textToScanTokens = await getTokenCountAsync(allActivatedText);
-        const probabilityChecksBefore = failedProbabilityChecks.size;
 
-        filterByInclusionGroups(newEntries, allActivatedEntries, buffer);
+        filterByInclusionGroups(newEntries, allActivatedEntries, buffer, scanState);
 
-        console.debug('-- PROBABILITY CHECKS BEGIN --');
+        console.debug('[WI] --- PROBABILITY CHECKS ---');
         for (const entry of newEntries) {
-            const rollValue = Math.random() * 100;
+            function verifyProbability() {
+                // If we don't need to roll, it's always true
+                if (!entry.useProbability || entry.probability === 100) {
+                    console.debug(`WI entry ${entry.uid} does not use probability`);
+                    return true;
+                }
 
-            if (entry.useProbability && rollValue > entry.probability) {
-                console.debug(`WI entry ${entry.uid} ${entry.key} failed probability check, skipping`);
+                const isSticky = timedEffects.isEffectActive('sticky', entry);
+                if (isSticky) {
+                    console.debug(`WI entry ${entry.uid} is sticky, does not need to re-roll probability`);
+                    return true;
+                }
+
+                const rollValue = Math.random() * 100;
+                if (rollValue <= entry.probability) {
+                    console.debug(`WI entry ${entry.uid} passed probability check of ${entry.probability}%`);
+                    return true;
+                }
+
                 failedProbabilityChecks.add(entry);
+                return false;
+            }
+
+            const success = verifyProbability();
+            if (!success) {
+                console.debug(`WI entry ${entry.uid} failed probability check, removing from activated entries`, entry);
                 continue;
-            } else { console.debug(`uid:${entry.uid} passed probability check, inserting to prompt`); }
+            }
 
             // Substitute macros inline, for both this checking and also future processing
             entry.content = substituteParams(entry.content);
             newContent += `${entry.content}\n`;
 
             if ((textToScanTokens + (await getTokenCountAsync(newContent))) >= budget) {
-                console.debug('WI budget reached, stopping');
                 if (world_info_overflow_alert) {
-                    console.log('Alerting');
+                    console.warn(`[WI] budget of ${budget} reached, stopping after ${allActivatedEntries.size} entries`);
                     toastr.warning(`World info budget reached after ${allActivatedEntries.size} entries.`, 'World Info');
+                } else {
+                    console.debug(`[WI] budget of ${budget} reached, stopping after ${allActivatedEntries.size} entries`);
                 }
-                needsToScan = false;
                 token_budget_overflowed = true;
                 break;
             }
 
             allActivatedEntries.add(entry);
-            console.debug('WI entry activated:', entry);
+            console.debug(`[WI] Entry ${entry.uid} activation successful, adding to prompt`, entry);
         }
 
-        const probabilityChecksAfter = failedProbabilityChecks.size;
+        const successfulNewEntries = newEntries.filter(x => !failedProbabilityChecks.has(x));
+        const successfulNewEntriesForRecursion = successfulNewEntries.filter(x => !x.preventRecursion);
 
-        if ((probabilityChecksAfter - probabilityChecksBefore) === activatedNow.size) {
-            console.debug('WI probability checks failed for all activated entries, stopping');
-            needsToScan = false;
+        if (!newEntries.length) {
+            console.debug('[WI] No new entries activated, stopping');
+        } else if (!successfulNewEntries.length) {
+            console.debug('[WI] Probability checks failed for all activated entries, stopping');
+        } else {
+            console.debug(`[WI] Successfully activated ${successfulNewEntries.length} new entries to prompt. ${allActivatedEntries.size} total entries activated.`, successfulNewEntries);
         }
 
-        if (newEntries.length === 0) {
-            console.debug('No new entries activated, stopping');
-            needsToScan = false;
+        // After processing and rolling entries is done, see if we should continue with normal recursion
+        if (world_info_recursive && !token_budget_overflowed && successfulNewEntriesForRecursion.length) {
+            nextScanState = scan_state.RECURSION;
         }
 
-        if (needsToScan) {
-            const text = newEntries
-                .filter(x => !failedProbabilityChecks.has(x))
-                .filter(x => !x.preventRecursion)
+        // If we are inside min activations scan, and we have recursive buffer, we should do a recursive scan before increasing the buffer again
+        // There might be recurse-trigger-able entries that match the buffer, so we need to check that
+        if (world_info_recursive && !token_budget_overflowed && scanState === scan_state.MIN_ACTIVATIONS && buffer.hasRecurse()) {
+            nextScanState = scan_state.RECURSION;
+        }
+
+        // If scanning is planned to stop, but min activations is set and not satisfied, check if we should continue
+        const minActivationsNotSatisfied = world_info_min_activations > 0 && (allActivatedEntries.size < world_info_min_activations);
+        if (!nextScanState && !token_budget_overflowed && minActivationsNotSatisfied) {
+            console.debug('[WI] --- MIN ACTIVATIONS CHECK ---');
+
+            let over_max = (
+                world_info_min_activations_depth_max > 0 &&
+                buffer.getDepth() > world_info_min_activations_depth_max
+            ) || (buffer.getDepth() > chat.length);
+
+            if (!over_max) {
+                console.debug(`[WI] Min activations not reached (${allActivatedEntries.size}/${world_info_min_activations}), advancing depth to ${buffer.getDepth() + 1} and checking again`);
+                nextScanState = scan_state.MIN_ACTIVATIONS; // loop
+                buffer.advanceScan();
+            } else {
+                console.debug(`[WI] Min activations not reached (${allActivatedEntries.size}/${world_info_min_activations}), but reached on of depth. Stopping`);
+            }
+        }
+
+        // Final check if we should really continue scan, and extend the current WI recurse buffer
+        scanState = nextScanState;
+        if (scanState) {
+            const text = successfulNewEntriesForRecursion
                 .map(x => x.content).join('\n');
             buffer.addRecurse(text);
             allActivatedText = (text + '\n' + allActivatedText);
         }
-
-        // world_info_min_activations
-        if (!needsToScan && !token_budget_overflowed) {
-            if (world_info_min_activations > 0 && (allActivatedEntries.size < world_info_min_activations)) {
-                let over_max = (
-                    world_info_min_activations_depth_max > 0 &&
-                    buffer.getDepth() > world_info_min_activations_depth_max
-                ) || (buffer.getDepth() > chat.length);
-
-                if (!over_max) {
-                    needsToScan = true; // loop
-                    buffer.advanceScanPosition();
-                }
-            }
-        }
     }
+
+    console.debug('[WI] --- BUILDING PROMPT ---');
 
     // Forward-sorted list of entries for joining
     const WIBeforeEntries = [];
@@ -3021,7 +4038,7 @@ async function checkWorldInfo(chat, maxContext) {
         const content = getRegexedString(entry.content, regex_placement.WORLD_INFO, { depth: regexDepth, isMarkdown: false, isPrompt: true });
 
         if (!content) {
-            console.debug('Skipping adding WI entry to prompt due to empty content:', entry);
+            console.debug(`[WI] Entry ${entry.uid}`, 'skipped adding to prompt due to empty content', entry);
             return;
         }
 
@@ -3075,7 +4092,12 @@ async function checkWorldInfo(chat, maxContext) {
         context.setExtensionPrompt(NOTE_MODULE_NAME, ANWithWI, chat_metadata[metadata_keys.position], chat_metadata[metadata_keys.depth], extension_settings.note.allowWIScan, chat_metadata[metadata_keys.role]);
     }
 
-    buffer.cleanExternalActivations();
+    !isDryRun && timedEffects.setTimedEffects(Array.from(allActivatedEntries));
+    buffer.resetExternalEffects();
+    timedEffects.cleanUp();
+
+    console.log(`[WI] Adding ${allActivatedEntries.size} entries to prompt`, Array.from(allActivatedEntries));
+    console.debug('[WI] --- DONE ---');
 
     return { worldInfoBefore, worldInfoAfter, EMEntries, WIDepthEntries, allActivatedEntries };
 }
@@ -3085,18 +4107,19 @@ async function checkWorldInfo(chat, maxContext) {
  * @param {Record<string, WIScanEntry[]>} groups The groups to filter
  * @param {WorldInfoBuffer} buffer The buffer to use for scoring
  * @param {(entry: WIScanEntry) => void} removeEntry The function to remove an entry
+ * @param {number} scanState The current scan state
  */
-function filterGroupsByScoring(groups, buffer, removeEntry) {
+function filterGroupsByScoring(groups, buffer, removeEntry, scanState) {
     for (const [key, group] of Object.entries(groups)) {
         // Group scoring is disabled both globally and for the group entries
         if (!world_info_use_group_scoring && !group.some(x => x.useGroupScoring)) {
-            console.debug(`Skipping group scoring for group '${key}'`);
+            console.debug(`[WI] Skipping group scoring for group '${key}'`);
             continue;
         }
 
-        const scores = group.map(entry => buffer.getScore(entry));
+        const scores = group.map(entry => buffer.getScore(entry, scanState));
         const maxScore = Math.max(...scores);
-        console.debug(`Group '${key}' max score: ${maxScore}`);
+        console.debug(`[WI] Group '${key}' max score:`, maxScore);
         //console.table(group.map((entry, i) => ({ uid: entry.uid, key: JSON.stringify(entry.key), score: scores[i] })));
 
         for (let i = 0; i < group.length; i++) {
@@ -3107,7 +4130,7 @@ function filterGroupsByScoring(groups, buffer, removeEntry) {
             }
 
             if (scores[i] < maxScore) {
-                console.debug(`Removing score loser from inclusion group '${key}' entry '${group[i].uid}'`, group[i]);
+                console.debug(`[WI] Entry ${group[i].uid}`, `removed as score loser from inclusion group '${key}'`, group[i]);
                 removeEntry(group[i]);
                 group.splice(i, 1);
                 scores.splice(i, 1);
@@ -3122,9 +4145,11 @@ function filterGroupsByScoring(groups, buffer, removeEntry) {
  * @param {object[]} newEntries Entries activated on current recursion level
  * @param {Set<object>} allActivatedEntries Set of all activated entries
  * @param {WorldInfoBuffer} buffer The buffer to use for scanning
+ * @param {number} scanState The current scan state
  */
-function filterByInclusionGroups(newEntries, allActivatedEntries, buffer) {
-    console.debug('-- INCLUSION GROUP CHECKS BEGIN --');
+function filterByInclusionGroups(newEntries, allActivatedEntries, buffer, scanState) {
+    console.debug('[WI] --- INCLUSION GROUP CHECKS ---');
+
     const grouped = newEntries.filter(x => x.group).reduce((acc, item) => {
         item.group.split(/,\s*/).filter(x => x).forEach(group => {
             if (!acc[group]) {
@@ -3136,7 +4161,7 @@ function filterByInclusionGroups(newEntries, allActivatedEntries, buffer) {
     }, {});
 
     if (Object.keys(grouped).length === 0) {
-        console.debug('No inclusion groups found');
+        console.debug('[WI] No inclusion groups found');
         return;
     }
 
@@ -3147,32 +4172,32 @@ function filterByInclusionGroups(newEntries, allActivatedEntries, buffer) {
                 continue;
             }
 
-            if (logging) console.debug(`Removing loser from inclusion group '${entry.group}' entry '${entry.uid}'`, entry);
+            if (logging) console.debug(`[WI] Entry ${entry.uid}`, `removed as loser from inclusion group '${entry.group}'`, entry);
             removeEntry(entry);
         }
     }
 
-    filterGroupsByScoring(grouped, buffer, removeEntry);
+    filterGroupsByScoring(grouped, buffer, removeEntry, scanState);
 
     for (const [key, group] of Object.entries(grouped)) {
-        console.debug(`Checking inclusion group '${key}' with ${group.length} entries`, group);
+        console.debug(`[WI] Checking inclusion group '${key}' with ${group.length} entries`, group);
 
         if (Array.from(allActivatedEntries).some(x => x.group === key)) {
-            console.debug(`Skipping inclusion group check, group already activated '${key}'`);
+            console.debug(`[WI] Skipping inclusion group check, group '${key}' was already activated`);
             // We need to forcefully deactivate all other entries in the group
             removeAllBut(group, null, false);
             continue;
         }
 
         if (!Array.isArray(group) || group.length <= 1) {
-            console.debug('Skipping inclusion group check, only one entry');
+            console.debug('[WI] Skipping inclusion group check, only one entry');
             continue;
         }
 
         // Check for group prio
         const prios = group.filter(x => x.groupOverride).sort(sortFn);
         if (prios.length) {
-            console.debug(`Activated inclusion group '${key}' with by prio winner entry '${prios[0].uid}'`, prios[0]);
+            console.debug(`[WI] Entry ${prios[0].uid}`, `activated as prio winner from inclusion group '${key}'`, prios[0]);
             removeAllBut(group, prios[0]);
             continue;
         }
@@ -3187,14 +4212,14 @@ function filterByInclusionGroups(newEntries, allActivatedEntries, buffer) {
             currentWeight += (entry.groupWeight ?? DEFAULT_WEIGHT);
 
             if (rollValue <= currentWeight) {
-                console.debug(`Activated inclusion group '${key}' with roll winner entry '${entry.uid}'`, entry);
+                console.debug(`[WI] Entry ${entry.uid}`, `activated as roll winner from inclusion group '${key}'`, entry);
                 winner = entry;
                 break;
             }
         }
 
         if (!winner) {
-            console.debug(`Failed to activate inclusion group '${key}', no winner found`);
+            console.debug(`[WI] Failed to activate inclusion group '${key}', no winner found`);
             continue;
         }
 
@@ -3236,6 +4261,9 @@ function convertAgnaiMemoryBook(inputObj) {
             useGroupScoring: null,
             automationId: '',
             role: extension_prompt_roles.SYSTEM,
+            sticky: null,
+            cooldown: null,
+            delay: null,
         };
     });
 
@@ -3275,6 +4303,9 @@ function convertRisuLorebook(inputObj) {
             useGroupScoring: null,
             automationId: '',
             role: extension_prompt_roles.SYSTEM,
+            sticky: null,
+            cooldown: null,
+            delay: null,
         };
     });
 
@@ -3319,6 +4350,9 @@ function convertNovelLorebook(inputObj) {
             useGroupScoring: null,
             automationId: '',
             role: extension_prompt_roles.SYSTEM,
+            sticky: null,
+            cooldown: null,
+            delay: null,
         };
     });
 
@@ -3365,6 +4399,9 @@ function convertCharacterBook(characterBook) {
             automationId: entry.extensions?.automation_id ?? '',
             role: entry.extensions?.role ?? extension_prompt_roles.SYSTEM,
             vectorized: entry.extensions?.vectorized ?? false,
+            sticky: entry.extensions?.sticky ?? null,
+            cooldown: entry.extensions?.cooldown ?? null,
+            delay: entry.extensions?.delay ?? null,
         };
     });
 
@@ -3411,7 +4448,7 @@ export function checkEmbeddedWorld(chid) {
                         importEmbeddedWorldInfo(true);
                     }
                 };
-                callPopup(html, 'confirm', '', { okButton: 'Yes' }).then(checkResult);
+                callGenericPopup(html, POPUP_TYPE.CONFIRM, '', { okButton: 'Yes' }).then(checkResult);
             }
             else {
                 toastr.info(
@@ -3435,11 +4472,9 @@ export async function importEmbeddedWorldInfo(skipPopup = false) {
     }
 
     const bookName = characters[chid]?.data?.character_book?.name || `${characters[chid]?.name}'s Lorebook`;
-    const confirmationText = (`<h3>Are you sure you want to import "${bookName}"?</h3>`) + (world_names.includes(bookName) ? 'It will overwrite the World/Lorebook with the same name.' : '');
 
     if (!skipPopup) {
-        const confirmation = await callPopup(confirmationText, 'confirm');
-
+        const confirmation = await Popup.show.confirm(`Are you sure you want to import "${bookName}"?`, world_names.includes(bookName) ? 'It will overwrite the World/Lorebook with the same name.' : '');
         if (!confirmation) {
             return;
         }
@@ -3497,6 +4532,7 @@ function onWorldInfoChange(args, text) {
                             }
                             break;
                         }
+                        case 'on':
                         default: {
                             selected_world_info.push(name);
                             wiElement.prop('selected', true);
@@ -3514,8 +4550,9 @@ function onWorldInfoChange(args, text) {
             $('#world_info').val(null).trigger('change');
         }
     } else { //if it's a pointer selection
-        let tempWorldInfo = [];
-        let selectedWorlds = $('#world_info').val().map((e) => Number(e)).filter((e) => !isNaN(e));
+        const tempWorldInfo = [];
+        const val = $('#world_info').val();
+        const selectedWorlds = (Array.isArray(val) ? val : [val]).map((e) => Number(e)).filter((e) => !isNaN(e));
         if (selectedWorlds.length > 0) {
             selectedWorlds.forEach((worldIndex) => {
                 const existingWorldName = world_names[worldIndex];
@@ -3533,6 +4570,7 @@ function onWorldInfoChange(args, text) {
 
     saveSettingsDebounced();
     eventSource.emit(event_types.WORLDINFO_SETTINGS_UPDATED);
+    return '';
 }
 
 export async function importWorldInfo(file) {
@@ -3677,7 +4715,7 @@ jQuery(() => {
 
     $('#world_create_button').on('click', async () => {
         const tempName = getFreeWorldName();
-        const finalName = await callPopup('<h3>Create a new World Info?</h3>Enter a name for the new file:', 'input', tempName);
+        const finalName = await Popup.show.input('Create a new World Info', 'Enter a name for the new file:', tempName);
 
         if (finalName) {
             await createNewWorldInfo(finalName, { interactive: true });
@@ -3723,6 +4761,11 @@ jQuery(() => {
     $('#world_info_budget').on('input', function () {
         world_info_budget = Number($(this).val());
         $('#world_info_budget_counter').val($(this).val());
+        saveSettings();
+    });
+
+    $('#world_info_include_names').on('input', function () {
+        world_info_include_names = !!$(this).prop('checked');
         saveSettings();
     });
 

@@ -1,5 +1,5 @@
-import { callPopup, cancelTtsPlay, eventSource, event_types, name2, saveSettingsDebounced, substituteParams } from '../../../script.js';
-import { ModuleWorkerWrapper, doExtrasFetch, extension_settings, getApiUrl, getContext, modules } from '../../extensions.js';
+import { cancelTtsPlay, eventSource, event_types, getCurrentChatId, isStreamingEnabled, name2, saveSettingsDebounced, substituteParams } from '../../../script.js';
+import { ModuleWorkerWrapper, doExtrasFetch, extension_settings, getApiUrl, getContext, modules, renderExtensionTemplateAsync } from '../../extensions.js';
 import { delay, escapeRegex, getBase64Async, getStringHash, onlyUnique } from '../../utils.js';
 import { EdgeTtsProvider } from './edge.js';
 import { ElevenLabsTtsProvider } from './elevenlabs.js';
@@ -10,13 +10,19 @@ import { NovelTtsProvider } from './novel.js';
 import { power_user } from '../../power-user.js';
 import { OpenAITtsProvider } from './openai.js';
 import { XTTSTtsProvider } from './xtts.js';
+import { VITSTtsProvider } from './vits.js';
 import { GSVITtsProvider } from './gsvi.js';
+import { SBVits2TtsProvider } from './sbvits2.js';
 import { AllTalkTtsProvider } from './alltalk.js';
 import { SpeechT5TtsProvider } from './speecht5.js';
 import { AzureTtsProvider } from './azure.js';
 import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
 import { SlashCommand } from '../../slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '../../slash-commands/SlashCommandArgument.js';
+import { debounce_timeout } from '../../constants.js';
+import { SlashCommandEnumValue, enumTypes } from '../../slash-commands/SlashCommandEnumValue.js';
+import { enumIcons } from '../../slash-commands/SlashCommandCommonEnumsProvider.js';
+import { POPUP_TYPE, callGenericPopup } from '../../popup.js';
 export { talkingAnimation };
 
 const UPDATE_INTERVAL = 1000;
@@ -27,6 +33,9 @@ let talkingHeadState = false;
 let lastChatId = null;
 let lastMessage = null;
 let lastMessageHash = null;
+let periodicMessageGenerationTimer = null;
+let lastPositionOfParagraphEnd = -1;
+let currentInitVoiceMapPromise = null;
 
 const DEFAULT_VOICE_MARKER = '[Default Voice]';
 const DISABLED_VOICE_MARKER = 'disabled';
@@ -76,7 +85,9 @@ const ttsProviders = {
     ElevenLabs: ElevenLabsTtsProvider,
     Silero: SileroTtsProvider,
     XTTSv2: XTTSTtsProvider,
+    VITS: VITSTtsProvider,
     GSVI: GSVITtsProvider,
+    SBVits2: SBVits2TtsProvider,
     System: SystemTtsProvider,
     Coqui: CoquiTtsProvider,
     Edge: EdgeTtsProvider,
@@ -107,7 +118,7 @@ async function onNarrateOneMessage() {
 
 async function onNarrateText(args, text) {
     if (!text) {
-        return;
+        return '';
     }
 
     audioElement.src = '/sounds/silence.mp3';
@@ -133,6 +144,7 @@ async function onNarrateText(args, text) {
 
     // Return back to the chat voices
     await initVoiceMap(false);
+    return '';
 }
 
 async function moduleWorker() {
@@ -302,7 +314,7 @@ async function onTtsVoicesClick() {
         popupText = 'Could not load voices list. Check your API key.';
     }
 
-    callPopup(popupText, 'text');
+    callGenericPopup(popupText, POPUP_TYPE.TEXT, '', { allowVerticalScrolling: true });
 }
 
 function updateUiAudioPlayState() {
@@ -336,13 +348,18 @@ function onAudioControlClicked() {
 }
 
 function addAudioControl() {
-
-    $('#extensionsMenu').prepend(`
+    $('#tts_wand_container').append(`
         <div id="ttsExtensionMenuItem" class="list-group-item flex-container flexGap5">
             <div id="tts_media_control" class="extensionsMenuExtensionButton "/></div>
             TTS Playback
         </div>`);
+    $('#tts_wand_container').append(`
+        <div id="ttsExtensionNarrateAll" class="list-group-item flex-container flexGap5">
+            <div class="extensionsMenuExtensionButton fa-solid fa-radio"></div>
+            Narrate All Chat
+        </div>`);
     $('#ttsExtensionMenuItem').attr('title', 'TTS play/pause').on('click', onAudioControlClicked);
+    $('#ttsExtensionNarrateAll').attr('title', 'Narrate all messages in the current chat. Includes user messages, excludes hidden comments.').on('click', playFullConversation);
     updateUiAudioPlayState();
 }
 
@@ -502,12 +519,23 @@ async function processTtsQueue() {
     }
 }
 
-// Secret function for now
 async function playFullConversation() {
+    resetTtsPlayback();
+
+    if (!extension_settings.tts.enabled) {
+        return toastr.warning('TTS is disabled. Please enable it in the extension settings.');
+    }
+
     const context = getContext();
-    const chat = context.chat;
+    const chat = context.chat.filter(x => !x.is_system && x.mes !== '...' && x.mes !== '');
+
+    if (chat.length === 0) {
+        return toastr.info('No messages to narrate.');
+    }
+
     ttsJobQueue = chat;
 }
+
 window['playFullConversation'] = playFullConversation;
 
 //#############################//
@@ -531,6 +559,7 @@ function loadSettings() {
     $('#tts_narrate_dialogues').prop('checked', extension_settings.tts.narrate_dialogues_only);
     $('#tts_narrate_quoted').prop('checked', extension_settings.tts.narrate_quoted_only);
     $('#tts_auto_generation').prop('checked', extension_settings.tts.auto_generation);
+    $('#tts_periodic_auto_generation').prop('checked', extension_settings.tts.periodic_auto_generation);
     $('#tts_narrate_translated_only').prop('checked', extension_settings.tts.narrate_translated_only);
     $('#tts_narrate_user').prop('checked', extension_settings.tts.narrate_user);
     $('#tts_pass_asterisks').prop('checked', extension_settings.tts.pass_asterisks);
@@ -585,11 +614,18 @@ function onEnableClick() {
     );
     updateUiAudioPlayState();
     saveSettingsDebounced();
+    $('body').toggleClass('tts', extension_settings.tts.enabled);
 }
 
 
 function onAutoGenerationClick() {
     extension_settings.tts.auto_generation = !!$('#tts_auto_generation').prop('checked');
+    saveSettingsDebounced();
+}
+
+
+function onPeriodicAutoGenerationClick() {
+    extension_settings.tts.periodic_auto_generation = !!$('#tts_periodic_auto_generation').prop('checked');
     saveSettingsDebounced();
 }
 
@@ -685,13 +721,14 @@ export async function getAlltalkTtsUrl (inputText, char){
 //###################//
 
 async function onChatChanged() {
-    await resetTtsPlayback();
+    await onGenerationEnded();
+    resetTtsPlayback();
     const voiceMapInit = initVoiceMap();
-    await Promise.race([voiceMapInit, delay(1000)]);
+    await Promise.race([voiceMapInit, delay(debounce_timeout.relaxed)]);
     lastMessage = null;
 }
 
-async function onMessageEvent(messageId) {
+async function onMessageEvent(messageId, lastCharIndex) {
     // If TTS is disabled, do nothing
     if (!extension_settings.tts.enabled) {
         return;
@@ -729,12 +766,17 @@ async function onMessageEvent(messageId) {
         return;
     }
 
+    // if we only want to process part of the message
+    if (lastCharIndex) {
+        message.mes = message.mes.substring(0, lastCharIndex);
+    }
+
     const isLastMessageInCurrent = () =>
         lastMessage &&
         typeof lastMessage === 'object' &&
         message.swipe_id === lastMessage.swipe_id &&
-        message.name === lastMessage.name  &&
-        message.is_user === lastMessage.is_user  &&
+        message.name === lastMessage.name &&
+        message.is_user === lastMessage.is_user &&
         message.mes.indexOf(lastMessage.mes) !== -1;
 
     // if last message within current message, message got extended. only send diff to TTS.
@@ -787,6 +829,83 @@ async function onMessageDeleted() {
     resetTtsPlayback();
 }
 
+async function onGenerationStarted(generationType, _args, isDryRun) {
+    // If dry running or quiet mode, do nothing
+    if (isDryRun || ['quiet', 'impersonate'].includes(generationType)) {
+        return;
+    }
+
+    // If TTS is disabled, do nothing
+    if (!extension_settings.tts.enabled) {
+        return;
+    }
+
+    // Auto generation is disabled
+    if (!extension_settings.tts.auto_generation) {
+        return;
+    }
+
+    // Periodic auto generation is disabled
+    if (!extension_settings.tts.periodic_auto_generation) {
+        return;
+    }
+
+    // If the reply is not being streamed
+    if (!isStreamingEnabled()) {
+        return;
+    }
+
+    // start the timer
+    if (!periodicMessageGenerationTimer) {
+        periodicMessageGenerationTimer = setInterval(onPeriodicMessageGenerationTick, UPDATE_INTERVAL);
+    }
+}
+
+async function onGenerationEnded() {
+    if (periodicMessageGenerationTimer) {
+        clearInterval(periodicMessageGenerationTimer);
+        periodicMessageGenerationTimer = null;
+    }
+    lastPositionOfParagraphEnd = -1;
+}
+
+async function onPeriodicMessageGenerationTick() {
+    const context = getContext();
+
+    // no characters or group selected
+    if (!context.groupId && context.characterId === undefined) {
+        return;
+    }
+
+    const lastMessageId = context.chat.length - 1;
+
+    // the last message was from the user
+    if (context.chat[lastMessageId].is_user) {
+        return;
+    }
+
+    const lastMessage = structuredClone(context.chat[lastMessageId]);
+    const lastMessageText = lastMessage?.mes ?? '';
+
+    // look for double ending lines which should indicate the end of a paragraph
+    let newLastPositionOfParagraphEnd = lastMessageText
+        .indexOf('\n\n', lastPositionOfParagraphEnd + 1);
+    // if not found, look for a single ending line which should indicate the end of a paragraph
+    if (newLastPositionOfParagraphEnd === -1) {
+        newLastPositionOfParagraphEnd = lastMessageText
+            .indexOf('\n', lastPositionOfParagraphEnd + 1);
+    }
+
+    // send the message to the tts module if we found the new end of a paragraph
+    if (newLastPositionOfParagraphEnd > -1) {
+        onMessageEvent(lastMessageId, newLastPositionOfParagraphEnd);
+
+        if (periodicMessageGenerationTimer) {
+            lastPositionOfParagraphEnd = newLastPositionOfParagraphEnd;
+        }
+    }
+}
+
 /**
  * Get characters in current chat
  * @param {boolean} unrestricted - If true, will include all characters in voiceMapEntries, even if they are not in the current chat.
@@ -824,7 +943,7 @@ function getCharacters(unrestricted) {
 
 function sanitizeId(input) {
     // Remove any non-alphanumeric characters except underscore (_) and hyphen (-)
-    let sanitized = input.replace(/[^a-zA-Z0-9-_]/g, '');
+    let sanitized = encodeURIComponent(input).replace(/[^a-zA-Z0-9-_]/g, '');
 
     // Ensure first character is always a letter
     if (!/^[a-zA-Z]/.test(sanitized)) {
@@ -916,9 +1035,39 @@ class VoiceMapEntry {
 
 /**
  * Init voiceMapEntries for character select list.
+ * If an initialization is already in progress, it returns the existing Promise instead of starting a new one.
  * @param {boolean} unrestricted - If true, will include all characters in voiceMapEntries, even if they are not in the current chat.
+ * @returns {Promise} A promise that resolves when the initialization is complete.
  */
 export async function initVoiceMap(unrestricted = false) {
+    // Preventing parallel execution
+    if (currentInitVoiceMapPromise) {
+        return currentInitVoiceMapPromise;
+    }
+
+    currentInitVoiceMapPromise = (async () => {
+        const initialChatId = getCurrentChatId();
+        try {
+            await initVoiceMapInternal(unrestricted);
+        } finally {
+            currentInitVoiceMapPromise = null;
+        }
+        const currentChatId = getCurrentChatId();
+
+        if (initialChatId !== currentChatId) {
+            // Chat changed during initialization, reinitialize
+            await initVoiceMap(unrestricted);
+        }
+    })();
+
+    return currentInitVoiceMapPromise;
+}
+
+/**
+ * Init voiceMapEntries for character select list.
+ * @param {boolean} unrestricted - If true, will include all characters in voiceMapEntries, even if they are not in the current chat.
+ */
+async function initVoiceMapInternal(unrestricted) {
     // Gate initialization if not enabled or TTS Provider not ready. Prevents error popups.
     const enabled = $('#tts_enabled').is(':checked');
     if (!enabled) {

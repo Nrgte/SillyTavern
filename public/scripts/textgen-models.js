@@ -1,7 +1,9 @@
 import { isMobile } from './RossAscends-mods.js';
-import { amount_gen, callPopup, eventSource, event_types, getRequestHeaders, max_context, setGenerationParamsFromPreset } from '../script.js';
+import { amount_gen, callPopup, eventSource, event_types, getRequestHeaders, max_context, online_status, setGenerationParamsFromPreset } from '../script.js';
 import { textgenerationwebui_settings as textgen_settings, textgen_types } from './textgen-settings.js';
 import { tokenizers } from './tokenizers.js';
+import { renderTemplateAsync } from './templates.js';
+import { POPUP_TYPE, callGenericPopup } from './popup.js';
 
 let mancerModels = [];
 let togetherModels = [];
@@ -9,6 +11,7 @@ let infermaticAIModels = [];
 let dreamGenModels = [];
 let vllmModels = [];
 let aphroditeModels = [];
+let featherlessModels = [];
 export let openRouterModels = [];
 
 /**
@@ -39,6 +42,8 @@ const OPENROUTER_PROVIDERS = [
     'Novita',
     'Lynn',
     'Lynn 2',
+    'DeepSeek',
+    'Infermatic',
 ];
 
 export async function loadOllamaModels(data) {
@@ -230,6 +235,35 @@ export async function loadAphroditeModels(data) {
         $('#aphrodite_model').append(option);
     }
 }
+
+export async function loadFeatherlessModels(data) {
+    if (!Array.isArray(data)) {
+        console.error('Invalid Featherless models data', data);
+        return;
+    }
+
+    featherlessModels = data;
+
+    if (!data.find(x => x.id === textgen_settings.featherless_model)) {
+        textgen_settings.featherless_model = data[0]?.id || '';
+    }
+
+    $('#featherless_model').empty();
+    for (const model of data) {
+        const option = document.createElement('option');
+        option.value = model.id;
+        option.text = model.id;
+        option.selected = model.id === textgen_settings.featherless_model;
+        $('#featherless_model').append(option);
+    }
+}
+
+function onFeatherlessModelSelect() {
+    const modelId = String($('#featherless_model').val());
+    textgen_settings.featherless_model = modelId;
+    $('#api_button_textgenerationwebui').trigger('click');
+}
+
 
 function onMancerModelSelect() {
     const modelId = String($('#mancer_model').val());
@@ -438,6 +472,74 @@ async function downloadOllamaModel() {
     }
 }
 
+async function downloadTabbyModel() {
+    try {
+        const serverUrl = textgen_settings.server_urls[textgen_types.TABBY];
+
+        if (online_status === 'no_connection' || !serverUrl) {
+            toastr.info('Please connect to a TabbyAPI server first.');
+            return;
+        }
+
+        const downloadHtml = $(await renderTemplateAsync('tabbyDownloader'));
+        const popupResult = await callGenericPopup(downloadHtml, POPUP_TYPE.CONFIRM, '', { okButton: 'Download', cancelButton: 'Cancel' });
+
+        // User cancelled the download
+        if (!popupResult) {
+            return;
+        }
+
+        const repoId = downloadHtml.find('input[name="hf_repo_id"]').val().toString();
+        if (!repoId) {
+            toastr.error('A HuggingFace repo ID must be provided. Skipping Download.');
+            return;
+        }
+
+        if (repoId.split('/').length !== 2) {
+            toastr.error('A HuggingFace repo ID must be formatted as Author/Name. Please try again.');
+            return;
+        }
+
+        const params = {
+            repo_id: repoId,
+            folder_name: downloadHtml.find('input[name="folder_name"]').val() || undefined,
+            revision: downloadHtml.find('input[name="revision"]').val() || undefined,
+            token: downloadHtml.find('input[name="hf_token"]').val() || undefined,
+        };
+
+        for (const suffix of ['include', 'exclude']) {
+            const patterns = downloadHtml.find(`textarea[name="tabby_download_${suffix}"]`).val().toString();
+            if (patterns) {
+                params[suffix] = patterns.split('\n');
+            }
+        }
+
+        // Params for the server side of ST
+        params['api_server'] = serverUrl;
+        params['api_type'] = textgen_settings.type;
+
+        toastr.info('Downloading. Check the Tabby console for progress reports.');
+
+        const response = await fetch('/api/backends/text-completions/tabby/download', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify(params),
+        });
+
+        if (response.status === 403) {
+            toastr.error('The provided key has invalid permissions. Please use an admin key for downloading.');
+            return;
+        } else if (!response.ok) {
+            throw new Error(response.statusText);
+        }
+
+        toastr.success('Download complete.');
+    } catch (err) {
+        console.error(err);
+        toastr.error('Failed to download HuggingFace model in TabbyAPI. Please try again.');
+    }
+}
+
 function calculateOpenRouterCost() {
     if (textgen_settings.type !== textgen_types.OPENROUTER) {
         return;
@@ -505,6 +607,8 @@ jQuery(function () {
     $('#ollama_download_model').on('click', downloadOllamaModel);
     $('#vllm_model').on('change', onVllmModelSelect);
     $('#aphrodite_model').on('change', onAphroditeModelSelect);
+    $('#featherless_model').on('change', onFeatherlessModelSelect);
+    $('#tabby_download_model').on('click', downloadTabbyModel);
 
     const providersSelect = $('.openrouter_providers');
     for (const provider of OPENROUTER_PROVIDERS) {
@@ -569,6 +673,12 @@ jQuery(function () {
             searchInputCssClass: 'text_pole',
             width: '100%',
             templateResult: getAphroditeModelTemplate,
+        });
+        $('#featherless_model').select2({
+            placeholder: 'Select a model',
+            searchInputPlaceholder: 'Search models...',
+            searchInputCssClass: 'text_pole',
+            width: '100%',
         });
         providersSelect.select2({
             sorter: data => data.sort((a, b) => a.text.localeCompare(b.text)),

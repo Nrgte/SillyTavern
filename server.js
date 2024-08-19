@@ -136,7 +136,7 @@ const disableCsrf = cliArguments.disableCsrf ?? getConfigValue('disableCsrfProte
 const basicAuthMode = cliArguments.basicAuthMode ?? getConfigValue('basicAuthMode', DEFAULT_BASIC_AUTH);
 const enableAccounts = getConfigValue('enableUserAccounts', DEFAULT_ACCOUNTS);
 
-const { UPLOADS_PATH } = require('./src/constants');
+const uploadsPath = path.join(dataRoot, require('./src/constants').UPLOADS_DIRECTORY);
 
 // CORS Settings //
 const CORS = cors({
@@ -168,14 +168,14 @@ if (enableCorsProxy) {
 
         try {
             const headers = JSON.parse(JSON.stringify(req.headers));
-            delete headers['x-csrf-token'];
-            delete headers['host'];
-            delete headers['referer'];
-            delete headers['origin'];
-            delete headers['cookie'];
-            delete headers['sec-fetch-mode'];
-            delete headers['sec-fetch-site'];
-            delete headers['sec-fetch-dest'];
+            const headersToRemove = [
+                'x-csrf-token', 'host', 'referer', 'origin', 'cookie',
+                'x-forwarded-for', 'x-forwarded-protocol', 'x-forwarded-proto',
+                'x-forwarded-host', 'x-real-ip', 'sec-fetch-mode',
+                'sec-fetch-site', 'sec-fetch-dest',
+            ];
+
+            headersToRemove.forEach(header => delete headers[header]);
 
             const bodyMethods = ['POST', 'PUT', 'PATCH'];
 
@@ -200,11 +200,30 @@ if (enableCorsProxy) {
     });
 }
 
+function getSessionCookieAge() {
+    // Defaults to 24 hours in seconds if not set
+    const configValue = getConfigValue('sessionTimeout', 24 * 60 * 60);
+
+    // Convert to milliseconds
+    if (configValue > 0) {
+        return configValue * 1000;
+    }
+
+    // "No expiration" is just 400 days as per RFC 6265
+    if (configValue < 0) {
+        return 400 * 24 * 60 * 60 * 1000;
+    }
+
+    // 0 means session cookie is deleted when the browser session ends
+    // (depends on the implementation of the browser)
+    return undefined;
+}
+
 app.use(cookieSession({
     name: userModule.getCookieSessionName(),
     sameSite: 'strict',
     httpOnly: true,
-    maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    maxAge: getSessionCookieAge(),
     secret: userModule.getCookieSecret(),
 }));
 
@@ -286,7 +305,7 @@ app.use(userModule.requireLoginMiddleware);
 app.get('/api/ping', (_, response) => response.sendStatus(204));
 
 // File uploads
-app.use(multer({ dest: UPLOADS_PATH, limits: { fieldSize: 10 * 1024 * 1024 } }).single('avatar'));
+app.use(multer({ dest: uploadsPath, limits: { fieldSize: 10 * 1024 * 1024 } }).single('avatar'));
 app.use(require('./src/middleware/multerMonkeyPatch'));
 
 // User data mount
@@ -303,8 +322,8 @@ app.get('/version', async function (_, response) {
 
 function cleanUploads() {
     try {
-        if (fs.existsSync(UPLOADS_PATH)) {
-            const uploads = fs.readdirSync(UPLOADS_PATH);
+        if (fs.existsSync(uploadsPath)) {
+            const uploads = fs.readdirSync(uploadsPath);
 
             if (!uploads.length) {
                 return;
@@ -312,7 +331,7 @@ function cleanUploads() {
 
             console.debug(`Cleaning uploads folder (${uploads.length} files)`);
             uploads.forEach(file => {
-                const pathToFile = path.join(UPLOADS_PATH, file);
+                const pathToFile = path.join(uploadsPath, file);
                 fs.unlinkSync(pathToFile);
             });
         }
@@ -403,6 +422,11 @@ redirect('/api/content/import', '/api/content/importURL');
 
 // Redirect deprecated moving UI endpoints
 redirect('/savemovingui', '/api/moving-ui/save');
+
+// Redirect Serp endpoints
+redirect('/api/serpapi/search', '/api/search/serpapi');
+redirect('/api/serpapi/visit', '/api/search/visit');
+redirect('/api/serpapi/transcript', '/api/search/transcript');
 
 // Moving UI
 app.use('/api/moving-ui', require('./src/endpoints/moving-ui').router);
@@ -499,8 +523,8 @@ app.use('/api/extra/classify', require('./src/endpoints/classify').router);
 // Image captioning
 app.use('/api/extra/caption', require('./src/endpoints/caption').router);
 
-// Web search extension
-app.use('/api/serpapi', require('./src/endpoints/serpapi').router);
+// Web search and scraping
+app.use('/api/search', require('./src/endpoints/search').router);
 
 // The different text generation APIs
 
@@ -604,10 +628,6 @@ const postSetupTasks = async function () {
             console.warn(color.yellow('Basic Authentication is enabled, but username or password is not set or empty!'));
         }
     }
-
-    if (listen && !basicAuthMode && enableAccounts) {
-        await userModule.checkAccountsProtection();
-    }
 };
 
 /**
@@ -626,16 +646,6 @@ async function loadPlugins() {
     }
 }
 
-if (listen && !enableWhitelist && !basicAuthMode) {
-    if (getConfigValue('securityOverride', false)) {
-        console.warn(color.red('Security has been overridden. If it\'s not a trusted network, change the settings.'));
-    }
-    else {
-        console.error(color.red('Your SillyTavern is currently unsecurely open to the public. Enable whitelisting or basic authentication.'));
-        process.exit(1);
-    }
-}
-
 /**
  * Set the title of the terminal window
  * @param {string} title Desired title for the window
@@ -649,10 +659,53 @@ function setWindowTitle(title) {
     }
 }
 
+/**
+ * Prints an error message and exits the process if necessary
+ * @param {string} message The error message to print
+ * @returns {void}
+ */
+function logSecurityAlert(message) {
+    if (basicAuthMode || enableWhitelist) return; // safe!
+    console.error(color.red(message));
+    if (getConfigValue('securityOverride', false)) {
+        console.warn(color.red('Security has been overridden. If it\'s not a trusted network, change the settings.'));
+        return;
+    }
+    process.exit(1);
+}
+
+async function verifySecuritySettings() {
+    // Skip all security checks as listen is set to false
+    if (!listen) {
+        return;
+    }
+
+    if (!enableAccounts) {
+        logSecurityAlert('Your SillyTavern is currently insecurely open to the public. Enable whitelisting, basic authentication or user accounts.');
+    }
+
+    const users = await userModule.getAllEnabledUsers();
+    const unprotectedUsers = users.filter(x => !x.password);
+    const unprotectedAdminUsers = unprotectedUsers.filter(x => x.admin);
+
+    if (unprotectedUsers.length > 0) {
+        console.warn(color.blue('A friendly reminder that the following users are not password protected:'));
+        unprotectedUsers.map(x => `${color.yellow(x.handle)} ${color.red(x.admin ? '(admin)' : '')}`).forEach(x => console.warn(x));
+        console.log();
+        console.warn(`Consider setting a password in the admin panel or by using the ${color.blue('recover.js')} script.`);
+        console.log();
+
+        if (unprotectedAdminUsers.length > 0) {
+            logSecurityAlert('If you are not using basic authentication or whitelisting, you should set a password for all admin users.');
+        }
+    }
+}
+
 // User storage module needs to be initialized before starting the server
 userModule.initUserStorage(dataRoot)
     .then(userModule.ensurePublicDirectoriesExist)
     .then(userModule.migrateUserData)
+    .then(verifySecuritySettings)
     .then(preSetupTasks)
     .finally(() => {
         if (cliArguments.ssl) {

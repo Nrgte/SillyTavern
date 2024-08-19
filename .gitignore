@@ -47,4 +47,6 @@ access.log
 public/css/user.css
 /plugins/
 /data
+/Veridia
 /default/scaffold
+public/scripts/extensions/third-party

@@ -3,6 +3,7 @@ import {
     this_chid,
     characters,
     getRequestHeaders,
+    event_types,
 } from '../../../script.js';
 import { groups, selected_group } from '../../group-chats.js';
 import { loadFileToDocument, delay } from '../../utils.js';
@@ -11,6 +12,9 @@ import { dragElement } from '../../RossAscends-mods.js';
 import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
 import { SlashCommand } from '../../slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandNamedArgument } from '../../slash-commands/SlashCommandArgument.js';
+import { DragAndDropHandler } from '../../dragdrop.js';
+import { commonEnumProviders } from '../../slash-commands/SlashCommandCommonEnumsProvider.js';
+import { translate } from '../../i18n.js';
 
 const extensionName = 'gallery';
 const extensionFolderPath = `scripts/extensions/${extensionName}/`;
@@ -22,6 +26,27 @@ let paginationVisiblePages = 10;
 let paginationMaxLinesPerPage = 2;
 let galleryMaxRows = 3;
 
+$('body').on('click', '.dragClose', function () {
+    const relatedId = $(this).data('related-id');  // Get the ID of the related draggable
+    $(`body > .draggable[id="${relatedId}"]`).remove();  // Remove the associated draggable
+});
+
+const CUSTOM_GALLERY_REMOVED_EVENT = 'galleryRemoved';
+
+const mutationObserver = new MutationObserver((mutations) => {
+    mutations.forEach((mutation) => {
+        mutation.removedNodes.forEach((node) => {
+            if (node instanceof HTMLElement && node.tagName === 'DIV' && node.id === 'gallery') {
+                eventSource.emit(CUSTOM_GALLERY_REMOVED_EVENT);
+            }
+        });
+    });
+});
+
+mutationObserver.observe(document.body, {
+    childList: true,
+    subtree: false,
+});
 
 /**
  * Retrieves a list of gallery items based on a given URL. This function calls an API endpoint
@@ -56,7 +81,10 @@ async function getGalleryItems(url) {
  * @returns {Promise<void>} - Promise representing the completion of the gallery initialization.
  */
 async function initGallery(items, url) {
-    $('#dragGallery').nanogallery2({
+    const nonce = `nonce-${Math.random().toString(36).substring(2, 15)}`;
+    const gallery = $('#dragGallery');
+    gallery.addClass(nonce);
+    gallery.nanogallery2({
         'items': items,
         thumbnailWidth: 'auto',
         thumbnailHeight: thumbnailHeight,
@@ -78,46 +106,36 @@ async function initGallery(items, url) {
         fnThumbnailOpen: viewWithDragbox,
     });
 
-
-    eventSource.on('resizeUI', function (elmntName) {
-        jQuery('#dragGallery').nanogallery2('resize');
-    });
-
-    const dropZone = $('#dragGallery');
-    //remove any existing handlers
-    dropZone.off('dragover');
-    dropZone.off('dragleave');
-    dropZone.off('drop');
-
-    // Set dropzone height to be the same as the parent
-    dropZone.css('height', dropZone.parent().css('height'));
-
-    // Initialize dropzone handlers
-    dropZone.on('dragover', function (e) {
-        e.stopPropagation();  // Ensure this event doesn't propagate
-        e.preventDefault();
-        $(this).addClass('dragging');  // Add a CSS class to change appearance during drag-over
-    });
-
-    dropZone.on('dragleave', function (e) {
-        e.stopPropagation();  // Ensure this event doesn't propagate
-        $(this).removeClass('dragging');
-    });
-
-    dropZone.on('drop', function (e) {
-        e.stopPropagation();  // Ensure this event doesn't propagate
-        e.preventDefault();
-        $(this).removeClass('dragging');
-        let file = e.originalEvent.dataTransfer.files[0];
+    const dragDropHandler = new DragAndDropHandler(`#dragGallery.${nonce}`, async (files, event) => {
+        let file = files[0];
         uploadFile(file, url);  // Added url parameter to know where to upload
     });
+
+    const resizeHandler = function () {
+        gallery.nanogallery2('resize');
+    };
+
+    eventSource.on('resizeUI', resizeHandler);
+
+    eventSource.once(event_types.CHAT_CHANGED, function () {
+        gallery.closest('#gallery').remove();
+    });
+
+    eventSource.once(CUSTOM_GALLERY_REMOVED_EVENT, function () {
+        gallery.nanogallery2('destroy');
+        dragDropHandler.destroy();
+        eventSource.removeListener('resizeUI', resizeHandler);
+    });
+
+    // Set dropzone height to be the same as the parent
+    gallery.css('height', gallery.parent().css('height'));
 
     //let images populate first
     await delay(100);
     //unset the height (which must be getting set by the gallery library at some point)
-    $('#dragGallery').css('height', 'unset');
+    gallery.css('height', 'unset');
     //force a resize to make images display correctly
-    jQuery('#dragGallery').nanogallery2('resize');
+    gallery.nanogallery2('resize');
 }
 
 /**
@@ -156,16 +174,10 @@ async function showCharGallery() {
 
         const items = await getGalleryItems(url);
         // if there already is a gallery, destroy it and place this one in its place
-        if ($('#dragGallery').length) {
-            $('#dragGallery').nanogallery2('destroy');
-            initGallery(items, url);
-        } else {
-            makeMovable();
-            setTimeout(async () => {
-                await initGallery(items, url);
-            }, 100);
-        }
-
+        $('#dragGallery').closest('#gallery').remove();
+        makeMovable();
+        await delay(100);
+        await initGallery(items, url);
     } catch (err) {
         console.trace();
         console.error(err);
@@ -218,11 +230,11 @@ async function uploadFile(file, url) {
             toastr.success('File uploaded successfully. Saved at: ' + result.path);
 
             // Refresh the gallery
-            $('#dragGallery').nanogallery2('destroy');  // Destroy old gallery
             const newItems = await getGalleryItems(url);  // Fetch the latest items
-            initGallery(newItems, url);  // Reinitialize the gallery with new items and pass 'url'
-
-
+            $('#dragGallery').closest('#gallery').remove();  // Destroy old gallery
+            makeMovable();
+            await delay(100);
+            await initGallery(newItems, url);  // Reinitialize the gallery with new items and pass 'url'
         } catch (error) {
             console.error('There was an issue uploading the file:', error);
 
@@ -245,7 +257,7 @@ $(document).ready(function () {
     $('#char-management-dropdown').append(
         $('<option>', {
             id: 'show_char_gallery',
-            text: 'Show Gallery',
+            text: translate('Show Gallery'),
         }),
     );
 });
@@ -288,11 +300,6 @@ function makeMovable(id = 'gallery') {
         console.log('saw drag on avatar!');
         e.preventDefault();
         return false;
-    });
-
-    $('body').on('click', '.dragClose', function () {
-        const relatedId = $(this).data('related-id');  // Get the ID of the related draggable
-        $(`#${relatedId}`).remove();  // Remove the associated draggable
     });
 }
 
@@ -374,11 +381,6 @@ function makeDragImg(id, url) {
     } else {
         console.error('Failed to append the template content or retrieve the appended content.');
     }
-
-    $('body').on('click', '.dragClose', function () {
-        const relatedId = $(this).data('related-id');  // Get the ID of the related draggable
-        $(`#${relatedId}`).remove();  // Remove the associated draggable
-    });
 }
 
 /**
@@ -417,41 +419,47 @@ function viewWithDragbox(items) {
 
 
 // Registers a simple command for opening the char gallery.
-SlashCommandParser.addCommandObject(SlashCommand.fromProps({ name: 'show-gallery',
+SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+    name: 'show-gallery',
     aliases: ['sg'],
-    callback: showGalleryCommand,
+    callback: () => {
+        showCharGallery();
+        return '';
+    },
     helpString: 'Shows the gallery.',
 }));
-SlashCommandParser.addCommandObject(SlashCommand.fromProps({ name: 'list-gallery',
+SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+    name: 'list-gallery',
     aliases: ['lg'],
     callback: listGalleryCommand,
     returns: 'list of images',
     namedArgumentList: [
-        new SlashCommandNamedArgument(
-            'char', 'character name', [ARGUMENT_TYPE.STRING], false,
-        ),
-        new SlashCommandNamedArgument(
-            'group', 'group name', [ARGUMENT_TYPE.STRING], false,
-        ),
+        SlashCommandNamedArgument.fromProps({
+            name: 'char',
+            description: 'character name',
+            typeList: [ARGUMENT_TYPE.STRING],
+            enumProvider: commonEnumProviders.characters('character'),
+        }),
+        SlashCommandNamedArgument.fromProps({
+            name: 'group',
+            description: 'group name',
+            typeList: [ARGUMENT_TYPE.STRING],
+            enumProvider: commonEnumProviders.characters('group'),
+        }),
     ],
     helpString: 'List images in the gallery of the current char / group or a specified char / group.',
 }));
 
-
-function showGalleryCommand(args) {
-    showCharGallery();
-}
-
 async function listGalleryCommand(args) {
     try {
-        let url = args.char ?? (args.group ? groups.find(it=>it.name == args.group)?.id : null) ?? (selected_group || this_chid);
+        let url = args.char ?? (args.group ? groups.find(it => it.name == args.group)?.id : null) ?? (selected_group || this_chid);
         if (!args.char && !args.group && !selected_group && this_chid) {
             const char = characters[this_chid];
             url = char.avatar.replace('.png', '');
         }
 
         const items = await getGalleryItems(url);
-        return JSON.stringify(items.map(it=>it.src));
+        return JSON.stringify(items.map(it => it.src));
 
     } catch (err) {
         console.trace();

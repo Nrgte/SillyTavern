@@ -2,7 +2,6 @@ import {
     saveSettingsDebounced,
     scrollChatToBottom,
     characters,
-    callPopup,
     reloadMarkdownProcessor,
     reloadCurrentChat,
     getRequestHeaders,
@@ -23,6 +22,7 @@ import {
     setActiveGroup,
     setActiveCharacter,
     entitiesFilter,
+    doNewChat,
 } from '../script.js';
 import { isMobile, initMovingUI, favsToHotswap } from './RossAscends-mods.js';
 import {
@@ -35,17 +35,20 @@ import {
     selectInstructPreset,
 } from './instruct-mode.js';
 
-import { getTagsList, tag_map, tags } from './tags.js';
+import { getTagsList, tag_import_setting, tag_map, tags } from './tags.js';
 import { tokenizers } from './tokenizers.js';
 import { BIAS_CACHE } from './logit-bias.js';
 import { renderTemplateAsync } from './templates.js';
 
-import { countOccurrences, debounce, delay, download, getFileText, isOdd, onlyUnique, resetScrollHeight, shuffle, sortMoments, stringToRange, timestampToMoment } from './utils.js';
+import { countOccurrences, debounce, delay, download, getFileText, getStringHash, isOdd, isTrueBoolean, onlyUnique, resetScrollHeight, shuffle, sortMoments, stringToRange, timestampToMoment } from './utils.js';
 import { FILTER_TYPES } from './filters.js';
 import { PARSER_FLAG, SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
-import { ARGUMENT_TYPE, SlashCommandArgument } from './slash-commands/SlashCommandArgument.js';
+import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from './slash-commands/SlashCommandArgument.js';
 import { AUTOCOMPLETE_WIDTH } from './autocomplete/AutoComplete.js';
+import { SlashCommandEnumValue, enumTypes } from './slash-commands/SlashCommandEnumValue.js';
+import { commonEnumProviders, enumIcons } from './slash-commands/SlashCommandCommonEnumsProvider.js';
+import { POPUP_TYPE, callGenericPopup } from './popup.js';
 
 export {
     loadPowerUserSettings,
@@ -176,6 +179,7 @@ let power_user = {
     send_on_enter: send_on_enter_options.AUTO,
     console_log_prompts: false,
     request_token_probabilities: false,
+    show_group_chat_queue: false,
     render_formulas: false,
     allow_name1_display: false,
     allow_name2_display: false,
@@ -197,6 +201,7 @@ let power_user = {
     trim_spaces: true,
     relaxed_api_urls: false,
     world_import_dialog: true,
+    tag_import_setting: tag_import_setting.ASK,
     disable_group_trimming: false,
     single_line: false,
 
@@ -331,6 +336,8 @@ const storage_keys = {
     compact_input_area: 'compact_input_area',
     auto_connect_legacy: 'AutoConnectEnabled',
     auto_load_chat_legacy: 'AutoLoadChatEnabled',
+
+    storyStringValidationCache: 'StoryStringValidationCache',
 };
 
 const contextControls = [
@@ -975,6 +982,7 @@ function switchUiMode() {
 
 function toggleWaifu() {
     $('#waifuMode').trigger('click');
+    return '';
 }
 
 function switchWaifuMode() {
@@ -1056,19 +1064,19 @@ function applyChatDisplay() {
 
     switch (power_user.chat_display) {
         case 0: {
-            console.log('applying default chat');
+            console.debug('applying default chat');
             $('body').removeClass('bubblechat');
             $('body').removeClass('documentstyle');
             break;
         }
         case 1: {
-            console.log('applying bubblechat');
+            console.debug('applying bubblechat');
             $('body').addClass('bubblechat');
             $('body').removeClass('documentstyle');
             break;
         }
         case 2: {
-            console.log('applying document style');
+            console.debug('applying document style');
             $('body').removeClass('bubblechat');
             $('body').addClass('documentstyle');
             break;
@@ -1428,7 +1436,7 @@ export function registerDebugFunction(functionId, name, description, func) {
 
 async function showDebugMenu() {
     const template = await renderTemplateAsync('debug', { functions: debug_functions });
-    callPopup(template, 'text', '', { wide: true, large: true });
+    callGenericPopup(template, POPUP_TYPE.TEXT, '', { wide: true, large: true, allowVerticalScrolling: true });
 }
 
 switchUiMode();
@@ -1481,12 +1489,18 @@ function loadPowerUserSettings(settings, data) {
             if (power_user.stscript.autocomplete.font === undefined) {
                 power_user.stscript.autocomplete.font = defaultStscript.autocomplete.font;
             }
+            if (power_user.stscript.autocomplete.style === undefined) {
+                power_user.stscript.autocomplete.style = power_user.stscript.autocomplete_style || defaultStscript.autocomplete.style;
+            }
         }
         if (power_user.stscript.parser === undefined) {
             power_user.stscript.parser = defaultStscript.parser;
         } else if (power_user.stscript.parser.flags === undefined) {
             power_user.stscript.parser.flags = defaultStscript.parser.flags;
         }
+
+        // Cleanup old flags
+        delete power_user.stscript.autocomplete_style;
     }
 
     if (data.themes !== undefined) {
@@ -1560,6 +1574,12 @@ function loadPowerUserSettings(settings, data) {
         power_user.tokenizer = tokenizers.GPT2;
     }
 
+    // Clean up old/legacy settings
+    if (power_user.import_card_tags !== undefined) {
+        power_user.tag_import_setting = power_user.import_card_tags ? tag_import_setting.ASK : tag_import_setting.NONE;
+        delete power_user.import_card_tags;
+    }
+
     $('#single_line').prop('checked', power_user.single_line);
     $('#relaxed_api_urls').prop('checked', power_user.relaxed_api_urls);
     $('#world_import_dialog').prop('checked', power_user.world_import_dialog);
@@ -1582,13 +1602,13 @@ function loadPowerUserSettings(settings, data) {
 
     $('#console_log_prompts').prop('checked', power_user.console_log_prompts);
     $('#request_token_probabilities').prop('checked', power_user.request_token_probabilities);
+    $('#show_group_chat_queue').prop('checked', power_user.show_group_chat_queue);
     $('#auto_fix_generated_markdown').prop('checked', power_user.auto_fix_generated_markdown);
     $('#auto_scroll_chat_to_bottom').prop('checked', power_user.auto_scroll_chat_to_bottom);
     $('#bogus_folders').prop('checked', power_user.bogus_folders);
     $('#zoomed_avatar_magnification').prop('checked', power_user.zoomed_avatar_magnification);
     $(`#tokenizer option[value="${power_user.tokenizer}"]`).attr('selected', true);
     $(`#send_on_enter option[value=${power_user.send_on_enter}]`).attr('selected', true);
-    $('#import_card_tags').prop('checked', power_user.import_card_tags);
     $('#confirm_message_delete').prop('checked', power_user.confirm_message_delete !== undefined ? !!power_user.confirm_message_delete : true);
     $('#spoiler_free_mode').prop('checked', power_user.spoiler_free_mode);
     $('#collapse-newlines-checkbox').prop('checked', power_user.collapse_newlines);
@@ -1630,11 +1650,12 @@ function loadPowerUserSettings(settings, data) {
     $('#chat_width_slider').val(power_user.chat_width);
     $('#token_padding').val(power_user.token_padding);
     $('#aux_field').val(power_user.aux_field);
+    $('#tag_import_setting').val(power_user.tag_import_setting);
 
     $('#stscript_autocomplete_autoHide').prop('checked', power_user.stscript.autocomplete.autoHide ?? false).trigger('input');
     $('#stscript_matching').val(power_user.stscript.matching ?? 'fuzzy');
-    $('#stscript_autocomplete_style').val(power_user.stscript.autocomplete_style ?? 'theme');
-    document.body.setAttribute('data-stscript-style', power_user.stscript.autocomplete_style);
+    $('#stscript_autocomplete_style').val(power_user.stscript.autocomplete.style ?? 'theme');
+    document.body.setAttribute('data-stscript-style', power_user.stscript.autocomplete.style);
     $('#stscript_parser_flag_strict_escaping').prop('checked', power_user.stscript.parser.flags[PARSER_FLAG.STRICT_ESCAPING] ?? false);
     $('#stscript_parser_flag_replace_getvar').prop('checked', power_user.stscript.parser.flags[PARSER_FLAG.REPLACE_GETVAR] ?? false);
     $('#stscript_autocomplete_font_scale').val(power_user.stscript.autocomplete.font.scale ?? defaultStscript.autocomplete.font.scale);
@@ -2088,6 +2109,9 @@ export function fuzzySearchGroups(searchValue) {
  */
 export function renderStoryString(params) {
     try {
+        // Validate and log possible warnings/errors
+        validateStoryString(power_user.context.story_string, params);
+
         // compile the story string template into a function, with no HTML escaping
         const compiledTemplate = Handlebars.compile(power_user.context.story_string, { noEscape: true });
 
@@ -2114,6 +2138,55 @@ export function renderStoryString(params) {
         throw e; // rethrow the error
     }
 }
+
+/**
+ * Validate the story string for possible warnings or issues
+ *
+ * @param {string} storyString - The story string
+ * @param {Object} params - The story string parameters
+ */
+function validateStoryString(storyString, params) {
+    /** @type {{hashCache: {[hash: string]: {fieldsWarned: {[key: string]: boolean}}}}} */
+    const cache = JSON.parse(localStorage.getItem(storage_keys.storyStringValidationCache)) ?? { hashCache: {} };
+
+    const hash = getStringHash(storyString);
+
+    // Initialize the cache for the current hash if it doesn't exist
+    if (!cache.hashCache[hash]) {
+        cache.hashCache[hash] = { fieldsWarned: {} };
+    }
+
+    const currentCache = cache.hashCache[hash];
+    const fieldsToWarn = [];
+
+    function validateMissingField(field, fallbackLegacyField = null) {
+        const contains = storyString.includes(`{{${field}}}`) || (!!fallbackLegacyField && storyString.includes(`{{${fallbackLegacyField}}}`));
+        if (!contains && params[field]) {
+            const wasLogged = currentCache.fieldsWarned[field];
+            if (!wasLogged) {
+                fieldsToWarn.push(field);
+                currentCache.fieldsWarned[field] = true;
+            }
+            console.warn(`The story string does not contain {{${field}}}, but it would contain content:\n`, params[field]);
+        }
+    }
+
+    validateMissingField('description');
+    validateMissingField('personality');
+    validateMissingField('persona');
+    validateMissingField('scenario');
+    // validateMissingField('system');
+    validateMissingField('wiBefore', 'loreBefore');
+    validateMissingField('wiAfter', 'loreAfter');
+
+    if (fieldsToWarn.length > 0) {
+        const fieldsList = fieldsToWarn.map(field => `{{${field}}}`).join(', ');
+        toastr.warning(`The story string does not contain the following fields, but they would contain content: ${fieldsList}`, 'Story String Validation');
+    }
+
+    localStorage.setItem(storage_keys.storyStringValidationCache, JSON.stringify(cache));
+}
+
 
 const sortFunc = (a, b) => power_user.sort_order == 'asc' ? compareFunc(a, b) : compareFunc(b, a);
 const compareFunc = (first, second) => {
@@ -2191,7 +2264,8 @@ async function deleteTheme() {
         return;
     }
 
-    const confirm = await callPopup(`Are you sure you want to delete the theme "${themeName}"?`, 'confirm', '', { okButton: 'Yes' });
+    const template = $(await renderTemplateAsync('themeDelete', { themeName }));
+    const confirm = await callGenericPopup(template, POPUP_TYPE.CONFIRM);
 
     if (!confirm) {
         return;
@@ -2253,38 +2327,85 @@ async function importTheme(file) {
     }
 
     if (typeof parsed.custom_css === 'string' && parsed.custom_css.includes('@import')) {
-        const confirm = await callPopup('This theme contains @import lines in the Custom CSS. Press "Yes" to proceed.', 'confirm', '', { okButton: 'Yes' });
+        const template = $(await renderTemplateAsync('themeImportWarning'));
+        const confirm = await callGenericPopup(template, POPUP_TYPE.CONFIRM);
         if (!confirm) {
             throw new Error('Theme contains @import lines');
         }
     }
 
     themes.push(parsed);
-    await applyTheme(parsed.name);
-    await saveTheme(parsed.name);
+    await saveTheme(parsed.name, getNewTheme(parsed));
     const option = document.createElement('option');
-    option.selected = true;
+    option.selected = false;
     option.value = parsed.name;
     option.innerText = parsed.name;
     $('#themes').append(option);
     saveSettingsDebounced();
+    toastr.success(parsed.name, 'Theme imported');
 }
 
 /**
  * Saves the current theme to the server.
  * @param {string|undefined} name Theme name. If undefined, a popup will be shown to enter a name.
+ * @param {object|undefined} theme Theme object. If undefined, the current theme will be saved.
  * @returns {Promise<object>} A promise that resolves when the theme is saved.
  */
-async function saveTheme(name = undefined) {
+async function saveTheme(name = undefined, theme = undefined) {
     if (typeof name !== 'string') {
-        name = await callPopup('Enter a theme preset name:', 'input', power_user.theme);
+        const newName = await callGenericPopup('Enter a theme preset name:', POPUP_TYPE.INPUT, power_user.theme);
 
-        if (!name) {
+        if (!newName) {
             return;
         }
+
+        name = String(newName);
     }
 
-    const theme = {
+    if (typeof theme !== 'object') {
+        theme = getThemeObject(name);
+    }
+
+    const response = await fetch('/api/themes/save', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify(theme),
+    });
+
+    if (!response.ok) {
+        toastr.error('Check the server connection and reload the page to prevent data loss.', 'Theme could not be saved');
+        console.error('Theme could not be saved', response);
+        throw new Error('Theme could not be saved');
+    }
+
+    const themeIndex = themes.findIndex(x => x.name == name);
+
+    if (themeIndex == -1) {
+        themes.push(theme);
+        const option = document.createElement('option');
+        option.selected = true;
+        option.value = name;
+        option.innerText = name;
+        $('#themes').append(option);
+    }
+    else {
+        themes[themeIndex] = theme;
+        $(`#themes option[value="${name}"]`).attr('selected', true);
+    }
+
+    power_user.theme = name;
+    saveSettingsDebounced();
+
+    return theme;
+}
+
+/**
+ * Gets a snapshot of the current theme settings.
+ * @param {string} name Name of the theme
+ * @returns {object} Theme object
+ */
+function getThemeObject(name) {
+    return {
         name,
         blur_strength: power_user.blur_strength,
         main_text_color: power_user.main_text_color,
@@ -2322,42 +2443,31 @@ async function saveTheme(name = undefined) {
         reduced_motion: power_user.reduced_motion,
         compact_input_area: power_user.compact_input_area,
     };
+}
 
-    const response = await fetch('/api/themes/save', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify(theme),
-    });
-
-    if (response.ok) {
-        const themeIndex = themes.findIndex(x => x.name == name);
-
-        if (themeIndex == -1) {
-            themes.push(theme);
-            const option = document.createElement('option');
-            option.selected = true;
-            option.value = name;
-            option.innerText = name;
-            $('#themes').append(option);
+/**
+ * Applies imported theme properties to the theme object.
+ * @param {object} parsed Parsed object to get the theme from.
+ * @returns {object} Theme assigned to the parsed object.
+ */
+function getNewTheme(parsed) {
+    const theme = getThemeObject(parsed.name);
+    for (const key in parsed) {
+        if (Object.hasOwn(theme, key)) {
+            theme[key] = parsed[key];
         }
-        else {
-            themes[themeIndex] = theme;
-            $(`#themes option[value="${name}"]`).attr('selected', true);
-        }
-
-        power_user.theme = name;
-        saveSettingsDebounced();
     }
-
     return theme;
 }
 
 async function saveMovingUI() {
-    const name = await callPopup('Enter a name for the MovingUI Preset:', 'input');
+    const popupResult = await callGenericPopup('Enter a name for the MovingUI Preset:', POPUP_TYPE.INPUT);
 
-    if (!name) {
+    if (!popupResult) {
         return;
     }
+
+    const name = String(popupResult);
 
     const movingUIPreset = {
         name,
@@ -2390,7 +2500,8 @@ async function saveMovingUI() {
         power_user.movingUIPreset = name;
         saveSettingsDebounced();
     } else {
-        toastr.warning('failed to save MovingUI state.');
+        toastr.error('Failed to save MovingUI state.');
+        console.error('MovingUI could not be saved', response);
     }
 }
 
@@ -2481,16 +2592,6 @@ async function resetMovablePanels(type) {
             toastr.success('Panel positions reset');
         }
     });
-}
-
-function doNewChat() {
-    setTimeout(() => {
-        $('#option_start_new_chat').trigger('click');
-    }, 1);
-    //$("#dialogue_popup").hide();
-    setTimeout(() => {
-        $('#dialogue_popup_ok').trigger('click');
-    }, 1);
 }
 
 /**
@@ -2627,55 +2728,37 @@ async function doMesCut(_, text) {
 }
 
 async function doDelMode(_, text) {
-    //first enter delmode
-    $('#option_delete_mes').trigger('click', { fromSlashCommand: true });
-
     //reject invalid args
     if (text && isNaN(text)) {
         toastr.warning('Must enter a number or nothing.');
-        await delay(300); //unsure why 300 is neccessary here, but any shorter and it wont see the delmode UI
-        $('#dialogue_del_mes_cancel').trigger('click');
-        return;
+        return '';
     }
 
-    //parse valid args
-    if (text) {
-        await delay(300); //same as above, need event signal for 'entered del mode'
-        console.debug('parsing msgs to del');
-        let numMesToDel = Number(text);
-        let lastMesID = Number($('#chat .mes').last().attr('mesid'));
-        let oldestMesIDToDel = lastMesID - numMesToDel + 1;
-
-        if (oldestMesIDToDel < 0) {
-            toastr.warning(`Cannot delete more than ${chat.length} messages.`);
-            return;
-        }
-
-        let oldestMesToDel = $('#chat').find(`.mes[mesid=${oldestMesIDToDel}]`);
-
-        if (!oldestMesIDToDel) {
-            oldestMesToDel = await loadUntilMesId(oldestMesIDToDel);
-
-            if (!oldestMesToDel || !oldestMesToDel.length) {
-                return;
-            }
-        }
-
-        let oldestDelMesCheckbox = $(oldestMesToDel).find('.del_checkbox');
-        let newLastMesID = oldestMesIDToDel - 1;
-        console.debug(`DelMesReport -- numMesToDel:  ${numMesToDel}, lastMesID: ${lastMesID}, oldestMesIDToDel:${oldestMesIDToDel}, newLastMesID: ${newLastMesID}`);
-        oldestDelMesCheckbox.trigger('click');
-        let trueNumberOfDeletedMessage = lastMesID - oldestMesIDToDel + 1;
-
-        //await delay(1)
-        $('#dialogue_del_mes_ok').trigger('click');
-        toastr.success(`Deleted ${trueNumberOfDeletedMessage} messages.`);
-        return;
+    // Just enter the delete mode.
+    if (!text) {
+        $('#option_delete_mes').trigger('click', { fromSlashCommand: true });
+        return '';
     }
+
+    const count = Number(text);
+
+    // Nothing to delete.
+    if (count < 1) {
+        return '';
+    }
+
+    if (count > chat.length) {
+        toastr.warning(`Cannot delete more than ${chat.length} messages.`);
+        return '';
+    }
+
+    const range = `${chat.length - count}-${chat.length - 1}`;
+    return doMesCut(_, range);
 }
 
 function doResetPanels() {
     $('#movingUIreset').trigger('click');
+    return '';
 }
 
 function setAvgBG() {
@@ -2882,7 +2965,7 @@ function setAvgBG() {
         return `rgba(${rNew.toFixed(0)}, ${gNew.toFixed(0)}, ${bNew.toFixed(0)}, 1)`;
     }
 
-
+    return '';
 }
 
 async function setThemeCallback(_, text) {
@@ -2906,6 +2989,7 @@ async function setThemeCallback(_, text) {
     applyTheme(theme.name);
     $('#themes').val(theme.name);
     saveSettingsDebounced();
+    return '';
 }
 
 async function setmovingUIPreset(_, text) {
@@ -2929,6 +3013,7 @@ async function setmovingUIPreset(_, text) {
     applyMovingUIPreset(preset.name);
     $('#movingUIPresets').val(preset.name);
     saveSettingsDebounced();
+    return '';
 }
 
 const EPHEMERAL_STOPPING_STRINGS = [];
@@ -3026,6 +3111,7 @@ $(document).ready(() => {
         const winHeight = window.innerHeight;
         const originalWidth = winWidth * zoomLevel;
         const originalHeight = winHeight * zoomLevel;
+        console.log(`Window resize: ${coreTruthWinWidth}x${coreTruthWinHeight} -> ${window.innerWidth}x${window.innerHeight}`);
         console.debug(`Zoom: ${zoomLevel}, X:${winWidth}, Y:${winHeight}, original: ${originalWidth}x${originalHeight} `);
         return zoomLevel;
     });
@@ -3034,7 +3120,6 @@ $(document).ready(() => {
     var coreTruthWinHeight = window.innerHeight;
 
     $(window).on('resize', async () => {
-        console.log(`Window resize: ${coreTruthWinWidth}x${coreTruthWinHeight} -> ${window.innerWidth}x${window.innerHeight}`);
         adjustAutocompleteDebounced();
         setHotswapsDebounced();
 
@@ -3087,7 +3172,7 @@ $(document).ready(() => {
                 }
             }
         } else {
-            console.log('aborting MUI reset', Object.keys(power_user.movingUIState).length);
+            console.debug('aborting MUI reset', Object.keys(power_user.movingUIState).length);
         }
         saveSettingsDebounced();
         coreTruthWinWidth = window.innerWidth;
@@ -3243,10 +3328,11 @@ $(document).ready(() => {
 
     });
 
-    $('#chat_width_slider').on('input', function (e) {
+    $('#chat_width_slider').on('input', function (e, data) {
+        const applyMode = data?.forced ? 'forced' : 'normal';
         power_user.chat_width = Number(e.target.value);
         localStorage.setItem(storage_keys.chat_width, power_user.chat_width);
-        applyChatWidth();
+        applyChatWidth(applyMode);
         setHotswapsDebounced();
     });
 
@@ -3272,11 +3358,12 @@ $(document).ready(() => {
         saveSettingsDebounced();
     });
 
-    $('input[name="font_scale"]').on('input', async function (e) {
+    $('input[name="font_scale"]').on('input', async function (e, data) {
+        const applyMode = data?.forced ? 'forced' : 'normal';
         power_user.font_scale = Number(e.target.value);
         $('#font_scale_counter').val(power_user.font_scale);
         localStorage.setItem(storage_keys.font_scale, power_user.font_scale);
-        await applyFontScale();
+        await applyFontScale(applyMode);
         saveSettingsDebounced();
     });
 
@@ -3465,6 +3552,11 @@ $(document).ready(() => {
         saveSettingsDebounced();
     });
 
+    $('#show_group_chat_queue').on('input', function () {
+        power_user.show_group_chat_queue = !!$(this).prop('checked');
+        saveSettingsDebounced();
+    });
+
     $('#auto_scroll_chat_to_bottom').on('input', function () {
         power_user.auto_scroll_chat_to_bottom = !!$(this).prop('checked');
         saveSettingsDebounced();
@@ -3483,11 +3575,6 @@ $(document).ready(() => {
     $('#send_on_enter').on('change', function () {
         const value = $(this).find(':selected').val();
         power_user.send_on_enter = Number(value);
-        saveSettingsDebounced();
-    });
-
-    $('#import_card_tags').on('input', function () {
-        power_user.import_card_tags = !!$(this).prop('checked');
         saveSettingsDebounced();
     });
 
@@ -3729,6 +3816,12 @@ $(document).ready(() => {
         saveSettingsDebounced();
     });
 
+    $('#tag_import_setting').on('change', function () {
+        const value = $(this).find(':selected').val();
+        power_user.tag_import_setting = Number(value);
+        saveSettingsDebounced();
+    });
+
     $('#stscript_autocomplete_autoHide').on('input', function () {
         power_user.stscript.autocomplete.autoHide = !!$(this).prop('checked');
         saveSettingsDebounced();
@@ -3742,8 +3835,8 @@ $(document).ready(() => {
 
     $('#stscript_autocomplete_style').on('change', function () {
         const value = $(this).find(':selected').val();
-        power_user.stscript.autocomplete_style = String(value);
-        document.body.setAttribute('data-stscript-style', power_user.stscript.autocomplete_style);
+        power_user.stscript.autocomplete.style = String(value);
+        document.body.setAttribute('data-stscript-style', power_user.stscript.autocomplete.style);
         saveSettingsDebounced();
     });
 
@@ -3877,16 +3970,31 @@ $(document).ready(() => {
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'newchat',
-        callback: doNewChat,
+        /** @type {(args: { delete: string?}, string) => Promise<''>} */
+        callback: async (args, _) => {
+            await doNewChat({ deleteCurrentChat: isTrueBoolean(args.delete) });
+            return '';
+        },
+        namedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'delete',
+                description: 'delete the current chat',
+                typeList: [ARGUMENT_TYPE.BOOLEAN],
+                defaultValue: 'false',
+                enumList: commonEnumProviders.boolean('trueFalse')(),
+            }),
+        ],
         helpString: 'Start a new chat with the current character',
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'random',
         callback: doRandomChat,
         unnamedArgumentList: [
-            new SlashCommandArgument(
-                'optional tag name', [ARGUMENT_TYPE.STRING], false,
-            ),
+            SlashCommandArgument.fromProps({
+                description: 'optional tag name',
+                typeList: [ARGUMENT_TYPE.STRING],
+                enumProvider: () => tags.filter(tag => Object.values(tag_map).some(x => x.includes(tag.id))).map(tag => new SlashCommandEnumValue(tag.name, null, enumTypes.enum, enumIcons.tag)),
+            }),
         ],
         helpString: 'Start a new chat with a random character. If an argument is provided, only considers characters that have the specified tag.',
     }));
@@ -3906,9 +4014,13 @@ $(document).ready(() => {
         callback: doMesCut,
         returns: 'the text of cut messages separated by a newline',
         unnamedArgumentList: [
-            new SlashCommandArgument(
-                'number or range', [ARGUMENT_TYPE.NUMBER, ARGUMENT_TYPE.RANGE], true,
-            ),
+            SlashCommandArgument.fromProps({
+                description: 'number or range',
+                typeList: [ARGUMENT_TYPE.NUMBER, ARGUMENT_TYPE.RANGE],
+                isRequired: true,
+                acceptsMultiple: true,
+                enumProvider: commonEnumProviders.messages(),
+            }),
         ],
         helpString: `
             <div>
@@ -3943,9 +4055,12 @@ $(document).ready(() => {
         name: 'theme',
         callback: setThemeCallback,
         unnamedArgumentList: [
-            new SlashCommandArgument(
-                'name', [ARGUMENT_TYPE.STRING], true,
-            ),
+            SlashCommandArgument.fromProps({
+                description: 'name',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: true,
+                enumProvider: () => themes.map(theme => new SlashCommandEnumValue(theme.name)),
+            }),
         ],
         helpString: 'sets a UI theme by name',
     }));
@@ -3953,9 +4068,12 @@ $(document).ready(() => {
         name: 'movingui',
         callback: setmovingUIPreset,
         unnamedArgumentList: [
-            new SlashCommandArgument(
-                'name', [ARGUMENT_TYPE.STRING], true,
-            ),
+            SlashCommandArgument.fromProps({
+                description: 'name',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: true,
+                enumProvider: () => movingUIPresets.map(preset => new SlashCommandEnumValue(preset.name)),
+            }),
         ],
         helpString: 'activates a movingUI preset by name',
     }));
