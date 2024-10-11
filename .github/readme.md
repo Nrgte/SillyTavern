@@ -2,6 +2,9 @@
 
 ## About this fork
 
+Adds voice controls for TTS:
+![][https://i.imgur.com/drHwv5s.png]
+
 This fork is based on SillyTavern 1.12.6 and adds voice controls to alltalk TTS.
 This fork only works for normal chats and group chats via web console.
 Alltalk TTS is the only working TTS in this fork. If you use any other TTS, please use the base ST version.
