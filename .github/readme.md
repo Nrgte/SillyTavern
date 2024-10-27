@@ -6,7 +6,7 @@ Adds voice controls for TTS:
 
 ![](https://i.imgur.com/drHwv5s.png)
 
-This fork is based on SillyTavern 1.12.6 and adds voice controls to alltalk TTS.
+This fork is based on SillyTavern 1.12.7 and adds voice controls to alltalk TTS.
 This fork only works for normal chats and group chats via web console.
 Alltalk TTS is the only working TTS in this fork. If you use any other TTS, please use the base ST version.
 
@@ -28,7 +28,7 @@ English | [中文](readme-zh_cn.md) | [日本語](readme-ja_jp.md) | [Русск
 
 <div align="center">
 
-English | [中文](readme-zh_cn.md) | [日本語](readme-ja_jp.md) | [Русский](readme-ru_ru.md)
+English | [German](readme-de_de.md) | [中文](readme-zh_cn.md) | [日本語](readme-ja_jp.md) | [Русский](readme-ru_ru.md)
 
 [![GitHub Stars](https://img.shields.io/github/stars/SillyTavern/SillyTavern.svg)](https://github.com/SillyTavern/SillyTavern/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/SillyTavern/SillyTavern.svg)](https://github.com/SillyTavern/SillyTavern/network)

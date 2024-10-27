@@ -89,7 +89,7 @@ function drawChunks(chunks, ids) {
     $('#tokenized_chunks_display').empty();
 
     for (let i = 0; i < chunks.length; i++) {
-        let chunk = chunks[i].replace(/▁/g, ' '); // This is a leading space in sentencepiece. More info: Lower one eighth block (U+2581)
+        let chunk = chunks[i].replace(/[▁Ġ]/g, ' '); // This is a leading space in sentencepiece. More info: Lower one eighth block (U+2581)
 
         // If <0xHEX>, decode it
         if (/^<0x[0-9A-F]+>$/i.test(chunk)) {

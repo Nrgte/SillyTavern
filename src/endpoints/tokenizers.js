@@ -1,15 +1,19 @@
-const fs = require('fs');
-const path = require('path');
-const express = require('express');
-const { SentencePieceProcessor } = require('@agnai/sentencepiece-js');
-const tiktoken = require('tiktoken');
-const { Tokenizer } = require('@agnai/web-tokenizers');
-const { convertClaudePrompt } = require('../prompt-converters');
-const { TEXTGEN_TYPES } = require('../constants');
-const { jsonParser } = require('../express-common');
-const { setAdditionalHeaders } = require('../additional-headers');
-const { getConfigValue, isValidUrl } = require('../util');
-const writeFileAtomicSync = require('write-file-atomic').sync;
+import fs from 'node:fs';
+import path from 'node:path';
+import { Buffer } from 'node:buffer';
+
+import express from 'express';
+import { sync as writeFileAtomicSync } from 'write-file-atomic';
+
+import { Tokenizer } from '@agnai/web-tokenizers';
+import { SentencePieceProcessor } from '@agnai/sentencepiece-js';
+import tiktoken from 'tiktoken';
+
+import { convertClaudePrompt } from '../prompt-converters.js';
+import { TEXTGEN_TYPES } from '../constants.js';
+import { jsonParser } from '../express-common.js';
+import { setAdditionalHeaders } from '../additional-headers.js';
+import { getConfigValue, isValidUrl } from '../util.js';
 
 /**
  * @typedef { (req: import('express').Request, res: import('express').Response) => Promise<any> } TokenizationHandler
@@ -23,7 +27,7 @@ const tokenizersCache = {};
 /**
  * @type {string[]}
  */
-const TEXT_COMPLETION_MODELS = [
+export const TEXT_COMPLETION_MODELS = [
     'gpt-3.5-turbo-instruct',
     'gpt-3.5-turbo-instruct-0914',
     'text-davinci-003',
@@ -223,7 +227,7 @@ const commandTokenizer = new WebTokenizer('https://github.com/SillyTavern/SillyT
 const qwen2Tokenizer = new WebTokenizer('https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/qwen2.json', 'src/tokenizers/llama3.json');
 const nemoTokenizer = new WebTokenizer('https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/nemo.json', 'src/tokenizers/llama3.json');
 
-const sentencepieceTokenizers = [
+export const sentencepieceTokenizers = [
     'llama',
     'nerdstash',
     'nerdstash_v2',
@@ -238,7 +242,7 @@ const sentencepieceTokenizers = [
  * @param {string} model Sentencepiece model name
  * @returns {SentencePieceTokenizer|null} Sentencepiece tokenizer
  */
-function getSentencepiceTokenizer(model) {
+export function getSentencepiceTokenizer(model) {
     if (model.includes('llama')) {
         return spp_llama;
     }
@@ -350,7 +354,7 @@ function getWebTokenizersChunks(tokenizer, ids) {
  * @param {string} requestModel Models to use for tokenization
  * @returns {string} Tokenizer model to use
  */
-function getTokenizerModel(requestModel) {
+export function getTokenizerModel(requestModel) {
     if (requestModel.includes('o1-preview') || requestModel.includes('o1-mini')) {
         return 'gpt-4o';
     }
@@ -427,7 +431,7 @@ function getTokenizerModel(requestModel) {
     return 'gpt-3.5-turbo';
 }
 
-function getTiktokenTokenizer(model) {
+export function getTiktokenTokenizer(model) {
     if (tokenizersCache[model]) {
         return tokenizersCache[model];
     }
@@ -444,7 +448,7 @@ function getTiktokenTokenizer(model) {
  * @param {object[]} messages Array of messages
  * @returns {number} Number of tokens
  */
-function countWebTokenizerTokens(tokenizer, messages) {
+export function countWebTokenizerTokens(tokenizer, messages) {
     // Should be fine if we use the old conversion method instead of the messages API one i think?
     const convertedPrompt = convertClaudePrompt(messages, false, '', false, false, '', false);
 
@@ -636,7 +640,7 @@ function createWebTokenizerDecodingHandler(tokenizer) {
     };
 }
 
-const router = express.Router();
+export const router = express.Router();
 
 router.post('/llama/encode', jsonParser, createSentencepieceEncodingHandler(spp_llama));
 router.post('/nerdstash/encode', jsonParser, createSentencepieceEncodingHandler(spp_nerd));
@@ -938,7 +942,6 @@ router.post('/remote/textgenerationwebui/encode', jsonParser, async function (re
     }
     const text = String(request.body.text) || '';
     const baseUrl = String(request.body.url);
-    const legacyApi = Boolean(request.body.legacy_api);
     const vllmModel = String(request.body.vllm_model) || '';
     const aphroditeModel = String(request.body.aphrodite_model) || '';
 
@@ -953,36 +956,31 @@ router.post('/remote/textgenerationwebui/encode', jsonParser, async function (re
         // Convert to string + remove trailing slash + /v1 suffix
         let url = String(baseUrl).replace(/\/$/, '').replace(/\/v1$/, '');
 
-        if (legacyApi) {
-            url += '/v1/token-count';
-            args.body = JSON.stringify({ 'prompt': text });
-        } else {
-            switch (request.body.api_type) {
-                case TEXTGEN_TYPES.TABBY:
-                    url += '/v1/token/encode';
-                    args.body = JSON.stringify({ 'text': text });
-                    break;
-                case TEXTGEN_TYPES.KOBOLDCPP:
-                    url += '/api/extra/tokencount';
-                    args.body = JSON.stringify({ 'prompt': text });
-                    break;
-                case TEXTGEN_TYPES.LLAMACPP:
-                    url += '/tokenize';
-                    args.body = JSON.stringify({ 'content': text });
-                    break;
-                case TEXTGEN_TYPES.VLLM:
-                    url += '/tokenize';
-                    args.body = JSON.stringify({ 'model': vllmModel, 'prompt': text });
-                    break;
-                case TEXTGEN_TYPES.APHRODITE:
-                    url += '/v1/tokenize';
-                    args.body = JSON.stringify({ 'model': aphroditeModel, 'prompt': text });
-                    break;
-                default:
-                    url += '/v1/internal/encode';
-                    args.body = JSON.stringify({ 'text': text });
-                    break;
-            }
+        switch (request.body.api_type) {
+            case TEXTGEN_TYPES.TABBY:
+                url += '/v1/token/encode';
+                args.body = JSON.stringify({ 'text': text });
+                break;
+            case TEXTGEN_TYPES.KOBOLDCPP:
+                url += '/api/extra/tokencount';
+                args.body = JSON.stringify({ 'prompt': text });
+                break;
+            case TEXTGEN_TYPES.LLAMACPP:
+                url += '/tokenize';
+                args.body = JSON.stringify({ 'content': text });
+                break;
+            case TEXTGEN_TYPES.VLLM:
+                url += '/tokenize';
+                args.body = JSON.stringify({ 'model': vllmModel, 'prompt': text });
+                break;
+            case TEXTGEN_TYPES.APHRODITE:
+                url += '/v1/tokenize';
+                args.body = JSON.stringify({ 'model': aphroditeModel, 'prompt': text });
+                break;
+            default:
+                url += '/v1/internal/encode';
+                args.body = JSON.stringify({ 'text': text });
+                break;
         }
 
         const result = await fetch(url, args);
@@ -993,8 +991,8 @@ router.post('/remote/textgenerationwebui/encode', jsonParser, async function (re
         }
 
         const data = await result.json();
-        const count = legacyApi ? data?.results[0]?.tokens : (data?.length ?? data?.count ?? data?.value ?? data?.tokens?.length);
-        const ids = legacyApi ? [] : (data?.tokens ?? data?.ids ?? []);
+        const count =  (data?.length ?? data?.count ?? data?.value ?? data?.tokens?.length);
+        const ids = (data?.tokens ?? data?.ids ?? []);
 
         return response.send({ count, ids });
     } catch (error) {
@@ -1002,13 +1000,3 @@ router.post('/remote/textgenerationwebui/encode', jsonParser, async function (re
         return response.send({ error: true });
     }
 });
-
-module.exports = {
-    TEXT_COMPLETION_MODELS,
-    getTokenizerModel,
-    getTiktokenTokenizer,
-    countWebTokenizerTokens,
-    getSentencepiceTokenizer,
-    sentencepieceTokenizers,
-    router,
-};

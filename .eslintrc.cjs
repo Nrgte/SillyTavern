@@ -16,6 +16,18 @@ module.exports = {
             env: {
                 node: true,
             },
+            parserOptions: {
+                sourceType: 'module',
+            },
+        },
+        {
+            files: ['*.cjs'],
+            parserOptions: {
+                sourceType: 'commonjs',
+            },
+            env: {
+                node: true,
+            },
         },
         {
             files: ['src/**/*.mjs'],
@@ -59,15 +71,19 @@ module.exports = {
             },
         },
     ],
-    // There are various vendored libraries that shouldn't be linted
     ignorePatterns: [
-        'public/lib/**/*',
-        '*.min.js',
-        'src/ai_horde/**/*',
-        'plugins/**/*',
-        'data/**/*',
-        'backups/**/*',
-        'node_modules/**/*',
+        '**/node_modules/**',
+        '**/dist/**',
+        '**/.git/**',
+        'public/lib/**',
+        'backups/**',
+        'data/**',
+        'cache/**',
+        'src/tokenizers/**',
+        'docker/**',
+        'plugins/**',
+        '**/*.min.js',
+        'public/scripts/extensions/quick-reply/lib/**',
     ],
     rules: {
         'no-unused-vars': ['error', { args: 'none' }],

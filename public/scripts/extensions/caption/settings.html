@@ -21,6 +21,7 @@
                         <option value="anthropic">Anthropic</option>
                         <option value="custom" data-i18n="Custom (OpenAI-compatible)">Custom (OpenAI-compatible)</option>
                         <option value="google">Google AI Studio</option>
+                        <option value="groq">Groq</option>
                         <option value="koboldcpp">KoboldCpp</option>
                         <option value="llamacpp">llama.cpp</option>
                         <option value="mistral">MistralAI</option>
@@ -34,7 +35,7 @@
                 <div class="flex1 flex-container flexFlowColumn flexNoGap">
                     <label for="caption_multimodal_model" data-i18n="Model">Model</label>
                     <select id="caption_multimodal_model" class="flex1 text_pole">
-                        <option data-type="mistral" value="pixtral-latest">pixtral-latest</option>
+                        <option data-type="mistral" value="pixtral-12b-latest">pixtral-12b-latest</option>
                         <option data-type="mistral" value="pixtral-12b-2409">pixtral-12b-2409</option>
                         <option data-type="zerooneai" value="yi-vision">yi-vision</option>
                         <option data-type="openai" value="gpt-4-vision-preview">gpt-4-vision-preview</option>
@@ -42,6 +43,8 @@
                         <option data-type="openai" value="gpt-4o">gpt-4o</option>
                         <option data-type="openai" value="gpt-4o-mini">gpt-4o-mini</option>
                         <option data-type="openai" value="chatgpt-4o-latest">chatgpt-4o-latest</option>
+                        <option data-type="anthropic" value="claude-3-5-sonnet-latest">claude-3-5-sonnet-latest</option>
+                        <option data-type="anthropic" value="claude-3-5-sonnet-20241022">claude-3-5-sonnet-20241022</option>
                         <option data-type="anthropic" value="claude-3-5-sonnet-20240620">claude-3-5-sonnet-20240620</option>
                         <option data-type="anthropic" value="claude-3-opus-20240229">claude-3-opus-20240229</option>
                         <option data-type="anthropic" value="claude-3-sonnet-20240229">claude-3-sonnet-20240229</option>
@@ -49,14 +52,20 @@
                         <option data-type="google" value="gemini-1.5-flash">gemini-1.5-flash</option>
                         <option data-type="google" value="gemini-1.5-flash-latest">gemini-1.5-flash-latest</option>
                         <option data-type="google" value="gemini-1.5-flash-001">gemini-1.5-flash-001</option>
+                        <option data-type="google" value="gemini-1.5-flash-002">gemini-1.5-flash-002</option>
                         <option data-type="google" value="gemini-1.5-flash-exp-0827">gemini-1.5-flash-exp-0827</option>
                         <option data-type="google" value="gemini-1.5-flash-8b-exp-0827">gemini-1.5-flash-8b-exp-0827</option>
+                        <option data-type="google" value="gemini-1.5-flash-8b-exp-0924">gemini-1.5-flash-8b-exp-0924</option>
                         <option data-type="google" value="gemini-1.5-pro">gemini-1.5-pro</option>
                         <option data-type="google" value="gemini-1.5-pro-latest">gemini-1.5-pro-latest</option>
                         <option data-type="google" value="gemini-1.5-pro-001">gemini-1.5-pro-001</option>
+                        <option data-type="google" value="gemini-1.5-pro-002">gemini-1.5-pro-002</option>
                         <option data-type="google" value="gemini-1.5-pro-exp-0801">gemini-1.5-pro-exp-0801</option>
                         <option data-type="google" value="gemini-1.5-pro-exp-0827">gemini-1.5-pro-exp-0827</option>
                         <option data-type="google" value="gemini-pro-vision">gemini-pro-vision</option>
+                        <option data-type="groq" value="llama-3.2-11b-vision-preview">llama-3.2-11b-vision-preview</option>
+                        <option data-type="groq" value="llama-3.2-90b-vision-preview">llama-3.2-90b-vision-preview</option>
+                        <option data-type="groq" value="llava-v1.5-7b-4096-preview">llava-v1.5-7b-4096-preview</option>
                         <option data-type="openrouter" value="openai/gpt-4-vision-preview">openai/gpt-4-vision-preview</option>
                         <option data-type="openrouter" value="openai/gpt-4o">openai/gpt-4o</option>
                         <option data-type="openrouter" value="openai/gpt-4o-2024-05-13">openai/gpt-4o-2024-05-13</option>

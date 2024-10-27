@@ -290,6 +290,7 @@ let power_user = {
     restore_user_input: true,
     reduced_motion: false,
     compact_input_area: true,
+    show_swipe_num_all_messages: false,
     auto_connect: false,
     auto_load_chat: false,
     forbid_external_media: true,
@@ -302,9 +303,6 @@ let movingUIPresets = [];
 export let context_presets = [];
 
 const storage_keys = {
-    auto_connect_legacy: 'AutoConnectEnabled',
-    auto_load_chat_legacy: 'AutoLoadChatEnabled',
-
     storyStringValidationCache: 'StoryStringValidationCache',
 };
 
@@ -467,6 +465,11 @@ function switchReducedMotion() {
 function switchCompactInputArea() {
     $('#send_form').toggleClass('compact', power_user.compact_input_area);
     $('#compact_input_area').prop('checked', power_user.compact_input_area);
+}
+
+export function switchSwipeNumAllMessages() {
+    $('#show_swipe_num_all_messages').prop('checked', power_user.show_swipe_num_all_messages);
+    $('.mes:not(.last_mes) .swipes-counter').css('opacity', '').toggle(power_user.show_swipe_num_all_messages);
 }
 
 var originalSliderValues = [];
@@ -1283,6 +1286,13 @@ function applyTheme(name) {
                 switchCompactInputArea();
             },
         },
+        {
+            key: 'show_swipe_num_all_messages',
+            action: () => {
+                $('#show_swipe_num_all_messages').prop('checked', power_user.show_swipe_num_all_messages);
+                switchSwipeNumAllMessages();
+            },
+        },
     ];
 
     for (const { key, selector, type, action } of themeProperties) {
@@ -1352,6 +1362,7 @@ function applyPowerUserSettings() {
     switchHideChatAvatars();
     switchTokenCount();
     switchMessageActions();
+    switchSwipeNumAllMessages();
 }
 
 function getExampleMessagesBehavior() {
@@ -1413,20 +1424,6 @@ async function loadPowerUserSettings(settings, data) {
 
     if (data.context !== undefined) {
         context_presets = data.context;
-    }
-
-    // These are still local storage. Delete in 1.12.7
-    const autoLoadChat = localStorage.getItem(storage_keys.auto_load_chat_legacy);
-    const autoConnect = localStorage.getItem(storage_keys.auto_connect_legacy);
-
-    if (autoLoadChat) {
-        power_user.auto_load_chat = autoLoadChat === 'true';
-        localStorage.removeItem(storage_keys.auto_load_chat_legacy);
-    }
-
-    if (autoConnect) {
-        power_user.auto_connect = autoConnect === 'true';
-        localStorage.removeItem(storage_keys.auto_connect_legacy);
     }
 
     if (power_user.chat_display === '') {
@@ -2296,6 +2293,7 @@ function getThemeObject(name) {
         zoomed_avatar_magnification: power_user.zoomed_avatar_magnification,
         reduced_motion: power_user.reduced_motion,
         compact_input_area: power_user.compact_input_area,
+        show_swipe_num_all_messages: power_user.show_swipe_num_all_messages,
     };
 }
 
@@ -3752,6 +3750,12 @@ $(document).ready(() => {
     $('#compact_input_area').on('input', function () {
         power_user.compact_input_area = !!$(this).prop('checked');
         switchCompactInputArea();
+        saveSettingsDebounced();
+    });
+
+    $('#show_swipe_num_all_messages').on('input', function () {
+        power_user.show_swipe_num_all_messages = !!$(this).prop('checked');
+        switchSwipeNumAllMessages();
         saveSettingsDebounced();
     });
 

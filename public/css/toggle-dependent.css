@@ -32,6 +32,14 @@ body.hideChatAvatars .last_mes:not(.smallSysMes) {
     padding-bottom: 20px !important;
 }
 
+body.hideChatAvatars.no-timer.no-tokenCount.no-mesIDDisplay .swipe_left {
+    left: 0px;
+}
+
+body.hideChatAvatars .swipe_left {
+    left: 7px;
+}
+
 body.square-avatars .avatar,
 body.square-avatars .avatar img {
     border-radius: var(--avatar-base-border-radius) !important;
@@ -340,9 +348,9 @@ body.no-blur * {
     backdrop-filter: unset !important;
 }
 
-body.no-blur #send_form.no-connection {
+/* body.no-blur #send_form.no-connection {
     background-color: rgba(100, 0, 0, 0.9) !important;
-}
+} */
 
 body.no-blur #bg1,
 body.no-blur #bg_custom {
@@ -458,4 +466,23 @@ body.expandMessageActions .mes .mes_buttons .extraMesButtonsHint {
 
 .mdhotkey_icon {
     opacity: 0.6;
+}
+
+label[for="trim_spaces"]:has(input:checked) i.warning {
+    display: none;
+}
+
+#claude_function_prefill_warning {
+    display: none;
+}
+
+#openai_settings:has(#openai_function_calling:checked):has(#claude_assistant_prefill:not(:placeholder-shown), #claude_assistant_impersonation:not(:placeholder-shown)) #claude_function_prefill_warning {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin: 10px 0;
+}
+
+#mistralai_other_models:empty {
+    display: none;
 }

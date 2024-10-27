@@ -65,9 +65,14 @@ const LLAMACPP_DEFAULT_ORDER = [
     'typical_p',
     'top_p',
     'min_p',
+    'xtc',
     'temperature',
 ];
 const OOBA_DEFAULT_ORDER = [
+    'repetition_penalty',
+    'presence_penalty',
+    'frequency_penalty',
+    'dry',
     'temperature',
     'dynamic_temperature',
     'quadratic_sampling',
@@ -80,6 +85,9 @@ const OOBA_DEFAULT_ORDER = [
     'top_a',
     'min_p',
     'mirostat',
+    'xtc',
+    'encoder_repetition_penalty',
+    'no_repeat_ngram',
 ];
 const BIAS_KEY = '#textgenerationwebui_api-settings';
 
@@ -176,7 +184,6 @@ const settings = {
     aphrodite_model: '',
     dreamgen_model: 'opus-v1-xl/text',
     tabby_model: '',
-    legacy_api: false,
     sampler_order: KOBOLDCPP_ORDER,
     logit_bias: [],
     n: 1,
@@ -186,6 +193,7 @@ const settings = {
     openrouter_allow_fallbacks: true,
     xtc_threshold: 0.1,
     xtc_probability: 0,
+    featherless_model: '',
 };
 
 export let textgenerationwebui_banned_in_macros = [];
@@ -244,7 +252,6 @@ export const setting_names = [
     'grammar_string',
     'json_schema',
     'banned_tokens',
-    'legacy_api',
     'ignore_eos_token',
     'spaces_between_special_tokens',
     'speculative_ngram',
@@ -321,22 +328,11 @@ async function selectPreset(name) {
 function formatTextGenURL(value) {
     try {
         const noFormatTypes = [MANCER, TOGETHERAI, INFERMATICAI, DREAMGEN, OPENROUTER];
-        const legacyApiTypes = [OOBA];
         if (noFormatTypes.includes(settings.type)) {
             return value;
         }
 
         const url = new URL(value);
-        if (legacyApiTypes.includes(settings.type)) {
-            if (url.pathname === '/api' && !settings.legacy_api) {
-                toastr.info('Enable Legacy API or start Ooba with the OpenAI extension enabled.', 'Legacy API URL detected. Generation may fail.', { preventDuplicates: true, timeOut: 10000, extendedTimeOut: 20000 });
-                url.pathname = '';
-            }
-
-            if (!power_user.relaxed_api_urls && settings.legacy_api) {
-                url.pathname = '/api';
-            }
-        }
         return url.toString();
     } catch {
         // Just using URL as a validation check
@@ -798,6 +794,25 @@ function showTypeSpecificControls(type) {
     });
 }
 
+/**
+ * Inserts missing items from the source array into the target array.
+ * @param {any[]} source - Source array
+ * @param {any[]} target - Target array
+ * @returns {void}
+ */
+function insertMissingArrayItems(source, target) {
+    if (source === target || !Array.isArray(source) || !Array.isArray(target)) {
+        return;
+    }
+
+    for (const item of source) {
+        if (!target.includes(item)) {
+            const index = source.indexOf(item);
+            target.splice(index, 0, item);
+        }
+    }
+}
+
 function setSettingByName(setting, value, trigger) {
     if (value === null || value === undefined) {
         return;
@@ -812,6 +827,7 @@ function setSettingByName(setting, value, trigger) {
 
     if ('sampler_priority' === setting) {
         value = Array.isArray(value) ? value : OOBA_DEFAULT_ORDER;
+        insertMissingArrayItems(OOBA_DEFAULT_ORDER, value);
         sortOobaItemsByOrder(value);
         settings.sampler_priority = value;
         return;
@@ -819,6 +835,7 @@ function setSettingByName(setting, value, trigger) {
 
     if ('samplers' === setting) {
         value = Array.isArray(value) ? value : LLAMACPP_DEFAULT_ORDER;
+        insertMissingArrayItems(LLAMACPP_DEFAULT_ORDER, value);
         sortLlamacppItemsByOrder(value);
         settings.samplers = value;
         return;
@@ -889,6 +906,7 @@ async function generateTextGenWithStreaming(generate_data, signal) {
         /** @type {import('./logprobs.js').TokenLogprobs | null} */
         let logprobs = null;
         const swipes = [];
+        const toolCalls = [];
         while (true) {
             const { done, value } = await reader.read();
             if (done) return;
@@ -907,7 +925,7 @@ async function generateTextGenWithStreaming(generate_data, signal) {
                 logprobs = parseTextgenLogprobs(newText, data.choices?.[0]?.logprobs || data?.completion_probabilities);
             }
 
-            yield { text, swipes, logprobs };
+            yield { text, swipes, logprobs, toolCalls };
         }
     };
 }
@@ -1156,7 +1174,6 @@ export function getTextGenGenerationData(finalPrompt, maxTokens, isImpersonate, 
         'banned_strings': banned_strings,
         'api_type': settings.type,
         'api_server': getTextGenServer(),
-        'legacy_api': settings.legacy_api && settings.type === OOBA,
         'sampler_order': settings.type === textgen_types.KOBOLDCPP ? settings.sampler_order : undefined,
         'xtc_threshold': settings.xtc_threshold,
         'xtc_probability': settings.xtc_probability,

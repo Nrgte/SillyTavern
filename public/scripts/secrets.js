@@ -34,6 +34,7 @@ export const SECRET_KEYS = {
     STABILITY: 'api_key_stability',
     BLOCKENTROPY: 'api_key_blockentropy',
     CUSTOM_OPENAI_TTS: 'api_key_custom_openai_tts',
+    TAVILY: 'api_key_tavily',
 };
 
 const INPUT_MAP = {

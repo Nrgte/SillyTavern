@@ -83,9 +83,9 @@ export function setNovelData(data) {
 export function getKayraMaxContextTokens() {
     switch (novel_data?.tier) {
         case 1:
-            return 3072;
+            return 4096;
         case 2:
-            return 6144;
+            return 8192;
         case 3:
             return 8192;
     }
@@ -93,14 +93,14 @@ export function getKayraMaxContextTokens() {
     return null;
 }
 
-export function getKayraMaxResponseTokens() {
+export function getNovelMaxResponseTokens() {
     switch (novel_data?.tier) {
         case 1:
-            return 100;
-        case 2:
-            return 100;
-        case 3:
             return 150;
+        case 2:
+            return 150;
+        case 3:
+            return 250;
     }
 
     return maximum_output_length;
@@ -245,7 +245,7 @@ function loadNovelSettingsUi(ui_settings) {
     $('#temp_novel').val(ui_settings.temperature);
     $('#temp_counter_novel').val(Number(ui_settings.temperature).toFixed(2));
     $('#rep_pen_novel').val(ui_settings.repetition_penalty);
-    $('#rep_pen_counter_novel').val(Number(ui_settings.repetition_penalty).toFixed(2));
+    $('#rep_pen_counter_novel').val(Number(ui_settings.repetition_penalty).toFixed(3));
     $('#rep_pen_size_novel').val(ui_settings.repetition_penalty_range);
     $('#rep_pen_size_counter_novel').val(Number(ui_settings.repetition_penalty_range).toFixed(0));
     $('#rep_pen_slope_novel').val(ui_settings.repetition_penalty_slope);
@@ -298,8 +298,8 @@ const sliders = [
     {
         sliderId: '#rep_pen_novel',
         counterId: '#rep_pen_counter_novel',
-        format: (val) => Number(val).toFixed(2),
-        setValue: (val) => { nai_settings.repetition_penalty = Number(val).toFixed(2); },
+        format: (val) => Number(val).toFixed(3),
+        setValue: (val) => { nai_settings.repetition_penalty = Number(val).toFixed(3); },
     },
     {
         sliderId: '#rep_pen_size_novel',
@@ -492,11 +492,37 @@ function getBadWordPermutations(text) {
 
 export function getNovelGenerationData(finalPrompt, settings, maxLength, isImpersonate, isContinue, _cfgValues, type) {
     console.debug('NovelAI generation data for', type);
+    const isKayra = nai_settings.model_novel.includes('kayra');
+    const isErato = nai_settings.model_novel.includes('erato');
 
     const tokenizerType = getTokenizerTypeForModel(nai_settings.model_novel);
+    const stoppingStrings = getStoppingStrings(isImpersonate, isContinue);
+
+    // Llama 3 tokenizer, huh?
+    if (isErato) {
+        const additionalStopStrings = [];
+        for (const stoppingString of stoppingStrings) {
+            if (stoppingString.startsWith('\n')) {
+                additionalStopStrings.push('.' + stoppingString);
+                additionalStopStrings.push('!' + stoppingString);
+                additionalStopStrings.push('?' + stoppingString);
+                additionalStopStrings.push('*' + stoppingString);
+                additionalStopStrings.push('"' + stoppingString);
+                additionalStopStrings.push('_' + stoppingString);
+                additionalStopStrings.push('...' + stoppingString);
+                additionalStopStrings.push('."' + stoppingString);
+                additionalStopStrings.push('?"' + stoppingString);
+                additionalStopStrings.push('!"' + stoppingString);
+                additionalStopStrings.push('.*' + stoppingString);
+                additionalStopStrings.push(')' + stoppingString);
+            }
+        }
+        stoppingStrings.push(...additionalStopStrings);
+    }
+
+    const MAX_STOP_SEQUENCES = 1024;
     const stopSequences = (tokenizerType !== tokenizers.NONE)
-        ? getStoppingStrings(isImpersonate, isContinue)
-            .map(t => getTextTokens(tokenizerType, t))
+        ? stoppingStrings.slice(0, MAX_STOP_SEQUENCES).map(t => getTextTokens(tokenizerType, t))
         : undefined;
 
     const badWordIds = (tokenizerType !== tokenizers.NONE)
@@ -515,14 +541,12 @@ export function getNovelGenerationData(finalPrompt, settings, maxLength, isImper
         console.log(finalPrompt);
     }
 
-    const isKayra = nai_settings.model_novel.includes('kayra');
-    const isErato = nai_settings.model_novel.includes('erato');
 
     if (isErato) {
-        finalPrompt = '<|startoftext|>' + finalPrompt;
+        finalPrompt = '<|startoftext|><|reserved_special_token81|>' + finalPrompt;
     }
 
-    const adjustedMaxLength = (isKayra || isErato) ? getKayraMaxResponseTokens() : maximum_output_length;
+    const adjustedMaxLength = (isKayra || isErato) ? getNovelMaxResponseTokens() : maximum_output_length;
 
     return {
         'input': finalPrompt,
@@ -722,7 +746,7 @@ export async function generateNovelWithStreaming(generate_data, signal) {
                 text += data.token;
             }
 
-            yield { text, swipes: [], logprobs: parseNovelAILogprobs(data.logprobs) };
+            yield { text, swipes: [], logprobs: parseNovelAILogprobs(data.logprobs), toolCalls: [] };
         }
     };
 }
