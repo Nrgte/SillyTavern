@@ -419,30 +419,35 @@ export class SlashCommandHandler {
             namedArgumentList: [
                 SlashCommandNamedArgument.fromProps({
                     name: 'set',
-                    description: 'QR set name',
+                    description: 'Name of QR set to add the context menu to',
                     typeList: [ARGUMENT_TYPE.STRING],
                     isRequired: true,
                     enumProvider: localEnumProviders.qrSets,
                 }),
                 SlashCommandNamedArgument.fromProps({
                     name: 'label',
-                    description: 'Quick Reply label',
+                    description: 'Label of Quick Reply to add the context menu to',
                     typeList: [ARGUMENT_TYPE.STRING],
                     enumProvider: localEnumProviders.qrEntries,
                 }),
                 SlashCommandNamedArgument.fromProps({
                     name: 'id',
-                    description: 'numeric ID of the QR, e.g., id=42',
+                    description: 'Numeric ID of Quick Reply to add the context menu to, e.g. id=42',
                     typeList: [ARGUMENT_TYPE.NUMBER],
                     enumProvider: localEnumProviders.qrIds,
                 }),
                 new SlashCommandNamedArgument(
-                    'chain', 'boolean', [ARGUMENT_TYPE.BOOLEAN], false, false, 'false',
+                    'chain',
+                    'If true, button QR is sent together with (before) the clicked QR from the context menu',
+                    [ARGUMENT_TYPE.BOOLEAN],
+                    false,
+                    false,
+                    'false',
                 ),
             ],
             unnamedArgumentList: [
                 SlashCommandArgument.fromProps({
-                    description: 'QR set name',
+                    description: 'Name of QR set to add as a context menu',
                     typeList: [ARGUMENT_TYPE.STRING],
                     isRequired: true,
                     enumProvider: localEnumProviders.qrSets,
@@ -450,13 +455,16 @@ export class SlashCommandHandler {
             ],
             helpString: `
                 <div>
-                    Add context menu preset to a QR.
+                    Add a context menu preset to a QR.
+                </div>
+                <div>
+                    If <code>id</code> and <code>label</code> are both provided, <code>id</code> will be used.
                 </div>
                 <div>
                     <strong>Example:</strong>
                     <ul>
                         <li>
-                            <pre><code>/qr-contextadd set=MyPreset label=MyButton chain=true MyOtherPreset</code></pre>
+                            <pre><code>/qr-contextadd set=MyQRSetWithTheButton label=MyButton chain=true MyQRSetWithContextItems</code></pre>
                         </li>
                     </ul>
                 </div>
@@ -470,27 +478,27 @@ export class SlashCommandHandler {
             namedArgumentList: [
                 SlashCommandNamedArgument.fromProps({
                     name: 'set',
-                    description: 'QR set name',
+                    description: 'Name of QR set to remove the context menu from',
                     typeList: [ARGUMENT_TYPE.STRING],
                     isRequired: true,
                     enumProvider: localEnumProviders.qrSets,
                 }),
                 SlashCommandNamedArgument.fromProps({
                     name: 'label',
-                    description: 'Quick Reply label',
+                    description: 'Label of Quick Reply to remove the context menu from',
                     typeList: [ARGUMENT_TYPE.STRING],
                     enumProvider: localEnumProviders.qrEntries,
                 }),
                 SlashCommandNamedArgument.fromProps({
                     name: 'id',
-                    description: 'numeric ID of the QR, e.g., id=42',
+                    description: 'Numeric ID of Quick Reply to remove the context menu from, e.g. id=42',
                     typeList: [ARGUMENT_TYPE.NUMBER],
                     enumProvider: localEnumProviders.qrIds,
                 }),
             ],
             unnamedArgumentList: [
                 SlashCommandArgument.fromProps({
-                    description: 'QR set name',
+                    description: 'Name of QR set to remove',
                     typeList: [ARGUMENT_TYPE.STRING],
                     isRequired: true,
                     enumProvider: localEnumProviders.qrSets,
@@ -499,6 +507,9 @@ export class SlashCommandHandler {
             helpString: `
                 <div>
                     Remove context menu preset from a QR.
+                </div>
+                <div>
+                    If <code>id</code> and <code>label</code> are both provided, <code>id</code> will be used.
                 </div>
                 <div>
                     <strong>Example:</strong>
@@ -540,6 +551,9 @@ export class SlashCommandHandler {
             helpString: `
                 <div>
                     Remove all context menu presets from a QR.
+                </div>
+                <div>
+                    If <code>id</code> and a label are both provided, <code>id</code> will be used.
                 </div>
                 <div>
                     <strong>Example:</strong>
@@ -908,12 +922,11 @@ export class SlashCommandHandler {
         }
     }
 
-
     createContextItem(args, name) {
         try {
             this.api.createContextItem(
                 args.set,
-                args.label,
+                args.id !== undefined ? Number(args.id) : args.label,
                 name,
                 isTrueBoolean(args.chain),
             );
@@ -923,14 +936,14 @@ export class SlashCommandHandler {
     }
     deleteContextItem(args, name) {
         try {
-            this.api.deleteContextItem(args.set, args.label, name);
+            this.api.deleteContextItem(args.set, args.id !== undefined ? Number(args.id) : args.label, name);
         }  catch (ex) {
             toastr.error(ex.message);
         }
     }
     clearContextMenu(args, label) {
         try {
-            this.api.clearContextMenu(args.set, args.label ?? label);
+            this.api.clearContextMenu(args.set, args.id !== undefined ? Number(args.id) : args.label ?? label);
         } catch (ex) {
             toastr.error(ex.message);
         }

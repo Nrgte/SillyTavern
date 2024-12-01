@@ -70,25 +70,25 @@
         <div class="flex-container">
             <div class="flex1 wi-enter-footer-text flex-container flexFlowColumn flexNoGap alignitemsstart">
                 <small data-i18n="ext_regex_affects">Affects</small>
-                <div title="Messages sent by the user.">
+                <div data-i18n="[title]ext_regex_user_input_desc" title="Messages sent by the user.">
                     <label class="checkbox flex-container">
                         <input type="checkbox" name="replace_position" value="1">
                         <span data-i18n="ext_regex_user_input">User Input</span>
                     </label>
                 </div>
-                <div title="Messages received from the Generation API.">
+                <div data-i18n="[title]ext_regex_ai_input_desc" title="Messages received from the Generation API.">
                     <label class="checkbox flex-container">
                         <input type="checkbox" name="replace_position" value="2">
                         <span data-i18n="ext_regex_ai_output">AI Output</span>
                     </label>
                 </div>
-                <div title="Messages sent using STscript commands.">
+                <div data-i18n="[title]ext_regex_slash_desc" title="Messages sent using STscript commands.">
                     <label class="checkbox flex-container">
                         <input type="checkbox" name="replace_position" value="3">
                         <span data-i18n="Slash Commands">Slash Commands</span>
                     </label>
                 </div>
-                <div title="Lorebook/World Info entry contents. Requires 'Only Format Prompt' to be checked!">
+                <div data-i18n="[title]ext_regex_wi_desc" title="Lorebook/World Info entry contents. Requires 'Only Format Prompt' to be checked!">
                     <label class="checkbox flex-container">
                         <input type="checkbox" name="replace_position" value="5">
                         <span data-i18n="World Info">World Info</span>
@@ -117,16 +117,20 @@
                     <input type="checkbox" name="disabled" />
                     <span data-i18n="Disabled">Disabled</span>
                 </label>
-                <label class="checkbox flex-container" title="Run the regex script when the message belonging a to specified role(s) is edited.">
+                <label class="checkbox flex-container" data-i18n="[title]ext_regex_run_on_edit_desc" title="Run the regex script when the message belonging a to specified role(s) is edited.">
                     <input type="checkbox" name="run_on_edit" />
                     <span data-i18n="Run On Edit">Run On Edit</span>
                 </label>
-                <label class="checkbox flex-container" data-i18n="[title]ext_regex_substitute_regex_desc" title="Substitute &lcub;&lcub;macros&rcub;&rcub; in Find Regex before running it">
-                    <input type="checkbox" name="substitute_regex" />
+                <label class="checkbox flex-container flexNoGap marginBot5" data-i18n="[title]ext_regex_substitute_regex_desc" title="Substitute &lcub;&lcub;macros&rcub;&rcub; in Find Regex before running it">
                     <span>
-                        <span data-i18n="Substitute Regex">Substitute Regex</span>
+                        <small data-i18n="Macro in Find Regex">Macros in Find Regex</small>
                         <span class="fa-solid fa-circle-question note-link-span"></span>
                     </span>
+                    <select name="substitute_regex" class="text_pole textarea_compact margin0">
+                        <option value="0" data-i18n="Don't substitute">Don't substitute</option>
+                        <option value="1" data-i18n="Substitute (raw)">Substitute (raw)</option>
+                        <option value="2" data-i18n="Substitute (escaped)">Substitute (escaped)</option>
+                    </select>
                 </label>
                 <span>
                     <small data-i18n="ext_regex_other_options" data-i18n="Ephemerality">Ephemerality</small>

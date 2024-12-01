@@ -1,3 +1,4 @@
+import { DOMPurify } from '../lib.js';
 import { callPopup, getRequestHeaders } from '../script.js';
 
 export const SECRET_KEYS = {
@@ -34,7 +35,9 @@ export const SECRET_KEYS = {
     STABILITY: 'api_key_stability',
     BLOCKENTROPY: 'api_key_blockentropy',
     CUSTOM_OPENAI_TTS: 'api_key_custom_openai_tts',
+    NANOGPT: 'api_key_nanogpt',
     TAVILY: 'api_key_tavily',
+    BFL: 'api_key_bfl',
 };
 
 const INPUT_MAP = {
@@ -67,6 +70,7 @@ const INPUT_MAP = {
     [SECRET_KEYS.ZEROONEAI]: '#api_key_01ai',
     [SECRET_KEYS.HUGGINGFACE]: '#api_key_huggingface',
     [SECRET_KEYS.BLOCKENTROPY]: '#api_key_blockentropy',
+    [SECRET_KEYS.NANOGPT]: '#api_key_nanogpt',
 };
 
 async function clearSecret() {

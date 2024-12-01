@@ -1,3 +1,18 @@
+import {
+    showdown,
+    moment,
+    Fuse,
+    DOMPurify,
+    hljs,
+    localforage,
+    Handlebars,
+    DiffMatchPatch,
+    SVGInject,
+    Popper,
+    initLibraryShims,
+    default as libs,
+} from './lib.js';
+
 import { humanizedDateTime, favsToHotswap, getMessageTimeStamp, dragElement, isMobile, initRossMods, shouldSendOnEnter } from './scripts/RossAscends-mods.js';
 import { userStatsHandler, statMesProcess, initStats } from './scripts/stats.js';
 import {
@@ -247,7 +262,12 @@ import { AbortReason } from './scripts/util/AbortReason.js';
 import { initSystemPrompts } from './scripts/sysprompt.js';
 import { registerExtensionSlashCommands as initExtensionSlashCommands } from './scripts/extensions-slashcommands.js';
 import { ToolManager } from './scripts/tool-calling.js';
+import { addShowdownPatch } from './scripts/util/showdown-patch.js';
 import { applyBrowserFixes } from './scripts/browser-fixes.js';
+import { initServerHistory } from './scripts/server-history.js';
+import { initSettingsSearch } from './scripts/setting-search.js';
+import { initBulkEdit } from './scripts/bulk-edit.js';
+import { deriveTemplatesFromChatTemplate } from './scripts/chat-templates.js';
 
 import { initTts, getAlltalkTtsUrl } from './scripts/extensions/tts/index.js'
 
@@ -412,6 +432,7 @@ DOMPurify.addHook('uponSanitizeElement', (node, _, config) => {
 
 // API OBJECT FOR EXTERNAL WIRING
 window['SillyTavern'] = {};
+window['SillyTavern'].libs = libs;
 
 // Event source init
 export const event_types = {
@@ -493,12 +514,12 @@ console.debug('Character context menu initialized', characterContextMenu);
 
 // Markdown converter
 export let mesForShowdownParse; //intended to be used as a context to compare showdown strings against
+/** @type {import('showdown').Converter} */
 let converter;
-reloadMarkdownProcessor();
 
 // array for prompt token calculations
 console.debug('initializing Prompt Itemization Array on Startup');
-const promptStorage = new localforage.createInstance({ name: 'SillyTavern_Prompts' });
+const promptStorage = localforage.createInstance({ name: 'SillyTavern_Prompts' });
 export let itemizedPrompts = [];
 
 export const systemUserName = 'SillyTavern System';
@@ -744,48 +765,22 @@ async function getClientVersion() {
     }
 }
 
-export function reloadMarkdownProcessor(render_formulas = false) {
-    if (render_formulas) {
-        converter = new showdown.Converter({
-            emoji: true,
-            underline: true,
-            tables: true,
-            parseImgDimensions: true,
-            simpleLineBreaks: true,
-            strikethrough: true,
-            disableForced4SpacesIndentedSublists: true,
-            extensions: [
-                showdownKatex(
-                    {
-                        delimiters: [
-                            { left: '$$', right: '$$', display: true, asciimath: false },
-                            { left: '$', right: '$', display: false, asciimath: true },
-                        ],
-                    },
-                )],
-        });
-    }
-    else {
-        converter = new showdown.Converter({
-            emoji: true,
-            literalMidWordUnderscores: true,
-            parseImgDimensions: true,
-            tables: true,
-            underline: true,
-            simpleLineBreaks: true,
-            strikethrough: true,
-            disableForced4SpacesIndentedSublists: true,
-            extensions: [markdownUnderscoreExt()],
-        });
-    }
+export function reloadMarkdownProcessor() {
+    converter = new showdown.Converter({
+        emoji: true,
+        literalMidWordUnderscores: true,
+        parseImgDimensions: true,
+        tables: true,
+        underline: true,
+        simpleLineBreaks: true,
+        strikethrough: true,
+        disableForced4SpacesIndentedSublists: true,
+        extensions: [markdownUnderscoreExt()],
+    });
 
     // Inject the dinkus extension after creating the converter
     // Maybe move this into power_user init?
-    setTimeout(() => {
-        if (power_user) {
-            converter.addExtension(markdownExclusionExt(), 'exclusion');
-        }
-    }, 1);
+    converter.addExtension(markdownExclusionExt(), 'exclusion');
 
     return converter;
 }
@@ -942,6 +937,9 @@ async function firstLoadInit() {
         throw new Error('Initialization failed');
     }
 
+    initLibraryShims();
+    addShowdownPatch(showdown);
+    reloadMarkdownProcessor();
     applyBrowserFixes();
     await getClientVersion();
     await readSecretState();
@@ -974,6 +972,9 @@ async function firstLoadInit() {
     initCfg();
     initLogprobs();
     initInputMarkdown();
+    initServerHistory();
+    initSettingsSearch();
+    initBulkEdit();
     await initScrapers();
     doDailyExtensionUpdatesCheck();
     initTts();
@@ -1239,6 +1240,50 @@ async function getStatusTextgen() {
 
         const supportsTokenization = response.headers.get('x-supports-tokenization') === 'true';
         supportsTokenization ? sessionStorage.setItem(TOKENIZER_SUPPORTED_KEY, 'true') : sessionStorage.removeItem(TOKENIZER_SUPPORTED_KEY);
+
+        const wantsInstructDerivation = (power_user.instruct.enabled && power_user.instruct.derived);
+        const wantsContextDerivation = power_user.context_derived;
+        const wantsContextSize = power_user.context_size_derived;
+        const supportsChatTemplate = [textgen_types.KOBOLDCPP, textgen_types.LLAMACPP].includes(textgen_settings.type);
+        if (supportsChatTemplate && (wantsInstructDerivation || wantsContextDerivation || wantsContextSize)) {
+            const response = await fetch('/api/backends/text-completions/props', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify({
+                    api_server: endpoint,
+                    api_type: textgen_settings.type,
+                }),
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                if (data) {
+                    const { chat_template, chat_template_hash } = data;
+                    if (wantsContextSize && 'default_generation_settings' in data) {
+                        const backend_max_context = data['default_generation_settings']['n_ctx'];
+                        const old_value = max_context;
+                        if (max_context !== backend_max_context) {
+                            setGenerationParamsFromPreset({ max_length: backend_max_context });
+                        }
+                        if (old_value !== max_context) {
+                            console.log(`Auto-switched max context from ${old_value} to ${max_context}`);
+                            toastr.info(`${old_value} ⇒ ${max_context}`, 'Context Size Changed');
+                        }
+                    }
+                    console.log(`We have chat template ${chat_template.split('\n')[0]}...`);
+                    const templates = await deriveTemplatesFromChatTemplate(chat_template, chat_template_hash);
+                    if (templates) {
+                        const { context, instruct } = templates;
+                        if (wantsContextDerivation) {
+                            selectContextPreset(context, { isAuto: true });
+                        }
+                        if (wantsInstructDerivation) {
+                            selectInstructPreset(instruct, { isAuto: true });
+                        }
+                    }
+                }
+            }
+        }
 
         // We didn't get a 200 status code, but the endpoint has an explanation. Which means it DID connect, but I digress.
         if (online_status === 'no_connection' && data.response) {
@@ -1593,7 +1638,7 @@ export function getEntitiesList({ doFilter = false, doSort = true } = {}) {
             subEntities = filterByTagState(entities, { subForEntity: entity });
             if (doFilter) {
                 // sub entities filter "hacked" because folder filter should not be applied there, so even in "only folders" mode characters show up
-                subEntities = entitiesFilter.applyFilters(subEntities, { clearScoreCache: false, tempOverrides: { [FILTER_TYPES.FOLDER]: FILTER_STATES.UNDEFINED } });
+                subEntities = entitiesFilter.applyFilters(subEntities, { clearScoreCache: false, tempOverrides: { [FILTER_TYPES.FOLDER]: FILTER_STATES.UNDEFINED }, clearFuzzySearchCaches: false });
             }
             if (doSort) {
                 sortEntitiesList(subEntities);
@@ -1606,11 +1651,11 @@ export function getEntitiesList({ doFilter = false, doSort = true } = {}) {
     // Second run filters, hiding whatever should be filtered later
     if (doFilter) {
         const beforeFinalEntities = filterByTagState(entities, { globalDisplayFilters: true });
-        entities = entitiesFilter.applyFilters(beforeFinalEntities);
+        entities = entitiesFilter.applyFilters(beforeFinalEntities, { clearFuzzySearchCaches: false });
 
         // Magic for folder filter. If that one is enabled, and no folders are display anymore, we remove that filter to actually show the characters.
         if (isFilterState(entitiesFilter.getFilterData(FILTER_TYPES.FOLDER), FILTER_STATES.SELECTED) && entities.filter(x => x.type == 'tag').length == 0) {
-            entities = entitiesFilter.applyFilters(beforeFinalEntities, { tempOverrides: { [FILTER_TYPES.FOLDER]: FILTER_STATES.UNDEFINED } });
+            entities = entitiesFilter.applyFilters(beforeFinalEntities, { tempOverrides: { [FILTER_TYPES.FOLDER]: FILTER_STATES.UNDEFINED }, clearFuzzySearchCaches: false });
         }
     }
 
@@ -1626,6 +1671,7 @@ export function getEntitiesList({ doFilter = false, doSort = true } = {}) {
     if (doSort) {
         sortEntitiesList(entities);
     }
+    entitiesFilter.clearFuzzySearchCaches();
     return entities;
 }
 
@@ -2062,8 +2108,15 @@ export function messageFormatting(mes, ch_name, isSystem, isUser, messageId, san
         mes = mes.replace(new RegExp(`(^|\n)${escapeRegex(ch_name)}:`, 'g'), '$1');
     }
 
-    /** @type {any} */
-    const config = { MESSAGE_SANITIZE: true, ADD_TAGS: ['custom-style'], ...sanitizerOverrides };
+    /** @type {import('dompurify').Config & { RETURN_DOM_FRAGMENT: false; RETURN_DOM: false }} */
+    const config = {
+        RETURN_DOM: false,
+        RETURN_DOM_FRAGMENT: false,
+        RETURN_TRUSTED_TYPE: false,
+        MESSAGE_SANITIZE: true,
+        ADD_TAGS: ['custom-style'],
+        ...sanitizerOverrides,
+    };
     mes = encodeStyleTags(mes);
     mes = DOMPurify.sanitize(mes, config);
     mes = decodeStyleTags(mes);
@@ -2122,7 +2175,7 @@ function insertSVGIcon(mes, extra) {
             mes.find('.timestamp').after(image);
         }
 
-        await SVGInject(this);
+        await SVGInject(image);
     };
 }
 
@@ -2529,10 +2582,11 @@ export function scrollChatToBottom() {
  * Substitutes {{macro}} parameters in a string.
  * @param {string} content - The string to substitute parameters in.
  * @param {Record<string,any>} additionalMacro - Additional environment variables for substitution.
+ * @param {(x: string) => string} [postProcessFn] - Post-processing function for each substituted macro.
  * @returns {string} The string with substituted parameters.
  */
-export function substituteParamsExtended(content, additionalMacro = {}) {
-    return substituteParams(content, undefined, undefined, undefined, undefined, true, additionalMacro);
+export function substituteParamsExtended(content, additionalMacro = {}, postProcessFn = (x) => x) {
+    return substituteParams(content, undefined, undefined, undefined, undefined, true, additionalMacro, postProcessFn);
 }
 
 /**
@@ -2544,9 +2598,10 @@ export function substituteParamsExtended(content, additionalMacro = {}) {
  * @param {string} [_group] - The group members list for {{group}} substitution.
  * @param {boolean} [_replaceCharacterCard] - Whether to replace character card macros.
  * @param {Record<string,any>} [additionalMacro] - Additional environment variables for substitution.
+ * @param {(x: string) => string} [postProcessFn] - Post-processing function for each substituted macro.
  * @returns {string} The string with substituted parameters.
  */
-export function substituteParams(content, _name1, _name2, _original, _group, _replaceCharacterCard = true, additionalMacro = {}) {
+export function substituteParams(content, _name1, _name2, _original, _group, _replaceCharacterCard = true, additionalMacro = {}, postProcessFn = (x) => x) {
     if (!content) {
         return '';
     }
@@ -2584,7 +2639,7 @@ export function substituteParams(content, _name1, _name2, _original, _group, _re
     if (_replaceCharacterCard) {
         const fields = getCharacterCardFields();
         environment.charPrompt = fields.system || '';
-        environment.charJailbreak = fields.jailbreak || '';
+        environment.charInstruction = environment.charJailbreak = fields.jailbreak || '';
         environment.description = fields.description || '';
         environment.personality = fields.personality || '';
         environment.scenario = fields.scenario || '';
@@ -2604,7 +2659,7 @@ export function substituteParams(content, _name1, _name2, _original, _group, _re
         Object.assign(environment, additionalMacro);
     }
 
-    return evaluateMacros(content, environment);
+    return evaluateMacros(content, environment, postProcessFn);
 }
 
 
@@ -2681,8 +2736,7 @@ export async function generateQuietPrompt(quiet_prompt, quietToLoud, skipWIAN, q
             quietName: quietName,
         };
         originalResponseLength = responseLengthCustomized ? saveResponseLength(main_api, responseLength) : -1;
-        const generateFinished = await Generate('quiet', options);
-        return generateFinished;
+        return await Generate('quiet', options);
     } finally {
         if (responseLengthCustomized) {
             restoreResponseLength(main_api, originalResponseLength);
@@ -3154,7 +3208,8 @@ class StreamingProcessor {
 
         //console.log("Generated text size:", text.length, text)
 
-        if (power_user.auto_swipe) {
+        const isAborted = this.abortController.signal.aborted;
+        if (power_user.auto_swipe && !isAborted) {
             function containsBlacklistedWords(str, blacklist, threshold) {
                 const regex = new RegExp(`\\b(${blacklist.join('|')})\\b`, 'gi');
                 const matches = str.match(regex) || [];
@@ -3336,9 +3391,9 @@ export async function generateRaw(prompt, api, instructOverride, quietToLoud, sy
 
         let data = {};
 
-        if (api == 'koboldhorde') {
+        if (api === 'koboldhorde') {
             data = await generateHorde(prompt, generateData, abortController.signal, false);
-        } else if (api == 'openai') {
+        } else if (api === 'openai') {
             data = await sendOpenAIRequest('quiet', generateData, abortController.signal);
         } else {
             const generateUrl = getGenerateUrl(api);
@@ -3351,13 +3406,15 @@ export async function generateRaw(prompt, api, instructOverride, quietToLoud, sy
             });
 
             if (!response.ok) {
-                const error = await response.json();
-                throw error;
+                throw await response.json();
             }
 
             data = await response.json();
         }
 
+        // should only happen for text completions
+        // other frontend paths do not return data if calling the backend fails,
+        // they throw things instead
         if (data.error) {
             throw new Error(data.response);
         }
@@ -4410,6 +4467,11 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         return Promise.resolve();
     }
 
+    /**
+     * Saves itemized prompt bits and calls streaming or non-streaming generation API.
+     * @returns {Promise<void|*|Awaited<*>|String|{fromStream}|string|undefined|Object>}
+     * @throws {Error|object} Error with message text, or Error with response JSON (OAI/Horde), or the actual response JSON (novel|textgenerationwebui|kobold)
+     */
     async function finishGenerating() {
         if (power_user.console_log_prompts) {
             console.log(generate_data.prompt);
@@ -4521,6 +4583,12 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
 
     return finishGenerating().then(onSuccess, onError);
 
+    /**
+     * Handles the successful response from the generation API.
+     * @param data
+     * @returns {Promise<String|{fromStream}|*|string|string|void|Awaited<*>|undefined>}
+     * @throws {Error} Throws an error if the response data contains an error message
+     */
     async function onSuccess(data) {
 
         console.debug(`OnSuccess 1`);
@@ -4533,6 +4601,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
 
         let messageChunk = '';
 
+        // if an error was returned in data (textgenwebui), show it and throw it
         if (data.error) {
             unblockGeneration(type);
             generatedPromptCache = '';
@@ -4606,7 +4675,8 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             playMessageSound();
         }
 
-        if (power_user.auto_swipe) {
+        const isAborted = abortController && abortController.signal.aborted;
+        if (power_user.auto_swipe && !isAborted) {
             console.debug('checking for autoswipeblacklist on non-streaming message');
             function containsBlacklistedWords(getMessage, blacklist, threshold) {
                 console.debug('checking blacklisted words');
@@ -4647,9 +4717,15 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         return Object.defineProperty(new String(getMessage), 'messageChunk', { value: messageChunk });
     }
 
+    /**
+     * Exception handler for finishGenerating
+     * @param {Error|object} exception Error or response JSON
+     * @throws {Error|object} Re-throws the exception
+     */
     function onError(exception) {
+        // if the response JSON was thrown (novel|textgenerationwebui|kobold), show the error message
         if (typeof exception?.error?.message === 'string') {
-            toastr.error(exception.error.message, t`Error`, { timeOut: 10000, extendedTimeOut: 20000 });
+            toastr.error(exception.error.message, t`Text generation error`, { timeOut: 10000, extendedTimeOut: 20000 });
         }
 
         generatedPromptCache = '';
@@ -4788,6 +4864,11 @@ export function shouldAutoContinue(messageChunk, isImpersonate) {
 
     if (is_send_press) {
         console.debug('Auto-continue is disabled because a message is currently being sent.');
+        return false;
+    }
+
+    if (abortController && abortController.signal.aborted) {
+        console.debug('Auto-continue is not triggered because the generation was stopped.');
         return false;
     }
 
@@ -5242,7 +5323,7 @@ async function promptItemize(itemizedPrompts, requestedMesId) {
     if (priorPromptArrayItemForRawPromptDisplay) {
         diffPrevPrompt.style.display = '';
         diffPrevPrompt.addEventListener('click', function () {
-            const dmp = new diff_match_patch();
+            const dmp = new DiffMatchPatch();
             const text1 = flatten(itemizedPrompts[priorPromptArrayItemForRawPromptDisplay].rawPrompt);
             const text2 = flatten(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt);
 
@@ -5313,6 +5394,7 @@ function setInContextMessages(lastmsg, type) {
  * @param {string} type Generation type
  * @param {object} data Generation data
  * @returns {Promise<object>} Response data from the API
+ * @throws {Error|object}
  */
 export async function sendGenerationRequest(type, data) {
     if (main_api === 'openai') {
@@ -5332,12 +5414,10 @@ export async function sendGenerationRequest(type, data) {
     });
 
     if (!response.ok) {
-        const error = await response.json();
-        throw error;
+        throw await response.json();
     }
 
-    const responseData = await response.json();
-    return responseData;
+    return await response.json();
 }
 
 /**
@@ -5369,6 +5449,7 @@ export async function sendStreamingRequest(type, data) {
  * Gets the generation endpoint URL for the specified API.
  * @param {string} api API name
  * @returns {string} Generation URL
+ * @throws {Error} If the API is unknown
  */
 function getGenerateUrl(api) {
     switch (api) {
@@ -5419,6 +5500,7 @@ function parseAndSaveLogprobs(data, continueFrom) {
                 case textgen_types.LLAMACPP: {
                     logprobs = data?.completion_probabilities?.map(x => parseTextgenLogprobs(x.content, [x])) || null;
                 } break;
+                case textgen_types.KOBOLDCPP:
                 case textgen_types.VLLM:
                 case textgen_types.INFERMATICAI:
                 case textgen_types.APHRODITE:
@@ -6787,6 +6869,10 @@ export async function saveSettings(type) {
     });
 }
 
+/**
+ * Sets the generation parameters from a preset object.
+ * @param {{ genamt?: number, max_length?: number }} preset Preset object
+ */
 export function setGenerationParamsFromPreset(preset) {
     const needsUnlock = (preset.max_length ?? max_context) > MAX_CONTEXT_DEFAULT || (preset.genamt ?? amount_gen) > MAX_RESPONSE_DEFAULT;
     $('#max_context_unlocked').prop('checked', needsUnlock).trigger('change');
@@ -7046,99 +7132,15 @@ export async function displayPastChats() {
     $('#select_chat_div').empty();
     $('#select_chat_search').val('').off('input');
 
-    const data = await (selected_group ? getGroupPastChats(selected_group) : getPastCharacterChats());
-
-    if (!data) {
-        toastr.error(t`Could not load chat data. Try reloading the page.`);
-        return;
-    }
-
     const chatDetails = getCurrentChatDetails();
-    const group = chatDetails.group;
     const currentChat = chatDetails.sessionName;
     const displayName = chatDetails.characterName;
     const avatarImg = chatDetails.avatarImgURL;
 
-    const rawChats = await getChatsFromFiles(data, selected_group);
-
-    // Sort by last message date descending
-    data.sort((a, b) => sortMoments(timestampToMoment(a.last_mes), timestampToMoment(b.last_mes)));
-    console.log(data);
-    $('#load_select_chat_div').css('display', 'none');
-    $('#ChatHistoryCharName').text(`${displayName}'s `);
-
-    const displayChats = (searchQuery) => {
-        $('#select_chat_div').empty();  // Clear the current chats before appending filtered chats
-
-        const filteredData = data.filter(chat => {
-            const fileName = chat['file_name'];
-            const chatContent = rawChats[fileName];
-
-            // Make sure empty chats are displayed when there is no search query
-            if (Array.isArray(chatContent) && !chatContent.length && !searchQuery) {
-                return true;
-            }
-
-            // // Uncomment this to return to old behavior (classical full-substring search).
-            // return chatContent && Object.values(chatContent).some(message => message?.mes?.toLowerCase()?.includes(searchQuery.toLowerCase()));
-
-            // Fragment search a.k.a. swoop (as in `helm-swoop` in the Helm package of Emacs).
-            // Split a `query` {string} into its fragments {string[]}.
-            function makeQueryFragments(query) {
-                let fragments = query.trim().split(/\s+/).map(str => str.trim().toLowerCase()).filter(onlyUnique);
-                // fragments = fragments.filter( function(str) { return str.length >= 3; } );  // Helm does this, but perhaps better if we don't.
-                return fragments;
-            }
-            // Check whether `text` {string} includes all of the `fragments` {string[]}.
-            function matchFragments(fragments, text) {
-                if (!text || !text.toLowerCase) return false;
-                return fragments.every(item => text.toLowerCase().includes(item));
-            }
-            const fragments = makeQueryFragments(searchQuery);
-            // At least one chat message must match *all* the fragments.
-            // Currently, this doesn't match if the fragment matches are distributed across several chat messages.
-            return chatContent && Object.values(chatContent).some(message => matchFragments(fragments, message?.mes));
-        });
-
-        console.debug(filteredData);
-        for (const value of filteredData.values()) {
-            let strlen = 300;
-            let mes = value['mes'];
-
-            if (mes !== undefined) {
-                if (mes.length > strlen) {
-                    mes = '...' + mes.substring(mes.length - strlen);
-                }
-                const fileSize = value['file_size'];
-                const fileName = value['file_name'];
-                const chatItems = rawChats[fileName].length;
-                const timestamp = timestampToMoment(value['last_mes']).format('lll');
-                const template = $('#past_chat_template .select_chat_block_wrapper').clone();
-                template.find('.select_chat_block').attr('file_name', fileName);
-                template.find('.avatar img').attr('src', avatarImg);
-                template.find('.select_chat_block_filename').text(fileName);
-                template.find('.chat_file_size').text(`(${fileSize},`);
-                template.find('.chat_messages_num').text(`${chatItems}💬)`);
-                template.find('.select_chat_block_mes').text(mes);
-                template.find('.PastChat_cross').attr('file_name', fileName);
-                template.find('.chat_messages_date').text(timestamp);
-
-                if (selected_group) {
-                    template.find('.avatar img').replaceWith(getGroupAvatar(group));
-                }
-
-                $('#select_chat_div').append(template);
-
-                if (currentChat === fileName.toString().replace('.jsonl', '')) {
-                    $('#select_chat_div').find('.select_chat_block:last').attr('highlight', String(true));
-                }
-            }
-        }
-    };
-    displayChats('');  // Display all by default
+    await displayChats('', currentChat, displayName, avatarImg, selected_group);
 
     const debouncedDisplay = debounce((searchQuery) => {
-        displayChats(searchQuery);
+        displayChats(searchQuery, currentChat, displayName, avatarImg, selected_group);
     });
 
     // Define the search input listener
@@ -7154,6 +7156,53 @@ export async function displayPastChats() {
         textSearchElement.focus();
         textSearchElement.select();  // select content (if any) for easy erasing
     }, 200);
+}
+
+async function displayChats(searchQuery, currentChat, displayName, avatarImg, selected_group) {
+    try {
+        const trimExtension = (fileName) => String(fileName).replace('.jsonl', '');
+
+        const response = await fetch('/api/chats/search', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({
+                query: searchQuery,
+                avatar_url: selected_group ? null : characters[this_chid].avatar,
+                group_id: selected_group || null,
+            }),
+        });
+
+        if (!response.ok) {
+            throw new Error('Search failed');
+        }
+
+        const filteredData = await response.json();
+        $('#select_chat_div').empty();
+
+        filteredData.sort((a, b) => sortMoments(timestampToMoment(a.last_mes), timestampToMoment(b.last_mes)));
+
+        for (const chat of filteredData) {
+            const isSelected = trimExtension(currentChat) === trimExtension(chat.file_name);
+            const template = $('#past_chat_template .select_chat_block_wrapper').clone();
+            template.find('.select_chat_block').attr('file_name', chat.file_name);
+            template.find('.avatar img').attr('src', avatarImg);
+            template.find('.select_chat_block_filename').text(chat.file_name);
+            template.find('.chat_file_size').text(`(${chat.file_size},`);
+            template.find('.chat_messages_num').text(`${chat.message_count} 💬)`);
+            template.find('.select_chat_block_mes').text(chat.preview_message);
+            template.find('.PastChat_cross').attr('file_name', chat.file_name);
+            template.find('.chat_messages_date').text(timestampToMoment(chat.last_mes).format('lll'));
+
+            if (isSelected) {
+                template.find('.select_chat_block').attr('highlight', String(true));
+            }
+
+            $('#select_chat_div').append(template);
+        }
+    } catch (error) {
+        console.error('Error loading chats:', error);
+        toastr.error('Could not load chat data. Try reloading the page.');
+    }
 }
 
 export function selectRightMenuWithAnimation(selectedMenuId) {
@@ -7213,7 +7262,7 @@ export function select_rm_info(type, charId, previousCharId = null) {
     importFlashTimeout = setTimeout(function () {
         if (type === 'char_import' || type === 'char_create') {
             // Find the page at which the character is located
-            const avatarFileName = `${charId}.png`;
+            const avatarFileName = charId;
             const charData = getEntitiesList({ doFilter: true });
             const charIndex = charData.findIndex((x) => x?.item?.avatar?.startsWith(avatarFileName));
 
@@ -7546,7 +7595,7 @@ export function callPopup(text, type, inputValue = '', { okButton, rows, wide, w
         } else if (['new_chat', 'confirm'].includes(popup_type)) {
             return okButton ?? 'Yes';
         } else if (['input'].includes(popup_type)) {
-            return okButton ?? 'Save';
+            return okButton ?? t`Save`;
         }
         return okButton ?? 'Delete';
     }
@@ -7916,7 +7965,7 @@ function openCharacterWorldPopup() {
     if (!isMobile()) {
         $(extraSelect).select2({
             width: '100%',
-            placeholder: 'No auxillary Lorebooks set. Click here to select.',
+            placeholder: t`No auxillary Lorebooks set. Click here to select.`,
             allowClear: true,
             closeOnSelect: false,
         });
@@ -10438,8 +10487,6 @@ jQuery(async function () {
             easing: animation_easing,
         });
         setTimeout(function () { $('#shadow_select_chat_popup').css('display', 'none'); }, animation_duration);
-        //$("#shadow_select_chat_popup").css("display", "none");
-        $('#load_select_chat_div').css('display', 'block');
     });
 
     if (navigator.clipboard === undefined) {
@@ -10839,7 +10886,6 @@ jQuery(async function () {
         var formData = new FormData($('#form_import_chat').get(0));
         formData.append('user_name', name1);
         $('#select_chat_div').html('');
-        $('#load_select_chat_div').css('display', 'block');
 
         if (selected_group) {
             await importGroupChat(formData);

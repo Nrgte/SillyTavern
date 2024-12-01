@@ -69,7 +69,7 @@ router.post('/generate', jsonParser, async (req, res) => {
             headers: {
                 'Ocp-Apim-Subscription-Key': key,
                 'Content-Type': 'application/ssml+xml',
-                'X-Microsoft-OutputFormat': 'ogg-48khz-16bit-mono-opus',
+                'X-Microsoft-OutputFormat': 'webm-24khz-16bit-mono-opus',
             },
             body: ssml,
         });

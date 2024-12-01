@@ -1,3 +1,5 @@
+import { DOMPurify, Bowser } from '../lib.js';
+
 import {
     characters,
     online_status,
@@ -37,7 +39,6 @@ import { getTokenCountAsync } from './tokenizers.js';
 import { textgen_types, textgenerationwebui_settings as textgen_settings, getTextGenServer } from './textgen-settings.js';
 import { debounce_timeout } from './constants.js';
 
-import Bowser from '../lib/bowser.min.js';
 import { Popup } from './popup.js';
 
 var RPanelPin = document.getElementById('rm_button_panel_pin');
@@ -387,6 +388,7 @@ function RA_autoconnect(PrevApi) {
                     || (secret_state[SECRET_KEYS.GROQ] && oai_settings.chat_completion_source == chat_completion_sources.GROQ)
                     || (secret_state[SECRET_KEYS.ZEROONEAI] && oai_settings.chat_completion_source == chat_completion_sources.ZEROONEAI)
                     || (secret_state[SECRET_KEYS.BLOCKENTROPY] && oai_settings.chat_completion_source == chat_completion_sources.BLOCKENTROPY)
+                    || (secret_state[SECRET_KEYS.NANOGPT] && oai_settings.chat_completion_source == chat_completion_sources.NANOGPT)
                     || (isValidUrl(oai_settings.custom_url) && oai_settings.chat_completion_source == chat_completion_sources.CUSTOM)
                 ) {
                     $('#api_button_openai').trigger('click');
@@ -701,16 +703,13 @@ const isFirefox = navigator.userAgent.toLowerCase().indexOf('firefox') > -1;
  */
 function autoFitSendTextArea() {
     const originalScrollBottom = chatBlock.scrollHeight - (chatBlock.scrollTop + chatBlock.offsetHeight);
-    if (Math.ceil(sendTextArea.scrollHeight + 3) >= Math.floor(sendTextArea.offsetHeight)) {
-        const sendTextAreaMinHeight = '0px';
-        sendTextArea.style.height = sendTextAreaMinHeight;
-    }
-    const newHeight = sendTextArea.scrollHeight + 3;
+
+    sendTextArea.style.height = '1px'; // Reset height to 1px to force recalculation of scrollHeight
+    const newHeight = sendTextArea.scrollHeight;
     sendTextArea.style.height = `${newHeight}px`;
 
     if (!isFirefox) {
-        const newScrollTop = Math.round(chatBlock.scrollHeight - (chatBlock.offsetHeight + originalScrollBottom));
-        chatBlock.scrollTop = newScrollTop;
+        chatBlock.scrollTop = chatBlock.scrollHeight - (chatBlock.offsetHeight + originalScrollBottom);
     }
 }
 export const autoFitSendTextAreaDebounced = debounce(autoFitSendTextArea, debounce_timeout.short);

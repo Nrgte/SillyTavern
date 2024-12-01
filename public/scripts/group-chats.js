@@ -1,3 +1,5 @@
+import { Fuse } from '../lib.js';
+
 import {
     shuffle,
     onlyUnique,
@@ -108,6 +110,7 @@ let newGroupMembers = [];
 export const group_activation_strategy = {
     NATURAL: 0,
     LIST: 1,
+    MANUAL: 2,
 };
 
 export const group_generation_mode = {
@@ -849,6 +852,9 @@ async function generateGroupWrapper(by_auto_mode, type = null, params = {}) {
         }
         else if (activationStrategy === group_activation_strategy.LIST) {
             activatedMembers = activateListOrder(enabledMembers);
+        }
+        else if (activationStrategy === group_activation_strategy.MANUAL && !isUserInput) {
+            activatedMembers = shuffle(enabledMembers).slice(0, 1).map(x => characters.findIndex(y => y.avatar === x)).filter(x => x !== -1);
         }
 
         if (activatedMembers.length === 0) {

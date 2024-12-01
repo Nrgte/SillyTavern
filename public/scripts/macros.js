@@ -1,8 +1,15 @@
+import { Handlebars, moment, seedrandom, droll } from '../lib.js';
 import { chat, chat_metadata, main_api, getMaxContextSize, getCurrentChatId, substituteParams } from '../script.js';
 import { timestampToMoment, isDigitsOnly, getStringHash, escapeRegex, uuidv4 } from './utils.js';
 import { textgenerationwebui_banned_in_macros } from './textgen-settings.js';
-import { replaceInstructMacros } from './instruct-mode.js';
-import { replaceVariableMacros } from './variables.js';
+import { getInstructMacros } from './instruct-mode.js';
+import { getVariableMacros } from './variables.js';
+
+/**
+ * @typedef Macro
+ * @property {RegExp} regex - Regular expression to match the macro
+ * @property {(substring: string, ...args: any[]) => string} replace - Function to replace the macro
+ */
 
 // Register any macro that you want to leave in the compiled story string
 Handlebars.registerHelper('trim', () => '{{trim}}');
@@ -260,28 +267,19 @@ function getCurrentSwipeId() {
 /**
  * Replaces banned words in macros with an empty string.
  * Adds them to textgenerationwebui ban list.
- * @param {string} inText Text to replace banned words in
- * @returns {string} Text without the "banned" macro
+ * @returns {Macro}
  */
-function bannedWordsReplace(inText) {
-    if (!inText) {
-        return '';
-    }
-
+function getBannedWordsMacro() {
     const banPattern = /{{banned "(.*)"}}/gi;
-
-    if (main_api == 'textgenerationwebui') {
-        const bans = inText.matchAll(banPattern);
-        if (bans) {
-            for (const banCase of bans) {
-                console.log('Found banned words in macros: ' + banCase[1]);
-                textgenerationwebui_banned_in_macros.push(banCase[1]);
-            }
+    const banReplace = (match, bannedWord) => {
+        if (main_api == 'textgenerationwebui') {
+            console.log('Found banned word in macros: ' + bannedWord);
+            textgenerationwebui_banned_in_macros.push(bannedWord);
         }
-    }
+        return '';
+    };
 
-    inText = inText.replaceAll(banPattern, '');
-    return inText;
+    return { regex: banPattern, replace: banReplace };
 }
 
 function getTimeSinceLastMessage() {
@@ -316,10 +314,13 @@ function getTimeSinceLastMessage() {
     return 'just now';
 }
 
-function randomReplace(input, emptyListPlaceholder = '') {
+/**
+ * Returns a macro that picks a random item from a list.
+ * @returns {Macro} The random replace macro
+ */
+function getRandomReplaceMacro() {
     const randomPattern = /{{random\s?::?([^}]+)}}/gi;
-
-    input = input.replace(randomPattern, (match, listString) => {
+    const randomReplace = (match, listString) => {
         // Split on either double colons or comma. If comma is the separator, we are also trimming all items.
         const list = listString.includes('::')
             ? listString.split('::')
@@ -327,24 +328,29 @@ function randomReplace(input, emptyListPlaceholder = '') {
             : listString.replace(/\\,/g, '##�COMMA�##').split(',').map(item => item.trim().replace(/##�COMMA�##/g, ','));
 
         if (list.length === 0) {
-            return emptyListPlaceholder;
+            return '';
         }
-        const rng = new Math.seedrandom('added entropy.', { entropy: true });
+        const rng = seedrandom('added entropy.', { entropy: true });
         const randomIndex = Math.floor(rng() * list.length);
         return list[randomIndex];
-    });
-    return input;
+    };
+
+    return { regex: randomPattern, replace: randomReplace };
 }
 
-function pickReplace(input, rawContent, emptyListPlaceholder = '') {
-    const pickPattern = /{{pick\s?::?([^}]+)}}/gi;
-
+/**
+ * Returns a macro that picks a random item from a list with a consistent seed.
+ * @param {string} rawContent The raw content of the string
+ * @returns {Macro} The pick replace macro
+ */
+function getPickReplaceMacro(rawContent) {
     // We need to have a consistent chat hash, otherwise we'll lose rolls on chat file rename or branch switches
     // No need to save metadata here - branching and renaming will implicitly do the save for us, and until then loading it like this is consistent
     const chatIdHash = getChatIdHash();
     const rawContentHash = getStringHash(rawContent);
 
-    return input.replace(pickPattern, (match, listString, offset) => {
+    const pickPattern = /{{pick\s?::?([^}]+)}}/gi;
+    const pickReplace = (match, listString, offset) => {
         // Split on either double colons or comma. If comma is the separator, we are also trimming all items.
         const list = listString.includes('::')
             ? listString.split('::')
@@ -352,23 +358,28 @@ function pickReplace(input, rawContent, emptyListPlaceholder = '') {
             : listString.replace(/\\,/g, '##�COMMA�##').split(',').map(item => item.trim().replace(/##�COMMA�##/g, ','));
 
         if (list.length === 0) {
-            return emptyListPlaceholder;
+            return '';
         }
 
         // We build a hash seed based on: unique chat file, raw content, and the placement inside this content
         // This allows us to get unique but repeatable picks in nearly all cases
         const combinedSeedString = `${chatIdHash}-${rawContentHash}-${offset}`;
         const finalSeed = getStringHash(combinedSeedString);
-        const rng = new Math.seedrandom(finalSeed);
+        // @ts-ignore - have to use numbers for legacy picks
+        const rng = seedrandom(finalSeed);
         const randomIndex = Math.floor(rng() * list.length);
         return list[randomIndex];
-    });
+    };
+
+    return { regex: pickPattern, replace: pickReplace };
 }
 
-function diceRollReplace(input, invalidRollPlaceholder = '') {
+/**
+ * @returns {Macro} The dire roll macro
+ */
+function getDiceRollMacro() {
     const rollPattern = /{{roll[ : ]([^}]+)}}/gi;
-
-    return input.replace(rollPattern, (match, matchValue) => {
+    const rollReplace = (match, matchValue) => {
         let formula = matchValue.trim();
 
         if (isDigitsOnly(formula)) {
@@ -379,32 +390,33 @@ function diceRollReplace(input, invalidRollPlaceholder = '') {
 
         if (!isValid) {
             console.debug(`Invalid roll formula: ${formula}`);
-            return invalidRollPlaceholder;
+            return '';
         }
 
         const result = droll.roll(formula);
-        return new String(result.total);
-    });
+        if (result === false) return '';
+        return String(result.total);
+    };
+
+    return { regex: rollPattern, replace: rollReplace };
 }
 
 /**
  * Returns the difference between two times. Works with any time format acceptable by moment().
  * Can work with {{date}} {{time}} macros
- * @param {string} input - The string to replace time difference macros in.
- * @returns {string} The string with replaced time difference macros.
+ * @returns {Macro} The time difference macro
  */
-function timeDiffReplace(input) {
+function getTimeDiffMacro() {
     const timeDiffPattern = /{{timeDiff::(.*?)::(.*?)}}/gi;
-
-    const output = input.replace(timeDiffPattern, (_match, matchPart1, matchPart2) => {
+    const timeDiffReplace = (_match, matchPart1, matchPart2) => {
         const time1 = moment(matchPart1);
         const time2 = moment(matchPart2);
 
         const timeDifference = moment.duration(time1.diff(time2));
         return timeDifference.humanize(true);
-    });
+    };
 
-    return output;
+    return { regex: timeDiffPattern, replace: timeDiffReplace };
 }
 
 /**
@@ -412,81 +424,100 @@ function timeDiffReplace(input) {
  * @param {string} content - The string to substitute parameters in.
  * @param {EnvObject} env - Map of macro names to the values they'll be substituted with. If the param
  * values are functions, those functions will be called and their return values are used.
+ * @param {function(string): string} postProcessFn - Function to run on the macro value before replacing it.
  * @returns {string} The string with substituted parameters.
  */
-export function evaluateMacros(content, env) {
+export function evaluateMacros(content, env, postProcessFn) {
     if (!content) {
         return '';
     }
 
+    postProcessFn = typeof postProcessFn === 'function' ? postProcessFn : (x => x);
     const rawContent = content;
 
-    // Legacy non-macro substitutions
-    content = content.replace(/<USER>/gi, typeof env.user === 'function' ? env.user() : env.user);
-    content = content.replace(/<BOT>/gi, typeof env.char === 'function' ? env.char() : env.char);
-    content = content.replace(/<CHAR>/gi, typeof env.char === 'function' ? env.char() : env.char);
-    content = content.replace(/<CHARIFNOTGROUP>/gi, typeof env.group === 'function' ? env.group() : env.group);
-    content = content.replace(/<GROUP>/gi, typeof env.group === 'function' ? env.group() : env.group);
+    /**
+     * Built-ins running before the env variables
+     * @type {Macro[]}
+     * */
+    const preEnvMacros = [
+        // Legacy non-curly macros
+        { regex: /<USER>/gi, replace: () => typeof env.user === 'function' ? env.user() : env.user },
+        { regex: /<BOT>/gi, replace: () => typeof env.char === 'function' ? env.char() : env.char },
+        { regex: /<CHAR>/gi, replace: () => typeof env.char === 'function' ? env.char() : env.char },
+        { regex: /<CHARIFNOTGROUP>/gi, replace: () => typeof env.group === 'function' ? env.group() : env.group },
+        { regex: /<GROUP>/gi, replace: () => typeof env.group === 'function' ? env.group() : env.group },
+        getDiceRollMacro(),
+        ...getInstructMacros(env),
+        ...getVariableMacros(),
+        { regex: /{{newline}}/gi, replace: () => '\n' },
+        { regex: /(?:\r?\n)*{{trim}}(?:\r?\n)*/gi, replace: () => '' },
+        { regex: /{{noop}}/gi, replace: () => '' },
+        { regex: /{{input}}/gi, replace: () => String($('#send_textarea').val()) },
+    ];
 
-    // Short circuit if there are no macros
-    if (!content.includes('{{')) {
-        return content;
-    }
-
-    content = diceRollReplace(content);
-    content = replaceInstructMacros(content, env);
-    content = replaceVariableMacros(content);
-    content = content.replace(/{{newline}}/gi, '\n');
-    content = content.replace(/(?:\r?\n)*{{trim}}(?:\r?\n)*/gi, '');
-    content = content.replace(/{{noop}}/gi, '');
-    content = content.replace(/{{input}}/gi, () => String($('#send_textarea').val()));
+    /**
+     * Built-ins running after the env variables
+     * @type {Macro[]}
+    */
+    const postEnvMacros = [
+        { regex: /{{maxPrompt}}/gi, replace: () => String(getMaxContextSize()) },
+        { regex: /{{lastMessage}}/gi, replace: () => getLastMessage() },
+        { regex: /{{lastMessageId}}/gi, replace: () => String(getLastMessageId() ?? '') },
+        { regex: /{{lastUserMessage}}/gi, replace: () => getLastUserMessage() },
+        { regex: /{{lastCharMessage}}/gi, replace: () => getLastCharMessage() },
+        { regex: /{{firstIncludedMessageId}}/gi, replace: () => String(getFirstIncludedMessageId() ?? '') },
+        { regex: /{{lastSwipeId}}/gi, replace: () => String(getLastSwipeId() ?? '') },
+        { regex: /{{currentSwipeId}}/gi, replace: () => String(getCurrentSwipeId() ?? '') },
+        { regex: /{{reverse:(.+?)}}/gi, replace: (_, str) => Array.from(str).reverse().join('') },
+        { regex: /\{\{\/\/([\s\S]*?)\}\}/gm, replace: () => '' },
+        { regex: /{{time}}/gi, replace: () => moment().format('LT') },
+        { regex: /{{date}}/gi, replace: () => moment().format('LL') },
+        { regex: /{{weekday}}/gi, replace: () => moment().format('dddd') },
+        { regex: /{{isotime}}/gi, replace: () => moment().format('HH:mm') },
+        { regex: /{{isodate}}/gi, replace: () => moment().format('YYYY-MM-DD') },
+        { regex: /{{datetimeformat +([^}]*)}}/gi, replace: (_, format) => moment().format(format) },
+        { regex: /{{idle_duration}}/gi, replace: () => getTimeSinceLastMessage() },
+        { regex: /{{time_UTC([-+]\d+)}}/gi, replace: (_, offset) => moment().utc().utcOffset(parseInt(offset, 10)).format('LT') },
+        getTimeDiffMacro(),
+        getBannedWordsMacro(),
+        getRandomReplaceMacro(),
+        getPickReplaceMacro(rawContent),
+    ];
 
     // Add all registered macros to the env object
-    const nonce = uuidv4();
     MacrosParser.populateEnv(env);
+    const nonce = uuidv4();
+    const envMacros = [];
 
     // Substitute passed-in variables
     for (const varName in env) {
         if (!Object.hasOwn(env, varName)) continue;
 
-        content = content.replace(new RegExp(`{{${escapeRegex(varName)}}}`, 'gi'), () => {
+        const envRegex = new RegExp(`{{${escapeRegex(varName)}}}`, 'gi');
+        const envReplace = () => {
             const param = env[varName];
             const value = MacrosParser.sanitizeMacroValue(typeof param === 'function' ? param(nonce) : param);
             return value;
-        });
+        };
+
+        envMacros.push({ regex: envRegex, replace: envReplace });
     }
 
-    content = content.replace(/{{maxPrompt}}/gi, () => String(getMaxContextSize()));
-    content = content.replace(/{{lastMessage}}/gi, () => getLastMessage());
-    content = content.replace(/{{lastMessageId}}/gi, () => String(getLastMessageId() ?? ''));
-    content = content.replace(/{{lastUserMessage}}/gi, () => getLastUserMessage());
-    content = content.replace(/{{lastCharMessage}}/gi, () => getLastCharMessage());
-    content = content.replace(/{{firstIncludedMessageId}}/gi, () => String(getFirstIncludedMessageId() ?? ''));
-    content = content.replace(/{{lastSwipeId}}/gi, () => String(getLastSwipeId() ?? ''));
-    content = content.replace(/{{currentSwipeId}}/gi, () => String(getCurrentSwipeId() ?? ''));
-    content = content.replace(/{{reverse:(.+?)}}/gi, (_, str) => Array.from(str).reverse().join(''));
+    const macros = [...preEnvMacros, ...envMacros, ...postEnvMacros];
 
-    content = content.replace(/\{\{\/\/([\s\S]*?)\}\}/gm, '');
+    for (const macro of macros) {
+        // Stop if the content is empty
+        if (!content) {
+            break;
+        }
 
-    content = content.replace(/{{time}}/gi, () => moment().format('LT'));
-    content = content.replace(/{{date}}/gi, () => moment().format('LL'));
-    content = content.replace(/{{weekday}}/gi, () => moment().format('dddd'));
-    content = content.replace(/{{isotime}}/gi, () => moment().format('HH:mm'));
-    content = content.replace(/{{isodate}}/gi, () => moment().format('YYYY-MM-DD'));
+        // Short-circuit if no curly braces are found
+        if (!macro.regex.source.startsWith('<') && !content.includes('{{')) {
+            break;
+        }
 
-    content = content.replace(/{{datetimeformat +([^}]*)}}/gi, (_, format) => {
-        const formattedTime = moment().format(format);
-        return formattedTime;
-    });
-    content = content.replace(/{{idle_duration}}/gi, () => getTimeSinceLastMessage());
-    content = content.replace(/{{time_UTC([-+]\d+)}}/gi, (_, offset) => {
-        const utcOffset = parseInt(offset, 10);
-        const utcTime = moment().utc().utcOffset(utcOffset).format('LT');
-        return utcTime;
-    });
-    content = timeDiffReplace(content);
-    content = bannedWordsReplace(content);
-    content = randomReplace(content);
-    content = pickReplace(content, rawContent);
+        content = content.replace(macro.regex, (...args) => postProcessFn(macro.replace(...args)));
+    }
+
     return content;
 }

@@ -26,6 +26,8 @@ import {
     convertMistralMessages,
     convertAI21Messages,
     mergeMessages,
+    cachingAtDepthForOpenRouterClaude,
+    cachingAtDepthForClaude,
 } from '../../prompt-converters.js';
 
 import { readSecret, SECRET_KEYS } from '../secrets.js';
@@ -48,6 +50,7 @@ const API_MAKERSUITE = 'https://generativelanguage.googleapis.com';
 const API_01AI = 'https://api.01.ai/v1';
 const API_BLOCKENTROPY = 'https://api.blockentropy.ai/v1';
 const API_AI21 = 'https://api.ai21.com/studio/v1';
+const API_NANOGPT = 'https://nano-gpt.com/api/v1';
 
 /**
  * Applies a post-processing step to the generated messages.
@@ -79,6 +82,11 @@ async function sendClaudeRequest(request, response) {
     const apiKey = request.body.reverse_proxy ? request.body.proxy_password : readSecret(request.user.directories, SECRET_KEYS.CLAUDE);
     const divider = '-'.repeat(process.stdout.columns);
     const enableSystemPromptCache = getConfigValue('claude.enableSystemPromptCache', false) && request.body.model.startsWith('claude-3');
+    let cachingAtDepth = getConfigValue('claude.cachingAtDepth', -1);
+    // Disabled if not an integer or negative, or if the model doesn't support it
+    if (!Number.isInteger(cachingAtDepth) || cachingAtDepth < 0 || !request.body.model.startsWith('claude-3')) {
+        cachingAtDepth = -1;
+    }
 
     if (!apiKey) {
         console.log(color.red(`Claude API key is missing.\n${divider}`));
@@ -94,7 +102,7 @@ async function sendClaudeRequest(request, response) {
         const additionalHeaders = {};
         const useTools = request.body.model.startsWith('claude-3') && Array.isArray(request.body.tools) && request.body.tools.length > 0;
         const useSystemPrompt = (request.body.model.startsWith('claude-2') || request.body.model.startsWith('claude-3')) && request.body.claude_use_sysprompt;
-        const convertedPrompt = convertClaudeMessages(request.body.messages, request.body.assistant_prefill, useSystemPrompt, useTools, request.body.human_sysprompt_message, request.body.char_name, request.body.user_name);
+        const convertedPrompt = convertClaudeMessages(request.body.messages, request.body.assistant_prefill, useSystemPrompt, useTools, request.body.char_name, request.body.user_name);
         // Add custom stop sequences
         const stopSequences = [];
         if (Array.isArray(request.body.stop)) {
@@ -122,10 +130,6 @@ async function sendClaudeRequest(request, response) {
             delete requestBody.system;
         }
         if (useTools) {
-            // Claude doesn't do prefills on function calls, and doesn't allow empty messages
-            if (convertedPrompt.messages.length && convertedPrompt.messages[convertedPrompt.messages.length - 1].role === 'assistant') {
-                convertedPrompt.messages.push({ role: 'user', content: '.' });
-            }
             additionalHeaders['anthropic-beta'] = 'tools-2024-05-16';
             requestBody.tool_choice = { type: request.body.tool_choice };
             requestBody.tools = request.body.tools
@@ -133,13 +137,23 @@ async function sendClaudeRequest(request, response) {
                 .map(tool => tool.function)
                 .map(fn => ({ name: fn.name, description: fn.description, input_schema: fn.parameters }));
 
+            // Claude doesn't do prefills on function calls, and doesn't allow empty messages
+            if (requestBody.tools.length && convertedPrompt.messages.length && convertedPrompt.messages[convertedPrompt.messages.length - 1].role === 'assistant') {
+                convertedPrompt.messages.push({ role: 'user', content: [{ type: 'text', text: '\u200b' }] });
+            }
             if (enableSystemPromptCache && requestBody.tools.length) {
                 requestBody.tools[requestBody.tools.length - 1]['cache_control'] = { type: 'ephemeral' };
             }
         }
-        if (enableSystemPromptCache) {
+
+        if (cachingAtDepth !== -1) {
+            cachingAtDepthForClaude(convertedPrompt.messages, cachingAtDepth);
+        }
+
+        if (enableSystemPromptCache || cachingAtDepth !== -1) {
             additionalHeaders['anthropic-beta'] = 'prompt-caching-2024-07-31';
         }
+
         console.log('Claude request:', requestBody);
 
         const generateResponse = await fetch(apiUrl + '/messages', {
@@ -266,7 +280,7 @@ async function sendMakerSuiteRequest(request, response) {
             delete generationConfig.stopSequences;
         }
 
-        const should_use_system_prompt = (model.includes('gemini-1.5-flash') || model.includes('gemini-1.5-pro')) && request.body.use_makersuite_sysprompt;
+        const should_use_system_prompt = (model.includes('gemini-1.5-flash') || model.includes('gemini-1.5-pro') || model.includes('gemini-exp-1114') || model.includes('gemini-exp-1121')) && request.body.use_makersuite_sysprompt;
         const prompt = convertGooglePrompt(request.body.messages, model, should_use_system_prompt, request.body.char_name, request.body.user_name);
         let body = {
             contents: prompt.contents,
@@ -476,6 +490,8 @@ async function sendMistralAIRequest(request, response) {
             'messages': messages,
             'temperature': request.body.temperature,
             'top_p': request.body.top_p,
+            'frequency_penalty': request.body.frequency_penalty,
+            'presence_penalty': request.body.presence_penalty,
             'max_tokens': request.body.max_tokens,
             'stream': request.body.stream,
             'safe_prompt': request.body.safe_prompt,
@@ -655,6 +671,10 @@ router.post('/status', jsonParser, async function (request, response_getstatus_o
     } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.BLOCKENTROPY) {
         api_url = API_BLOCKENTROPY;
         api_key_openai = readSecret(request.user.directories, SECRET_KEYS.BLOCKENTROPY);
+        headers = {};
+    } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.NANOGPT) {
+        api_url = API_NANOGPT;
+        api_key_openai = readSecret(request.user.directories, SECRET_KEYS.NANOGPT);
         headers = {};
     } else {
         console.log('This chat completion source is not supported yet.');
@@ -869,6 +889,11 @@ router.post('/generate', jsonParser, function (request, response) {
         if (request.body.use_fallback) {
             bodyParams['route'] = 'fallback';
         }
+
+        let cachingAtDepth = getConfigValue('claude.cachingAtDepth', -1);
+        if (Number.isInteger(cachingAtDepth) && cachingAtDepth >= 0 && request.body.model.startsWith('anthropic/claude-3')) {
+            cachingAtDepthForOpenRouterClaude(request.body.messages, cachingAtDepth);
+        }
     } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.CUSTOM) {
         apiUrl = request.body.custom_url;
         apiKey = readSecret(request.user.directories, SECRET_KEYS.CUSTOM);
@@ -904,6 +929,11 @@ router.post('/generate', jsonParser, function (request, response) {
     } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.GROQ) {
         apiUrl = API_GROQ;
         apiKey = readSecret(request.user.directories, SECRET_KEYS.GROQ);
+        headers = {};
+        bodyParams = {};
+    } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.NANOGPT) {
+        apiUrl = API_NANOGPT;
+        apiKey = readSecret(request.user.directories, SECRET_KEYS.NANOGPT);
         headers = {};
         bodyParams = {};
     } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.ZEROONEAI) {
@@ -1021,8 +1051,12 @@ router.post('/generate', jsonParser, function (request, response) {
             }
         } catch (error) {
             console.log('Generation failed', error);
+            const message = error.code === 'ECONNREFUSED'
+                ? `Connection refused: ${error.message}`
+                : error.message || 'Unknown error occurred';
+
             if (!response.headersSent) {
-                response.send({ error: true });
+                response.status(502).send({ error: { message, ...error } });
             } else {
                 response.end();
             }
@@ -1036,20 +1070,9 @@ router.post('/generate', jsonParser, function (request, response) {
         const responseText = await errorResponse.text();
         const errorData = tryParse(responseText);
 
-        const statusMessages = {
-            400: 'Bad request',
-            401: 'Unauthorized',
-            402: 'Credit limit reached',
-            403: 'Forbidden',
-            404: 'Not found',
-            429: 'Too many requests',
-            451: 'Unavailable for legal reasons',
-            502: 'Bad gateway',
-        };
-
-        const message = errorData?.error?.message || statusMessages[errorResponse.status] || 'Unknown error occurred';
+        const message = errorResponse.statusText || 'Unknown error occurred';
         const quota_error = errorResponse.status === 429 && errorData?.error?.type === 'insufficient_quota';
-        console.log(message);
+        console.log('Chat completion request error: ', message, responseText);
 
         if (!response.headersSent) {
             response.send({ error: { message }, quota_error: quota_error });

@@ -1,4 +1,4 @@
-import { characters, substituteParams, this_chid } from '../../../script.js';
+import { characters, substituteParams, substituteParamsExtended, this_chid } from '../../../script.js';
 import { extension_settings } from '../../extensions.js';
 import { regexFromString } from '../../utils.js';
 export {
@@ -21,6 +21,34 @@ const regex_placement = {
     // 4 - sendAs (legacy)
     WORLD_INFO: 5,
 };
+
+export const substitute_find_regex = {
+    NONE: 0,
+    RAW: 1,
+    ESCAPED: 2,
+};
+
+function sanitizeRegexMacro(x) {
+    return (x && typeof x === 'string') ?
+        x.replaceAll(/[\n\r\t\v\f\0.^$*+?{}[\]\\/|()]/gs, function (s) {
+            switch (s) {
+                case '\n':
+                    return '\\n';
+                case '\r':
+                    return '\\r';
+                case '\t':
+                    return '\\t';
+                case '\v':
+                    return '\\v';
+                case '\f':
+                    return '\\f';
+                case '\0':
+                    return '\\0';
+                default:
+                    return '\\' + s;
+            }
+        }) : x;
+}
 
 function getScopedRegex() {
     const isAllowed = extension_settings?.character_allowed_regex?.includes(characters?.[this_chid]?.avatar);
@@ -109,7 +137,21 @@ function runRegexScript(regexScript, rawString, { characterOverride } = {}) {
         return newString;
     }
 
-    const findRegex = regexFromString(regexScript.substituteRegex ? substituteParams(regexScript.findRegex) : regexScript.findRegex);
+    const getRegexString = () => {
+        switch(Number(regexScript.substituteRegex)) {
+            case substitute_find_regex.NONE:
+                return regexScript.findRegex;
+            case substitute_find_regex.RAW:
+                return substituteParamsExtended(regexScript.findRegex);
+            case substitute_find_regex.ESCAPED:
+                return substituteParamsExtended(regexScript.findRegex, {}, sanitizeRegexMacro);
+            default:
+                console.warn(`runRegexScript: Unknown substituteRegex value ${regexScript.substituteRegex}. Using raw regex.`);
+                return regexScript.findRegex;
+        }
+    };
+    const regexString = getRegexString();
+    const findRegex = regexFromString(regexString);
 
     // The user skill issued. Return with nothing.
     if (!findRegex) {

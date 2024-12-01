@@ -52,6 +52,37 @@ function getBackupFunction(handle) {
     return backupFunctions.get(handle);
 }
 
+/**
+ * Formats a byte size into a human-readable string with units
+ * @param {number} bytes - The size in bytes to format
+ * @returns {string} The formatted string (e.g., "1.5 MB")
+ */
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+/**
+ * Gets a preview message from an array of chat messages
+ * @param {Array<Object>} messages - Array of chat messages, each with a 'mes' property
+ * @returns {string} A truncated preview of the last message or empty string if no messages
+ */
+function getPreviewMessage(messages) {
+    const strlen = 400;
+    const lastMessage = messages[messages.length - 1]?.mes;
+
+    if (!lastMessage) {
+        return '';
+    }
+
+    return lastMessage.length > strlen
+        ? '...' + lastMessage.substring(lastMessage.length - strlen)
+        : lastMessage;
+}
+
 process.on('exit', () => {
     for (const func of backupFunctions.values()) {
         func.flush();
@@ -515,4 +546,120 @@ router.post('/group/save', jsonParser, (request, response) => {
     writeFileAtomicSync(pathToFile, jsonlData, 'utf8');
     getBackupFunction(request.user.profile.handle)(request.user.directories.backups, String(id), jsonlData);
     return response.send({ ok: true });
+});
+
+router.post('/search', jsonParser, function (request, response) {
+    try {
+        const { query, avatar_url, group_id } = request.body;
+        let chatFiles = [];
+
+        if (group_id) {
+            // Find group's chat IDs first
+            const groupDir = path.join(request.user.directories.groups);
+            const groupFiles = fs.readdirSync(groupDir)
+                .filter(file => file.endsWith('.json'));
+
+            let targetGroup;
+            for (const groupFile of groupFiles) {
+                const groupData = JSON.parse(fs.readFileSync(path.join(groupDir, groupFile), 'utf8'));
+                if (groupData.id === group_id) {
+                    targetGroup = groupData;
+                    break;
+                }
+            }
+
+            if (!targetGroup?.chats) {
+                return response.send([]);
+            }
+
+            // Find group chat files for given group ID
+            const groupChatsDir = path.join(request.user.directories.groupChats);
+            chatFiles = targetGroup.chats
+                .map(chatId => {
+                    const filePath = path.join(groupChatsDir, `${chatId}.jsonl`);
+                    if (!fs.existsSync(filePath)) return null;
+                    const stats = fs.statSync(filePath);
+                    return {
+                        file_name: chatId,
+                        file_size: formatBytes(stats.size),
+                        path: filePath,
+                    };
+                })
+                .filter(x => x);
+        } else {
+            // Regular character chat directory
+            const character_name = avatar_url.replace('.png', '');
+            const directoryPath = path.join(request.user.directories.chats, character_name);
+
+            if (!fs.existsSync(directoryPath)) {
+                return response.send([]);
+            }
+
+            chatFiles = fs.readdirSync(directoryPath)
+                .filter(file => file.endsWith('.jsonl'))
+                .map(fileName => {
+                    const filePath = path.join(directoryPath, fileName);
+                    const stats = fs.statSync(filePath);
+                    return {
+                        file_name: fileName,
+                        file_size: formatBytes(stats.size),
+                        path: filePath,
+                    };
+                });
+        }
+
+        const results = [];
+
+        // Search logic
+        for (const chatFile of chatFiles) {
+            const data = fs.readFileSync(chatFile.path, 'utf8');
+            const messages = data.split('\n')
+                .map(line => { try { return JSON.parse(line); } catch (_) { return null; } })
+                .filter(x => x && typeof x.mes === 'string');
+
+            if (messages.length === 0) {
+                continue;
+            }
+
+            const lastMessage = messages[messages.length - 1];
+            const lastMesDate = lastMessage?.send_date || new Date().toISOString();
+
+            // If no search query, just return metadata
+            if (!query) {
+                results.push({
+                    file_name: chatFile.file_name,
+                    file_size: chatFile.file_size,
+                    message_count: messages.length,
+                    last_mes: lastMesDate,
+                    preview_message: getPreviewMessage(messages),
+                });
+                continue;
+            }
+
+            // Search through messages
+            const fragments = query.trim().toLowerCase().split(/\s+/).filter(x => x);
+            const hasMatch = messages.some(message => {
+                const text = message?.mes?.toLowerCase();
+                return text && fragments.every(fragment => text.includes(fragment));
+            });
+
+            if (hasMatch) {
+                results.push({
+                    file_name: chatFile.file_name,
+                    file_size: chatFile.file_size,
+                    message_count: messages.length,
+                    last_mes: lastMesDate,
+                    preview_message: getPreviewMessage(messages),
+                });
+            }
+        }
+
+        // Sort by last message date descending
+        results.sort((a, b) => new Date(b.last_mes) - new Date(a.last_mes));
+        return response.send(results);
+
+    } catch (error) {
+        console.error('Chat search error:', error);
+        return response.status(500).json({ error: 'Search failed' });
+    }
 });

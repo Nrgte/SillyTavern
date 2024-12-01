@@ -844,3 +844,4 @@ function updateStatus(message) {
         }
     }
 }
+

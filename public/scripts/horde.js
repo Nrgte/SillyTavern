@@ -181,6 +181,14 @@ function setContextSizePreview() {
     }
 }
 
+/** Generates text using the Horde API.
+ * @param {string} prompt
+ * @param params
+ * @param signal
+ * @param reportProgress
+ * @returns {Promise<{text: *, workerName: string}>}
+ * @throws {Error}
+ */
 async function generateHorde(prompt, params, signal, reportProgress) {
     validateHordeModel();
     delete params.prompt;

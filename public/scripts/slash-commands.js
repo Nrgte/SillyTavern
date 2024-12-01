@@ -1,3 +1,5 @@
+import { Fuse, DOMPurify } from '../lib.js';
+
 import {
     Generate,
     UNIQUE_APIS,
@@ -1827,6 +1829,30 @@ export function initDefaultSlashCommands() {
             </div>
         `,
     }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'upper',
+        aliases: ['uppercase', 'to-upper'],
+        callback: (_, text) => typeof text === 'string' ? text.toUpperCase() : '',
+        returns: 'uppercase string',
+        unnamedArgumentList: [
+            new SlashCommandArgument(
+                'string', [ARGUMENT_TYPE.STRING], true, false,
+            ),
+        ],
+        helpString: 'Converts the provided string to uppercase.',
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'lower',
+        aliases: ['lowercase', 'to-lower'],
+        callback: (_, text) => typeof text === 'string' ? text.toLowerCase() : '',
+        returns: 'lowercase string',
+        unnamedArgumentList: [
+            new SlashCommandArgument(
+                'string', [ARGUMENT_TYPE.STRING], true, false,
+            ),
+        ],
+        helpString: 'Converts the provided string to lowercase.',
+    }));
 
     registerVariableCommands();
 }
@@ -2083,7 +2109,10 @@ async function buttonsCallback(args, text) {
             let popup;
 
             const buttonContainer = document.createElement('div');
-            buttonContainer.classList.add('flex-container', 'flexFlowColumn', 'wide100p', 'm-t-1');
+            buttonContainer.classList.add('flex-container', 'flexFlowColumn', 'wide100p');
+
+            const scrollableContainer = document.createElement('div');
+            scrollableContainer.classList.add('scrollable-buttons-container');
 
             for (const [result, button] of resultToButtonMap) {
                 const buttonElement = document.createElement('div');
@@ -2096,9 +2125,16 @@ async function buttonsCallback(args, text) {
                 buttonContainer.appendChild(buttonElement);
             }
 
+            scrollableContainer.appendChild(buttonContainer);
+
             const popupContainer = document.createElement('div');
             popupContainer.innerHTML = safeValue;
-            popupContainer.appendChild(buttonContainer);
+            popupContainer.appendChild(scrollableContainer);
+
+            // Ensure the popup uses flex layout
+            popupContainer.style.display = 'flex';
+            popupContainer.style.flexDirection = 'column';
+            popupContainer.style.maxHeight = '80vh'; // Limit the overall height of the popup
 
             popup = new Popup(popupContainer, POPUP_TYPE.TEXT, '', { okButton: 'Cancel', allowVerticalScrolling: true });
             popup.show()
@@ -3640,6 +3676,7 @@ function getModelOptions(quiet) {
         { id: 'model_cohere_select', api: 'openai', type: chat_completion_sources.COHERE },
         { id: 'model_perplexity_select', api: 'openai', type: chat_completion_sources.PERPLEXITY },
         { id: 'model_groq_select', api: 'openai', type: chat_completion_sources.GROQ },
+        { id: 'model_nanogpt_select', api: 'openai', type: chat_completion_sources.NANOGPT },
         { id: 'model_01ai_select', api: 'openai', type: chat_completion_sources.ZEROONEAI },
         { id: 'model_blockentropy_select', api: 'openai', type: chat_completion_sources.BLOCKENTROPY },
         { id: 'model_novel_select', api: 'novel', type: null },

@@ -1,3 +1,5 @@
+import { DOMPurify } from '../lib.js';
+
 import { addOneMessage, chat, event_types, eventSource, main_api, saveChatConditional, system_avatar, systemUserName } from '../script.js';
 import { chat_completion_sources, oai_settings } from './openai.js';
 import { Popup } from './popup.js';
@@ -8,6 +10,7 @@ import { enumIcons } from './slash-commands/SlashCommandCommonEnumsProvider.js';
 import { enumTypes, SlashCommandEnumValue } from './slash-commands/SlashCommandEnumValue.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { slashCommandReturnHelper } from './slash-commands/SlashCommandReturnHelper.js';
+import { isTrueBoolean } from './utils.js';
 
 /**
  * @typedef {object} ToolInvocation
@@ -850,6 +853,13 @@ export class ToolManager {
                     isRequired: true,
                     acceptsMultiple: false,
                 }),
+                SlashCommandNamedArgument.fromProps({
+                    name: 'shouldRegister',
+                    description: 'The closure to be executed to determine if the tool should be registered. Must return a boolean.',
+                    typeList: [ARGUMENT_TYPE.CLOSURE],
+                    isRequired: false,
+                    acceptsMultiple: false,
+                }),
             ],
             unnamedArgumentList: [
                 SlashCommandArgument.fromProps({
@@ -863,9 +873,10 @@ export class ToolManager {
                 /**
                  * Converts a slash command closure to a function.
                  * @param {SlashCommandClosure} action Closure to convert to a function
+                 * @param {function(any): any} convertResult Function to convert the result
                  * @returns {function} Function that executes the closure
                  */
-                function closureToFunction(action) {
+                function closureToFunction(action, convertResult) {
                     return async (args) => {
                         const localClosure = action.getCopy();
                         localClosure.onProgress = () => { };
@@ -876,11 +887,11 @@ export class ToolManager {
                             scope.letVariable('arg', args);
                         }
                         const result = await localClosure.execute();
-                        return result.pipe;
+                        return convertResult(result.pipe);
                     };
                 }
 
-                const { name, displayName, description, parameters, formatMessage } = args;
+                const { name, displayName, description, parameters, formatMessage, shouldRegister } = args;
 
                 if (!(action instanceof SlashCommandClosure)) {
                     throw new Error('The unnamed argument must be a closure.');
@@ -900,9 +911,13 @@ export class ToolManager {
                 if (formatMessage && !(formatMessage instanceof SlashCommandClosure)) {
                     throw new Error('The "formatMessage" argument must be a closure.');
                 }
+                if (shouldRegister && !(shouldRegister instanceof SlashCommandClosure)) {
+                    throw new Error('The "shouldRegister" argument must be a closure.');
+                }
 
-                const actionFunc = closureToFunction(action);
-                const formatMessageFunc = formatMessage instanceof SlashCommandClosure ? closureToFunction(formatMessage) : null;
+                const actionFunc = closureToFunction(action, x => x);
+                const formatMessageFunc = formatMessage instanceof SlashCommandClosure ? closureToFunction(formatMessage, x => String(x)) : null;
+                const shouldRegisterFunc = shouldRegister instanceof SlashCommandClosure ? closureToFunction(shouldRegister, x => isTrueBoolean(x)) : null;
 
                 ToolManager.registerFunctionTool({
                     name: String(name ?? ''),
@@ -911,7 +926,7 @@ export class ToolManager {
                     parameters: JSON.parse(parameters ?? '{}'),
                     action: actionFunc,
                     formatMessage: formatMessageFunc,
-                    shouldRegister: async () => true, // TODO: Implement shouldRegister
+                    shouldRegister: shouldRegisterFunc,
                 });
 
                 return '';

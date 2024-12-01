@@ -48,6 +48,8 @@ export const SECRET_KEYS = {
     BLOCKENTROPY: 'api_key_blockentropy',
     CUSTOM_OPENAI_TTS: 'api_key_custom_openai_tts',
     TAVILY: 'api_key_tavily',
+    NANOGPT: 'api_key_nanogpt',
+    BFL: 'api_key_bfl',
 };
 
 // These are the keys that are safe to expose, even if allowKeysExposure is false

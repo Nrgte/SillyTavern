@@ -14,7 +14,7 @@ import jimp from 'jimp';
 
 import { AVATAR_WIDTH, AVATAR_HEIGHT } from '../constants.js';
 import { jsonParser, urlencodedParser } from '../express-common.js';
-import { deepMerge, humanizedISO8601DateTime, tryParse, extractFileFromZipBuffer } from '../util.js';
+import { deepMerge, humanizedISO8601DateTime, tryParse, extractFileFromZipBuffer, MemoryLimitedMap } from '../util.js';
 import { TavernCardValidator } from '../validator/TavernCardValidator.js';
 import { parse, write } from '../character-card-parser.js';
 import { readWorldInfoFile } from './worldinfo.js';
@@ -23,7 +23,10 @@ import { importRisuSprites } from './sprites.js';
 const defaultAvatarPath = './public/img/ai4.png';
 
 // KV-store for parsed character data
-const characterDataCache = new Map();
+// 100 MB limit. Would take roughly 3000 characters to reach this limit
+const characterDataCache = new MemoryLimitedMap(1024 * 1024 * 100);
+// Some Android devices require tighter memory management
+const isAndroid = process.platform === 'android';
 
 /**
  * Reads the character card from the specified image file.
@@ -39,7 +42,7 @@ async function readCharacterData(inputFile, inputFormat = 'png') {
     }
 
     const result = parse(inputFile, inputFormat);
-    characterDataCache.set(cacheKey, result);
+    !isAndroid && characterDataCache.set(cacheKey, result);
     return result;
 }
 
@@ -56,6 +59,9 @@ async function writeCharacterData(inputFile, data, outputFile, request, crop = u
     try {
         // Reset the cache
         for (const key of characterDataCache.keys()) {
+            if (Buffer.isBuffer(inputFile)) {
+                break;
+            }
             if (key.startsWith(inputFile)) {
                 characterDataCache.delete(key);
                 break;
@@ -1010,6 +1016,11 @@ router.post('/chats', jsonParser, async function (request, response) {
 
     try {
         const chatsDirectory = path.join(request.user.directories.chats, characterDirectory);
+
+        if (!fs.existsSync(chatsDirectory)) {
+            return response.send({ error: true });
+        }
+
         const files = fs.readdirSync(chatsDirectory);
         const jsonFiles = files.filter(file => path.extname(file) === '.jsonl');
 

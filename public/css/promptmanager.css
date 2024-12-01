@@ -333,7 +333,7 @@
 }
 
 .completion_prompt_manager_popup_entry_form_control:has(#completion_prompt_manager_popup_entry_form_prompt:disabled)>div:first-child::after {
-    content: 'The content of this prompt is pulled from elsewhere and cannot be edited here.';
+    content: attr(external_piece_text);
     display: block;
     width: 100%;
     font-weight: 600;

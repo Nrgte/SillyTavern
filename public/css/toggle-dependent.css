@@ -474,6 +474,8 @@ label[for="trim_spaces"]:has(input:checked) i.warning {
 
 #claude_function_prefill_warning {
     display: none;
+    color: red;
+    font-weight: bold;
 }
 
 #openai_settings:has(#openai_function_calling:checked):has(#claude_assistant_prefill:not(:placeholder-shown), #claude_assistant_impersonation:not(:placeholder-shown)) #claude_function_prefill_warning {

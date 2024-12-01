@@ -229,6 +229,46 @@ SillyTavern сохраняет ключи от ваших API в файле `sec
 1. Зайдите в файл `config.yaml` и установите `allowKeysExposure` в положение `true`.
 2. Перезапустите сервер SillyTavern.
 
+## Аргументы командной строки
+
+Вы можете передавать аргументы командной строки при запуске сервера SillyTavern, чтобы переопределять настройки из `config.yaml`.
+
+### Примеры
+
+```shell
+node server.js --port 8000 --listen false
+# или
+npm run start -- --port 8000 --listen false
+# или (только на Windows)
+Start.bat --port 8000 --listen false
+```
+
+### Поддерживаемые аргументы
+
+| Аргумент                | Описание                                                                                                       | Тип      |
+|-------------------------|----------------------------------------------------------------------------------------------------------------|----------|
+| `--version`             | Показывает номер версии.                                                                                       | boolean  |
+| `--enableIPv6`          | Включает IPv6.                                                                                                 | boolean  |
+| `--enableIPv4`          | Включает IPv4.                                                                                                 | boolean  |
+| `--port`                | Устанавливает порт, котрый будет использовать SillyTavern. Если не указан, то используется yaml-конфиг 'port'. | number   |
+| `--dnsPreferIPv6`       | Отдает предпочтение IPv6 для dns. Если не указан, то используется yaml-конфиг 'preferIPv6'.                    | boolean  |
+| `--autorun`             | Автоматический запуск SillyTavern в браузере. Если не указан, то используется yaml-конфиг 'autorun'.           | boolean  |
+| `--autorunHostname`     | Имя хоста автозапуска, лучше оставить на 'auto'.                                                               | string   |
+| `--autorunPortOverride` | Переопределяет порт для автозапуска.                                                                           | string   |
+| `--listen`              | SillyTavern будет прослушивать все сетевые интерфейсы. Если не указан, то используется yaml-конфиг 'listen'.   | boolean  |
+| `--corsProxy`           | Включает CORS-прокси. Если не указан, то используется yaml-конфиг 'enableCorsProxy'.                           | boolean  |
+| `--disableCsrf`         | Отключает защиту от CSRF.                                                                                      | boolean  |
+| `--ssl`                 | Включает SSL.                                                                                                  | boolean  |
+| `--certPath`            | Путь к файлу c сертификатом.                                                                                   | string   |
+| `--keyPath`             | Путь к файлу с закрытым ключом.                                                                                | string   |
+| `--whitelist`           | Включает режим белого списка.                                                                                  | boolean  |
+| `--dataRoot`            | Корневой каталог для хранения данных.                                                                          | string   |
+| `--avoidLocalhost`      | Избегает использования 'localhost' для автозапуска в режиме 'auto'.                                            | boolean  |
+| `--basicAuthMode`       | Включает простую аутентификацию.                                                                               | boolean  |
+| `--requestProxyEnabled` | Разрешает использование прокси для исходящих запросов.                                                         | boolean  |
+| `--requestProxyUrl`     | URL-адрес прокси (протоколы HTTP или SOCKS).                                                                   | string   |
+| `--requestProxyBypass`  | Bypass список прокси (список хостов, разделенных пробелами).                                                   | array    |
+
 ## Удалённое подключение
 
 В основном этим пользуются тогда, когда хотят использовать SillyTavern с телефона, запустив сервер SillyTavern на стационарном ПК в той же Wi-Fi-сети.

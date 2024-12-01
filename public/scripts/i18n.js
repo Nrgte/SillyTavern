@@ -9,6 +9,8 @@ var langs;
 // eslint-disable-next-line prefer-const
 var localeData;
 
+export const getCurrentLocale = () => localeFile;
+
 /**
  * An observer that will check if any new i18n elements are added to the document
  * @type {MutationObserver}
@@ -215,7 +217,6 @@ function addLanguagesToDropdown() {
 }
 
 export async function initLocales() {
-    moment.locale(localeFile);
     langs = await fetch('/locales/lang.json').then(response => response.json());
     localeData = await getLocaleData(localeFile);
     applyLocale();

@@ -91,11 +91,10 @@ export function convertClaudePrompt(messages, addAssistantPostfix, addAssistantP
  * @param {string}   prefillString User determined prefill string
  * @param {boolean}  useSysPrompt See if we want to use a system prompt
  * @param {boolean}  useTools See if we want to use tools
- * @param {string}   humanMsgFix Add Human message between system prompt and assistant.
  * @param {string}   charName Character name
  * @param {string}   userName User name
  */
-export function convertClaudeMessages(messages, prefillString, useSysPrompt, useTools, humanMsgFix, charName = '', userName = '') {
+export function convertClaudeMessages(messages, prefillString, useSysPrompt, useTools, charName, userName) {
     let systemPrompt = [];
     if (useSysPrompt) {
         // Collect all the system messages up until the first instance of a non-system message, and then remove them from the messages array.
@@ -122,10 +121,10 @@ export function convertClaudeMessages(messages, prefillString, useSysPrompt, use
 
         // Check if the first message in the array is of type user, if not, interject with humanMsgFix or a blank message.
         // Also prevents erroring out if the messages array is empty.
-        if (messages.length === 0 || (messages.length > 0 && messages[0].role !== 'user')) {
+        if (messages.length === 0) {
             messages.unshift({
                 role: 'user',
-                content: humanMsgFix || PROMPT_PLACEHOLDER,
+                content: PROMPT_PLACEHOLDER,
             });
         }
     }
@@ -346,6 +345,8 @@ export function convertGooglePrompt(messages, model, useSysPrompt = false, charN
         'gemini-1.5-flash-8b',
         'gemini-1.5-flash-8b-exp-0827',
         'gemini-1.5-flash-8b-exp-0924',
+        'gemini-exp-1114',
+        'gemini-exp-1121',
         'gemini-1.5-pro',
         'gemini-1.5-pro-latest',
         'gemini-1.5-pro-001',
@@ -396,11 +397,23 @@ export function convertGooglePrompt(messages, model, useSysPrompt = false, charN
 
         // similar story as claude
         if (message.name) {
-            if (Array.isArray(message.content)) {
-                message.content[0].text = `${message.name}: ${message.content[0].text}`;
-            } else {
-                message.content = `${message.name}: ${message.content}`;
+            if (userName && message.name === 'example_user') {
+                message.name = userName;
             }
+            if (charName && message.name === 'example_assistant') {
+                message.name = charName;
+            }
+
+            if (Array.isArray(message.content)) {
+                if (!message.content[0].text.startsWith(`${message.name}: `)) {
+                    message.content[0].text = `${message.name}: ${message.content[0].text}`;
+                }
+            } else {
+                if (!message.content.startsWith(`${message.name}: `)) {
+                    message.content = `${message.name}: ${message.content}`;
+                }
+            }
+
             delete message.name;
         }
 
@@ -615,10 +628,29 @@ export function convertMistralMessages(messages, charName = '', userName = '') {
 export function mergeMessages(messages, charName, userName, strict) {
     let mergedMessages = [];
 
+    /** @type {Map<string,object>} */
+    const contentTokens = new Map();
+
     // Remove names from the messages
     messages.forEach((message) => {
         if (!message.content) {
             message.content = '';
+        }
+        // Flatten contents and replace image URLs with random tokens
+        if (Array.isArray(message.content)) {
+            const text = message.content.map((content) => {
+                if (content.type === 'text') {
+                    return content.text;
+                }
+                // Could be extended with other non-text types
+                if (content.type === 'image_url') {
+                    const token = crypto.randomBytes(32).toString('base64');
+                    contentTokens.set(token, content);
+                    return token;
+                }
+                return '';
+            }).join('\n\n');
+            message.content = text;
         }
         if (message.role === 'system' && message.name === 'example_assistant') {
             if (charName && !message.content.startsWith(`${charName}: `)) {
@@ -657,6 +689,32 @@ export function mergeMessages(messages, charName, userName, strict) {
         messages.unshift({
             role: 'user',
             content: PROMPT_PLACEHOLDER,
+        });
+    }
+
+    // Check for content tokens and replace them with the actual content objects
+    if (contentTokens.size > 0) {
+        mergedMessages.forEach((message) => {
+            const hasValidToken = Array.from(contentTokens.keys()).some(token => message.content.includes(token));
+
+            if (hasValidToken) {
+                const splitContent = message.content.split('\n\n');
+                const mergedContent = [];
+
+                splitContent.forEach((content) => {
+                    if (contentTokens.has(content)) {
+                        mergedContent.push(contentTokens.get(content));
+                    } else {
+                        if (mergedContent.length > 0 && mergedContent[mergedContent.length - 1].type === 'text') {
+                            mergedContent[mergedContent.length - 1].text += `\n\n${content}`;
+                        } else {
+                            mergedContent.push({ type: 'text', text: content });
+                        }
+                    }
+                });
+
+                message.content = mergedContent;
+            }
         });
     }
 
@@ -704,4 +762,78 @@ export function convertTextCompletionPrompt(messages) {
         }
     });
     return messageStrings.join('\n') + '\nassistant:';
+}
+
+export function cachingAtDepthForClaude(messages, cachingAtDepth) {
+    let passedThePrefill = false;
+    let depth = 0;
+    let previousRoleName = '';
+
+    for (let i = messages.length - 1; i >= 0; i--) {
+        if (!passedThePrefill && messages[i].role === 'assistant') {
+            continue;
+        }
+
+        passedThePrefill = true;
+
+        if (messages[i].role !== previousRoleName) {
+            if (depth === cachingAtDepth || depth === cachingAtDepth + 2) {
+                const content = messages[i].content;
+                content[content.length - 1].cache_control = { type: 'ephemeral' };
+            }
+
+            if (depth === cachingAtDepth + 2) {
+                break;
+            }
+
+            depth += 1;
+            previousRoleName = messages[i].role;
+        }
+    }
+}
+
+/**
+ * Append cache_control headers to an OpenRouter request at depth. Directly modifies the
+ * messages array.
+ * @param {object[]} messages Array of messages
+ * @param {number} cachingAtDepth Depth at which caching is supposed to occur
+ */
+export function cachingAtDepthForOpenRouterClaude(messages, cachingAtDepth) {
+    //caching the prefill is a terrible idea in general
+    let passedThePrefill = false;
+    //depth here is the number of message role switches
+    let depth = 0;
+    let previousRoleName = '';
+    for (let i = messages.length - 1; i >= 0; i--) {
+        if (!passedThePrefill && messages[i].role === 'assistant') {
+            continue;
+        }
+
+        passedThePrefill = true;
+
+        if (messages[i].role !== previousRoleName) {
+            if (depth === cachingAtDepth || depth === cachingAtDepth + 2) {
+                const content = messages[i].content;
+                if (typeof content === 'string') {
+                    messages[i].content = [{
+                        type: 'text',
+                        text: content,
+                        cache_control: { type: 'ephemeral' },
+                    }];
+                } else {
+                    const contentPartCount = content.length;
+                    content[contentPartCount - 1].cache_control = {
+                        type: 'ephemeral',
+                    };
+                }
+            }
+
+            if (depth === cachingAtDepth + 2) {
+                break;
+            }
+
+            depth += 1;
+            previousRoleName = messages[i].role;
+        }
+    }
 }

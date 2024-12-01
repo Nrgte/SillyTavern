@@ -223,85 +223,33 @@ export function resolveVariable(name, scope = null) {
     return name;
 }
 
-export function replaceVariableMacros(input) {
-    const lines = input.split('\n');
-
-    for (let i = 0; i < lines.length; i++) {
-        let line = lines[i];
-
-        // Skip lines without macros
-        if (!line || !line.includes('{{')) {
-            continue;
-        }
-
-        // Replace {{getvar::name}} with the value of the variable name
-        line = line.replace(/{{getvar::([^}]+)}}/gi, (_, name) => {
-            name = name.trim();
-            return getLocalVariable(name);
-        });
-
+/**
+ * Returns built-in variable macros.
+ * @returns {import('./macros.js').Macro[]}
+ */
+export function getVariableMacros() {
+    return [
         // Replace {{setvar::name::value}} with empty string and set the variable name to value
-        line = line.replace(/{{setvar::([^:]+)::([^}]+)}}/gi, (_, name, value) => {
-            name = name.trim();
-            setLocalVariable(name, value);
-            return '';
-        });
-
+        { regex: /{{setvar::([^:]+)::([^}]+)}}/gi, replace: (_, name, value) => { setLocalVariable(name.trim(), value); return ''; } },
         // Replace {{addvar::name::value}} with empty string and add value to the variable value
-        line = line.replace(/{{addvar::([^:]+)::([^}]+)}}/gi, (_, name, value) => {
-            name = name.trim();
-            addLocalVariable(name, value);
-            return '';
-        });
-
+        { regex: /{{addvar::([^:]+)::([^}]+)}}/gi, replace: (_, name, value) => { addLocalVariable(name.trim(), value); return ''; } },
         // Replace {{incvar::name}} with empty string and increment the variable name by 1
-        line = line.replace(/{{incvar::([^}]+)}}/gi, (_, name) => {
-            name = name.trim();
-            return incrementLocalVariable(name);
-        });
-
+        { regex: /{{incvar::([^}]+)}}/gi, replace: (_, name) => incrementLocalVariable(name.trim()) },
         // Replace {{decvar::name}} with empty string and decrement the variable name by 1
-        line = line.replace(/{{decvar::([^}]+)}}/gi, (_, name) => {
-            name = name.trim();
-            return decrementLocalVariable(name);
-        });
-
-        // Replace {{getglobalvar::name}} with the value of the global variable name
-        line = line.replace(/{{getglobalvar::([^}]+)}}/gi, (_, name) => {
-            name = name.trim();
-            return getGlobalVariable(name);
-        });
-
+        { regex: /{{decvar::([^}]+)}}/gi, replace: (_, name) => decrementLocalVariable(name.trim()) },
+        // Replace {{getvar::name}} with the value of the variable name
+        { regex: /{{getvar::([^}]+)}}/gi, replace: (_, name) => getLocalVariable(name.trim()) },
         // Replace {{setglobalvar::name::value}} with empty string and set the global variable name to value
-        line = line.replace(/{{setglobalvar::([^:]+)::([^}]+)}}/gi, (_, name, value) => {
-            name = name.trim();
-            setGlobalVariable(name, value);
-            return '';
-        });
-
+        { regex: /{{setglobalvar::([^:]+)::([^}]+)}}/gi, replace: (_, name, value) => { setGlobalVariable(name.trim(), value); return ''; } },
         // Replace {{addglobalvar::name::value}} with empty string and add value to the global variable value
-        line = line.replace(/{{addglobalvar::([^:]+)::([^}]+)}}/gi, (_, name, value) => {
-            name = name.trim();
-            addGlobalVariable(name, value);
-            return '';
-        });
-
+        { regex: /{{addglobalvar::([^:]+)::([^}]+)}}/gi, replace: (_, name, value) => { addGlobalVariable(name.trim(), value); return ''; } },
         // Replace {{incglobalvar::name}} with empty string and increment the global variable name by 1
-        line = line.replace(/{{incglobalvar::([^}]+)}}/gi, (_, name) => {
-            name = name.trim();
-            return incrementGlobalVariable(name);
-        });
-
+        { regex: /{{incglobalvar::([^}]+)}}/gi, replace: (_, name) => incrementGlobalVariable(name.trim()) },
         // Replace {{decglobalvar::name}} with empty string and decrement the global variable name by 1
-        line = line.replace(/{{decglobalvar::([^}]+)}}/gi, (_, name) => {
-            name = name.trim();
-            return decrementGlobalVariable(name);
-        });
-
-        lines[i] = line;
-    }
-
-    return lines.join('\n');
+        { regex: /{{decglobalvar::([^}]+)}}/gi, replace: (_, name) => decrementGlobalVariable(name.trim()) },
+        // Replace {{getglobalvar::name}} with the value of the global variable name
+        { regex: /{{getglobalvar::([^}]+)}}/gi, replace: (_, name) => getGlobalVariable(name.trim()) },
+    ];
 }
 
 async function listVariablesCallback(args) {
@@ -693,9 +641,15 @@ function parseNumericSeries(value, scope = null) {
     /** @type {(string|number)[]} */
     let values = Array.isArray(value) ? value : value.split(' ');
 
-    // If a JSON array was provided as the only value, convert it to an array
-    if (values.length === 1 && typeof values[0] === 'string' && values[0].startsWith('[')) {
-        values = convertValueType(values[0], 'array');
+    // If an array of strings was provided as the only value, convert it to an array
+    if (values.length === 1 && typeof values[0] === 'string') {
+        if (values[0].startsWith('[')) {
+            // JSON-style array
+            values = convertValueType(values[0], 'array');
+        } else {
+            // Space-separated string
+            values = values[0].split(' ');
+        }
     }
 
     const array = values.map(i => typeof i === 'string' ? i.trim() : i)
@@ -2148,7 +2102,8 @@ export function registerVariableCommands() {
         callback: sortArrayObjectCallback,
         returns: 'the sorted list or dictionary keys',
         namedArgumentList: [
-            SlashCommandNamedArgument.fromProps({ name: 'keysort',
+            SlashCommandNamedArgument.fromProps({
+                name: 'keysort',
                 description: 'whether to sort by key or value; ignored for lists',
                 typeList: [ARGUMENT_TYPE.BOOLEAN],
                 enumList: ['true', 'false'],

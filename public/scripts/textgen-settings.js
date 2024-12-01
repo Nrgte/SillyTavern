@@ -193,6 +193,7 @@ const settings = {
     openrouter_allow_fallbacks: true,
     xtc_threshold: 0.1,
     xtc_probability: 0,
+    nsigma: 0.0,
     featherless_model: '',
 };
 
@@ -265,6 +266,7 @@ export const setting_names = [
     'openrouter_allow_fallbacks',
     'xtc_threshold',
     'xtc_probability',
+    'nsigma',
 ];
 
 const DYNATEMP_BLOCK = document.getElementById('dynatemp_block_ooba');
@@ -880,6 +882,13 @@ function setSettingByName(setting, value, trigger) {
     }
 }
 
+/**
+ * Sends a streaming request for textgenerationwebui.
+ * @param generate_data
+ * @param signal
+ * @returns {Promise<(function(): AsyncGenerator<{swipes: [], text: string, toolCalls: [], logprobs: {token: string, topLogprobs: Candidate[]}|null}, void, *>)|*>}
+ * @throws {Error} - If the response status is not OK, or from within the generator
+ */
 async function generateTextGenWithStreaming(generate_data, signal) {
     generate_data.stream = true;
 
@@ -944,6 +953,7 @@ export function parseTextgenLogprobs(token, logprobs) {
     }
 
     switch (settings.type) {
+        case KOBOLDCPP:
         case TABBY:
         case VLLM:
         case APHRODITE:
@@ -994,6 +1004,7 @@ export function parseTabbyLogprobs(data) {
  * @param {Response} response - Response from the server.
  * @param {string} decoded - Decoded response body.
  * @returns {void} Nothing.
+ * @throws {Error} If the response contains an error message, throws Error with the message.
  */
 function tryParseStreamingError(response, decoded) {
     let data = {};
@@ -1177,6 +1188,7 @@ export function getTextGenGenerationData(finalPrompt, maxTokens, isImpersonate, 
         'sampler_order': settings.type === textgen_types.KOBOLDCPP ? settings.sampler_order : undefined,
         'xtc_threshold': settings.xtc_threshold,
         'xtc_probability': settings.xtc_probability,
+        'nsigma': settings.nsigma,
     };
     const nonAphroditeParams = {
         'rep_pen': settings.rep_pen,
@@ -1208,7 +1220,6 @@ export function getTextGenGenerationData(finalPrompt, maxTokens, isImpersonate, 
     };
     const vllmParams = {
         'n': canMultiSwipe ? settings.n : 1,
-        'best_of': canMultiSwipe ? settings.n : 1,
         'ignore_eos': settings.ignore_eos_token,
         'spaces_between_special_tokens': settings.spaces_between_special_tokens,
         'seed': settings.seed >= 0 ? settings.seed : undefined,
@@ -1245,7 +1256,9 @@ export function getTextGenGenerationData(finalPrompt, maxTokens, isImpersonate, 
         'dynatemp_exponent': dynatemp ? settings.dynatemp_exponent : undefined,
         'xtc_threshold': settings.xtc_threshold,
         'xtc_probability': settings.xtc_probability,
+        'nsigma': settings.nsigma,
         'custom_token_bans': toIntArray(banned_tokens),
+        'no_repeat_ngram_size': settings.no_repeat_ngram_size,
     };
 
     if (settings.type === OPENROUTER) {
@@ -1307,11 +1320,23 @@ export function getTextGenGenerationData(finalPrompt, maxTokens, isImpersonate, 
             : [];
         const tokenBans = toIntArray(banned_tokens);
         logitBiasArray.push(...tokenBans.map(x => [Number(x), false]));
+        const sequenceBreakers = (() => {
+            try {
+                return JSON.parse(params.dry_sequence_breakers);
+            } catch {
+                if (typeof params.dry_sequence_breakers === 'string') {
+                    return params.dry_sequence_breakers.split(',');
+                }
+
+                return undefined;
+            }
+        })();
         const llamaCppParams = {
             'logit_bias': logitBiasArray,
             // Conflicts with ooba's grammar_string
             'grammar': settings.grammar_string,
             'cache_prompt': true,
+            'dry_sequence_breakers': sequenceBreakers,
         };
         params = Object.assign(params, llamaCppParams);
     }

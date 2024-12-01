@@ -89,7 +89,7 @@
 * @property {boolean} markdownOnly - Whether the script only applies to Markdown
 * @property {boolean} promptOnly - Whether the script only applies to prompts
 * @property {boolean} runOnEdit - Whether the script runs on edit
-* @property {boolean} substituteRegex - Whether the regex should be substituted
+* @property {number} substituteRegex - Whether the regex should be substituted
 * @property {number} minDepth - The minimum depth
 * @property {number} maxDepth - The maximum depth
 */

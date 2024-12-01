@@ -23,7 +23,7 @@ import {
 import { collapseNewlines, registerDebugFunction } from '../../power-user.js';
 import { SECRET_KEYS, secret_state, writeSecret } from '../../secrets.js';
 import { getDataBankAttachments, getDataBankAttachmentsForSource, getFileAttachment } from '../../chats.js';
-import { debounce, getStringHash as calculateHash, waitUntilCondition, onlyUnique, splitRecursive, trimToStartSentence, trimToEndSentence } from '../../utils.js';
+import { debounce, getStringHash as calculateHash, waitUntilCondition, onlyUnique, splitRecursive, trimToStartSentence, trimToEndSentence, escapeHtml } from '../../utils.js';
 import { debounce_timeout } from '../../constants.js';
 import { getSortedEntries } from '../../world-info.js';
 import { textgen_types, textgenerationwebui_settings } from '../../textgen-settings.js';
@@ -43,6 +43,9 @@ const MODULE_NAME = 'vectors';
 
 export const EXTENSION_PROMPT_TAG = '3_vectors';
 export const EXTENSION_PROMPT_TAG_DB = '4_vectors_data_bank';
+
+// Force solo chunks for sources that don't support batching.
+const getBatchSize = () => ['transformers', 'palm', 'ollama'].includes(settings.source) ? 1 : 5;
 
 const settings = {
     // For both
@@ -125,7 +128,7 @@ async function onVectorizeAllClick() {
         // upon request of a full vectorise
         cachedSummaries.clear();
 
-        const batchSize = 5;
+        const batchSize = getBatchSize();
         const elapsedLog = [];
         let finished = false;
         $('#vectorize_progress').show();
@@ -560,7 +563,9 @@ async function vectorizeFile(fileText, fileName, collectionId, chunkSize, overla
             fileText = translatedText;
         }
 
-        const toast = toastr.info('Vectorization may take some time, please wait...', `Ingesting file ${fileName}`);
+        const batchSize = getBatchSize();
+        const toastBody = $('<span>').text('This may take a while. Please wait...');
+        const toast = toastr.info(toastBody, `Ingesting file ${escapeHtml(fileName)}`, { closeButton: false, escapeHtml: false, timeOut: 0, extendedTimeOut: 0 });
         const overlapSize = Math.round(chunkSize * overlapPercent / 100);
         const delimiters = getChunkDelimiters();
         // Overlap should not be included in chunk size. It will be later compensated by overlapChunks
@@ -569,7 +574,12 @@ async function vectorizeFile(fileText, fileName, collectionId, chunkSize, overla
         console.debug(`Vectors: Split file ${fileName} into ${chunks.length} chunks with ${overlapPercent}% overlap`, chunks);
 
         const items = chunks.map((chunk, index) => ({ hash: getStringHash(chunk), text: chunk, index: index }));
-        await insertVectorItems(collectionId, items);
+
+        for (let i = 0; i < items.length; i += batchSize) {
+            toastBody.text(`${i}/${items.length} (${Math.round((i / items.length) * 100)}%) chunks processed`);
+            const chunkedBatch = items.slice(i, i + batchSize);
+            await insertVectorItems(collectionId, chunkedBatch);
+        }
 
         toastr.clear(toast);
         console.log(`Vectors: Inserted ${chunks.length} vector items for file ${fileName} into ${collectionId}`);
@@ -1050,7 +1060,7 @@ async function onViewStatsClick() {
     toastr.info(`Total hashes: <b>${totalHashes}</b><br>
     Unique hashes: <b>${uniqueHashes}</b><br><br>
     I'll mark collected messages with a green circle.`,
-    `Stats for chat ${chatId}`,
+    `Stats for chat ${escapeHtml(chatId)}`,
     { timeOut: 10000, escapeHtml: false },
     );
 

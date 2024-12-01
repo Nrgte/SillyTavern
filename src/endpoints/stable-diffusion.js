@@ -7,7 +7,7 @@ import sanitize from 'sanitize-filename';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
 import FormData from 'form-data';
 
-import { getBasicAuthHeader, delay } from '../util.js';
+import { delay, getBasicAuthHeader, tryParse } from '../util.js';
 import { jsonParser } from '../express-common.js';
 import { readSecret, SECRET_KEYS } from './secrets.js';
 
@@ -19,7 +19,7 @@ import { readSecret, SECRET_KEYS } from './secrets.js';
 function getComfyWorkflows(directories) {
     return fs
         .readdirSync(directories.comfyWorkflows)
-        .filter(file => file[0] != '.' && file.toLowerCase().endsWith('.json'))
+        .filter(file => file[0] !== '.' && file.toLowerCase().endsWith('.json'))
         .sort(Intl.Collator().compare);
 }
 
@@ -67,8 +67,7 @@ router.post('/upscalers', jsonParser, async (request, response) => {
 
             /** @type {any} */
             const data = await result.json();
-            const names = data.map(x => x.name);
-            return names;
+            return data.map(x => x.name);
         }
 
         async function getLatentUpscalers() {
@@ -88,8 +87,7 @@ router.post('/upscalers', jsonParser, async (request, response) => {
 
             /** @type {any} */
             const data = await result.json();
-            const names = data.map(x => x.name);
-            return names;
+            return data.map(x => x.name);
         }
 
         const [upscalers, latentUpscalers] = await Promise.all([getUpscalerModels(), getLatentUpscalers()]);
@@ -241,8 +239,7 @@ router.post('/set-model', jsonParser, async (request, response) => {
                     'Authorization': getBasicAuthHeader(request.body.auth),
                 },
             });
-            const data = await result.json();
-            return data;
+            return await result.json();
         }
 
         const url = new URL(request.body.url);
@@ -274,7 +271,7 @@ router.post('/set-model', jsonParser, async (request, response) => {
 
             const progress = progressState['progress'];
             const jobCount = progressState['state']['job_count'];
-            if (progress == 0.0 && jobCount === 0) {
+            if (progress === 0.0 && jobCount === 0) {
                 break;
             }
 
@@ -412,8 +409,19 @@ comfy.post('/models', jsonParser, async (request, response) => {
         }
         /** @type {any} */
         const data = await result.json();
-        return response.send(data.CheckpointLoaderSimple.input.required.ckpt_name[0].map(it => ({ value: it, text: it })));
-    } catch (error) {
+
+        const ckpts = data.CheckpointLoaderSimple.input.required.ckpt_name[0].map(it => ({ value: it, text: it })) || [];
+        const unets = data.UNETLoader.input.required.unet_name[0].map(it => ({ value: it, text: `UNet: ${it}` })) || [];
+
+        // load list of GGUF unets from diffusion_models if the loader node is available
+        const ggufs = data.UnetLoaderGGUF?.input.required.unet_name[0].map(it => ({ value: it, text: `GGUF: ${it}` })) || [];
+        const models = [...ckpts, ...unets, ...ggufs];
+
+        // make the display names of the models somewhat presentable
+        models.forEach(it => it.text = it.text.replace(/\.[^.]*$/, '').replace(/_/g, ' '));
+
+        return response.send(models);
+    } catch (error)     {
         console.log(error);
         return response.sendStatus(500);
     }
@@ -527,7 +535,8 @@ comfy.post('/generate', jsonParser, async (request, response) => {
             body: request.body.prompt,
         });
         if (!promptResult.ok) {
-            throw new Error('ComfyUI returned an error.');
+            const text = await promptResult.text();
+            throw new Error('ComfyUI returned an error.', { cause: tryParse(text) });
         }
 
         /** @type {any} */
@@ -550,7 +559,13 @@ comfy.post('/generate', jsonParser, async (request, response) => {
             await delay(100);
         }
         if (item.status.status_str === 'error') {
-            throw new Error('ComfyUI generation did not succeed.');
+            // Report node tracebacks if available
+            const errorMessages = item.status?.messages
+                ?.filter(it => it[0] === 'execution_error')
+                .map(it => it[1])
+                .map(it => `${it.node_type} [${it.node_id}] ${it.exception_type}: ${it.exception_message}`)
+                .join('\n') || '';
+            throw new Error(`ComfyUI generation did not succeed.\n\n${errorMessages}`.trim());
         }
         const imgInfo = Object.keys(item.outputs).map(it => item.outputs[it].images).flat()[0];
         const imgUrl = new URL(request.body.url);
@@ -560,11 +575,12 @@ comfy.post('/generate', jsonParser, async (request, response) => {
         if (!imgResponse.ok) {
             throw new Error('ComfyUI returned an error.');
         }
-        const imgBuffer = await imgResponse.buffer();
-        return response.send(imgBuffer.toString('base64'));
+        const imgBuffer = await imgResponse.arrayBuffer();
+        return response.send(Buffer.from(imgBuffer).toString('base64'));
     } catch (error) {
-        console.log(error);
-        return response.sendStatus(500);
+        console.log('ComfyUI error:', error);
+        response.status(500).send(error.message);
+        return response;
     }
 });
 
@@ -1001,6 +1017,203 @@ huggingface.post('/generate', jsonParser, async (request, response) => {
     }
 });
 
+const nanogpt = express.Router();
+
+nanogpt.post('/models', jsonParser, async (request, response) => {
+    try {
+        const key = readSecret(request.user.directories, SECRET_KEYS.NANOGPT);
+
+        if (!key) {
+            console.log('NanoGPT key not found.');
+            return response.sendStatus(400);
+        }
+
+        const modelsResponse = await fetch('https://nano-gpt.com/api/models', {
+            method: 'GET',
+            headers: {
+                'x-api-key': key,
+                'Content-Type': 'application/json',
+            },
+        });
+
+        if (!modelsResponse.ok) {
+            console.log('NanoGPT returned an error.');
+            return response.sendStatus(500);
+        }
+
+        /** @type {any} */
+        const data = await modelsResponse.json();
+        const imageModels = data?.models?.image;
+
+        if (!imageModels || typeof imageModels !== 'object') {
+            console.log('NanoGPT returned invalid data.');
+            return response.sendStatus(500);
+        }
+
+        const models = Object.values(imageModels).map(x => ({ value: x.model, text: x.name }));
+        return response.send(models);
+    }
+    catch (error) {
+        console.log(error);
+        return response.sendStatus(500);
+    }
+});
+
+nanogpt.post('/generate', jsonParser, async (request, response) => {
+    try {
+        const key = readSecret(request.user.directories, SECRET_KEYS.NANOGPT);
+
+        if (!key) {
+            console.log('NanoGPT key not found.');
+            return response.sendStatus(400);
+        }
+
+        console.log('NanoGPT request:', request.body);
+
+        const result = await fetch('https://nano-gpt.com/api/generate-image', {
+            method: 'POST',
+            body: JSON.stringify(request.body),
+            headers: {
+                'x-api-key': key,
+                'Content-Type': 'application/json',
+            },
+        });
+
+        if (!result.ok) {
+            console.log('NanoGPT returned an error.');
+            return response.sendStatus(500);
+        }
+
+        /** @type {any} */
+        const data = await result.json();
+
+        const image = data?.data?.[0]?.b64_json;
+        if (!image) {
+            console.log('NanoGPT returned invalid data.');
+            return response.sendStatus(500);
+        }
+
+        return response.send({ image });
+    }
+    catch (error) {
+        console.log(error);
+        return response.sendStatus(500);
+    }
+});
+
+const bfl = express.Router();
+
+bfl.post('/generate', jsonParser, async (request, response) => {
+    try {
+        const key = readSecret(request.user.directories, SECRET_KEYS.BFL);
+
+        if (!key) {
+            console.log('BFL key not found.');
+            return response.sendStatus(400);
+        }
+
+        const requestBody = {
+            prompt: request.body.prompt,
+            steps: request.body.steps,
+            guidance: request.body.guidance,
+            width: request.body.width,
+            height: request.body.height,
+            prompt_upsampling: request.body.prompt_upsampling,
+            seed: request.body.seed ?? null,
+            safety_tolerance: 6, // being least strict
+            output_format: 'jpeg',
+        };
+
+        function getClosestAspectRatio(width, height) {
+            const minAspect = 9 / 21;
+            const maxAspect = 21 / 9;
+            const currentAspect = width / height;
+
+            const gcd = (a, b) => b === 0 ? a : gcd(b, a % b);
+            const simplifyRatio = (w, h) => {
+                const divisor = gcd(w, h);
+                return `${w / divisor}:${h / divisor}`;
+            };
+
+            if (currentAspect < minAspect) {
+                const adjustedHeight = Math.round(width / minAspect);
+                return simplifyRatio(width, adjustedHeight);
+            } else if (currentAspect > maxAspect) {
+                const adjustedWidth = Math.round(height * maxAspect);
+                return simplifyRatio(adjustedWidth, height);
+            } else {
+                return simplifyRatio(width, height);
+            }
+        }
+
+        if (String(request.body.model).endsWith('-ultra')) {
+            requestBody.aspect_ratio = getClosestAspectRatio(request.body.width, request.body.height);
+            delete requestBody.steps;
+            delete requestBody.guidance;
+            delete requestBody.width;
+            delete requestBody.height;
+            delete requestBody.prompt_upsampling;
+        }
+
+        if (String(request.body.model).endsWith('-pro-1.1')) {
+            delete requestBody.steps;
+            delete requestBody.guidance;
+        }
+
+        console.log('BFL request:', requestBody);
+
+        const result = await fetch(`https://api.bfl.ml/v1/${request.body.model}`, {
+            method: 'POST',
+            body: JSON.stringify(requestBody),
+            headers: {
+                'Content-Type': 'application/json',
+                'x-key': key,
+            },
+        });
+
+        if (!result.ok) {
+            console.log('BFL returned an error.');
+            return response.sendStatus(500);
+        }
+
+        /** @type {any} */
+        const taskData = await result.json();
+        const { id } = taskData;
+
+        const MAX_ATTEMPTS = 100;
+        for (let i = 0; i < MAX_ATTEMPTS; i++) {
+            await delay(2500);
+
+            const statusResult = await fetch(`https://api.bfl.ml/v1/get_result?id=${id}`);
+
+            if (!statusResult.ok) {
+                const text = await statusResult.text();
+                console.log('BFL returned an error.', text);
+                return response.sendStatus(500);
+            }
+
+            /** @type {any} */
+            const statusData = await statusResult.json();
+
+            if (statusData?.status === 'Pending') {
+                continue;
+            }
+
+            if (statusData?.status === 'Ready') {
+                const { sample } = statusData.result;
+                const fetchResult = await fetch(sample);
+                const fetchData = await fetchResult.arrayBuffer();
+                const image = Buffer.from(fetchData).toString('base64');
+                return response.send({ image: image });
+            }
+
+            throw new Error('BFL failed to generate image.', { cause: statusData });
+        }
+    } catch (error) {
+        console.log(error);
+        return response.sendStatus(500);
+    }
+});
 
 router.use('/comfy', comfy);
 router.use('/together', together);
@@ -1009,3 +1222,5 @@ router.use('/pollinations', pollinations);
 router.use('/stability', stability);
 router.use('/blockentropy', blockentropy);
 router.use('/huggingface', huggingface);
+router.use('/nanogpt', nanogpt);
+router.use('/bfl', bfl);

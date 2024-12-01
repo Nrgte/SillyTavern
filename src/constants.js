@@ -200,6 +200,7 @@ export const CHAT_COMPLETION_SOURCES = {
     GROQ: 'groq',
     ZEROONEAI: '01ai',
     BLOCKENTROPY: 'blockentropy',
+    NANOGPT: 'nanogpt',
 };
 
 /**

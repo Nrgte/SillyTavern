@@ -9,6 +9,7 @@
 @import url(css/logprobs.css);
 @import url(css/accounts.css);
 @import url(css/tags.css);
+@import url(css/scrollable-button.css);
 
 :root {
     --doc-height: 100%;
@@ -617,11 +618,11 @@ body .panelControlBar {
 }
 
 .zoomed_avatar .panelControlBar {
-opacity:0;
+    opacity: 0;
 }
 
 .zoomed_avatar:hover .panelControlBar {
-    opacity:1;
+    opacity: 1;
 }
 
 .panelControlBar .drag-grabber {
@@ -3164,7 +3165,7 @@ grammarly-extension {
 .avatar-container .avatar-buttons {
     display: flex;
     flex-direction: row;
-    gap: 5px;
+    gap: 3px;
     opacity: 0.3;
     transition: opacity 0.25s ease-in-out;
 }
@@ -3963,8 +3964,10 @@ input[type="range"]::-webkit-slider-thumb {
     opacity: 0.5;
     margin: 0 5px;
     text-align: center;
-/*     border-radius: 100%;
-    box-shadow: 0 0 3px black; */
+    /*
+    border-radius: 100%;
+    box-shadow: 0 0 3px black;
+    */
     transition: all 250ms;
 }
 
@@ -4244,8 +4247,8 @@ h5 {
 }
 
 #select_chat_popup {
-    display: grid;
-    grid-template-rows: auto auto;
+    display: flex;
+    flex-direction: column;
     max-width: var(--sheldWidth);
     height: min-content;
     max-height: calc(100vh - var(--topBarBlockSize));
@@ -4265,7 +4268,7 @@ h5 {
     padding: 10px;
     background-color: var(--SmartThemeBlurTintColor);
     border-radius: 10px;
-    overflow-y: auto;
+    overflow-y: hidden;
     border: 1px solid var(--SmartThemeBorderColor);
 }
 
@@ -4273,20 +4276,10 @@ h5 {
     cursor: pointer;
 }
 
-#load_select_chat_div {
-    position: absolute;
-    bottom: 154px;
-    left: 174px;
-}
-
-#load_select_chat_div img {
-    width: 80px;
-    height: 80px;
-}
-
 #select_chat_div {
     padding: 0;
-    height: min-content;
+    height: 100%;
+    overflow-y: auto;
 }
 
 #select_chat_div hr {
@@ -4333,6 +4326,11 @@ h5 {
 
 .select_chat_block_mes {
     font-size: calc(var(--mainFontSize) - .25rem);
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    line-clamp: 3;
+    overflow: hidden;
 }
 
 .PastChat_cross {
@@ -5586,7 +5584,8 @@ body:not(.movingUI) .drawer-content.maximized {
 .model-card:hover {
     transform: scale(1.01);
     background-color: #444;
-    transition: transform 0.2s ease-in-out, background-color 0.2s ease-in-out;  /* Smooth transition */
+    /* Smooth transition */
+    transition: transform 0.2s ease-in-out, background-color 0.2s ease-in-out;
 }
 
 .model-card.selected {
@@ -5615,11 +5614,14 @@ body:not(.movingUI) .drawer-content.maximized {
     min-width: 120px;
 }
 
-.model-class, .model-context-length, .model-date-added {
+.model-class,
+.model-context-length,
+.model-date-added {
     font-size: 10px;
 }
 
-.model-class, .model-context-length {
+.model-class,
+.model-context-length {
     margin-bottom: 5px;
 }
 
@@ -5672,13 +5674,16 @@ body:not(.movingUI) .drawer-content.maximized {
         align-items: stretch;
     }
 
-    .model-info, .model-details, .model-date-added {
+    .model-info,
+    .model-details,
+    .model-date-added {
         width: 100%;
         text-align: left;
     }
 
     #featherless_model_search_bar {
-        width: 100%;
+        flex: 1;
+        flex-basis: 100%;
     }
 
 }
