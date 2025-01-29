@@ -448,6 +448,5 @@ export class FilterHelper {
         for (const cache of Object.values(this.fuzzySearchCaches)) {
             cache.resultMap.clear();
         }
-        console.log('All fuzzy search caches cleared');
     }
 }

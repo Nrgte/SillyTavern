@@ -12,6 +12,7 @@ const LIST_METADATA_KEY = 'chat_backgrounds';
 export let background_settings = {
     name: '__transparent.png',
     url: generateUrlParameter('__transparent.png', false),
+    fitting: 'classic',
 };
 
 export function loadBackgroundSettings(settings) {
@@ -19,7 +20,12 @@ export function loadBackgroundSettings(settings) {
     if (!backgroundSettings || !backgroundSettings.name || !backgroundSettings.url) {
         backgroundSettings = background_settings;
     }
+    if (!backgroundSettings.fitting) {
+        backgroundSettings.fitting = 'classic';
+    }
     setBackground(backgroundSettings.name, backgroundSettings.url);
+    setFittingClass(backgroundSettings.fitting);
+    $('#background_fitting').val(backgroundSettings.fitting);
 }
 
 /**
@@ -333,6 +339,14 @@ async function autoBackgroundCommand() {
     const bestMatch = fuse.search(reply, { limit: 1 });
 
     if (bestMatch.length == 0) {
+        for (const option of options) {
+            if (String(reply).toLowerCase().includes(option.text.toLowerCase())) {
+                console.debug('Fallback choosing background:', option);
+                option.element.click();
+                return '';
+            }
+        }
+
         toastr.warning('No match found. Please try again.');
         return '';
     }
@@ -462,6 +476,18 @@ function highlightNewBackground(bg) {
     flashHighlight(newBg);
 }
 
+/**
+ * Sets the fitting class for the background element
+ * @param {string} fitting Fitting type
+ */
+function setFittingClass(fitting) {
+    const backgrounds = $('#bg1, #bg_custom');
+    backgrounds.toggleClass('cover', fitting === 'cover');
+    backgrounds.toggleClass('contain', fitting === 'contain');
+    backgrounds.toggleClass('stretch', fitting === 'stretch');
+    backgrounds.toggleClass('center', fitting === 'center');
+}
+
 function onBackgroundFilterInput() {
     const filterValue = String($(this).val()).toLowerCase();
     $('#bg_menu_content > div').each(function () {
@@ -502,4 +528,9 @@ export function initBackgrounds() {
         helpString: 'Automatically changes the background based on the chat context using the AI request prompt',
     }));
 
+    $('#background_fitting').on('input', function () {
+        background_settings.fitting = String($(this).val());
+        setFittingClass(background_settings.fitting);
+        saveSettingsDebounced();
+    });
 }

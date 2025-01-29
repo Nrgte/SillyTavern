@@ -3,6 +3,7 @@ export const PUBLIC_DIRECTORIES = {
     backups: 'backups/',
     sounds: 'public/sounds',
     extensions: 'public/scripts/extensions',
+    globalExtensions: 'public/scripts/extensions/third-party',
 };
 
 export const SETTINGS_FILE = 'settings.json';
@@ -158,33 +159,6 @@ export const GEMINI_SAFETY = [
     },
 ];
 
-export const BISON_SAFETY = [
-    {
-        category: 'HARM_CATEGORY_DEROGATORY',
-        threshold: 'BLOCK_NONE',
-    },
-    {
-        category: 'HARM_CATEGORY_TOXICITY',
-        threshold: 'BLOCK_NONE',
-    },
-    {
-        category: 'HARM_CATEGORY_VIOLENCE',
-        threshold: 'BLOCK_NONE',
-    },
-    {
-        category: 'HARM_CATEGORY_SEXUAL',
-        threshold: 'BLOCK_NONE',
-    },
-    {
-        category: 'HARM_CATEGORY_MEDICAL',
-        threshold: 'BLOCK_NONE',
-    },
-    {
-        category: 'HARM_CATEGORY_DANGEROUS',
-        threshold: 'BLOCK_NONE',
-    },
-];
-
 export const CHAT_COMPLETION_SOURCES = {
     OPENAI: 'openai',
     WINDOWAI: 'windowai',
@@ -201,6 +175,7 @@ export const CHAT_COMPLETION_SOURCES = {
     ZEROONEAI: '01ai',
     BLOCKENTROPY: 'blockentropy',
     NANOGPT: 'nanogpt',
+    DEEPSEEK: 'deepseek',
 };
 
 /**
@@ -224,6 +199,7 @@ export const TEXTGEN_TYPES = {
     OPENROUTER: 'openrouter',
     FEATHERLESS: 'featherless',
     HUGGINGFACE: 'huggingface',
+    GENERIC: 'generic',
 };
 
 export const INFERMATICAI_KEYS = [
@@ -343,6 +319,24 @@ export const OLLAMA_KEYS = [
     'mirostat_tau',
     'mirostat_eta',
     'min_p',
+];
+
+// https://platform.openai.com/docs/api-reference/completions
+export const OPENAI_KEYS = [
+    'model',
+    'prompt',
+    'stream',
+    'temperature',
+    'top_p',
+    'frequency_penalty',
+    'presence_penalty',
+    'stop',
+    'seed',
+    'logit_bias',
+    'logprobs',
+    'max_tokens',
+    'n',
+    'best_of',
 ];
 
 export const AVATAR_WIDTH = 512;

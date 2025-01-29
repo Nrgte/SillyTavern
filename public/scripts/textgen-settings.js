@@ -16,14 +16,7 @@ import { power_user, registerDebugFunction } from './power-user.js';
 import { getEventSourceStream } from './sse-stream.js';
 import { getCurrentDreamGenModelTokenizer, getCurrentOpenRouterModelTokenizer } from './textgen-models.js';
 import { ENCODE_TOKENIZERS, TEXTGEN_TOKENIZERS, getTextTokens, tokenizers } from './tokenizers.js';
-import { getSortableDelay, onlyUnique } from './utils.js';
-
-export {
-    settings as textgenerationwebui_settings,
-    loadTextGenSettings,
-    generateTextGenWithStreaming,
-    formatTextGenURL,
-};
+import { getSortableDelay, onlyUnique, arraysEqual } from './utils.js';
 
 export const textgen_types = {
     OOBA: 'ooba',
@@ -40,9 +33,11 @@ export const textgen_types = {
     OPENROUTER: 'openrouter',
     FEATHERLESS: 'featherless',
     HUGGINGFACE: 'huggingface',
+    GENERIC: 'generic',
 };
 
 const {
+    GENERIC,
     MANCER,
     VLLM,
     APHRODITE,
@@ -60,6 +55,7 @@ const {
 } = textgen_types;
 
 const LLAMACPP_DEFAULT_ORDER = [
+    'dry',
     'top_k',
     'tfs_z',
     'typical_p',
@@ -89,6 +85,22 @@ const OOBA_DEFAULT_ORDER = [
     'encoder_repetition_penalty',
     'no_repeat_ngram',
 ];
+const APHRODITE_DEFAULT_ORDER = [
+    'dry',
+    'penalties',
+    'no_repeat_ngram',
+    'temperature',
+    'top_nsigma',
+    'top_p_top_k',
+    'top_a',
+    'min_p',
+    'tfs',
+    'eta_cutoff',
+    'epsilon_cutoff',
+    'typical_p',
+    'quadratic',
+    'xtc',
+];
 const BIAS_KEY = '#textgenerationwebui_api-settings';
 
 // Maybe let it be configurable in the future?
@@ -111,6 +123,7 @@ export const SERVER_INPUTS = {
     [textgen_types.LLAMACPP]: '#llamacpp_api_url_text',
     [textgen_types.OLLAMA]: '#ollama_api_url_text',
     [textgen_types.HUGGINGFACE]: '#huggingface_api_url_text',
+    [textgen_types.GENERIC]: '#generic_api_url_text',
 };
 
 const KOBOLDCPP_ORDER = [6, 0, 1, 3, 4, 2, 5];
@@ -170,6 +183,7 @@ const settings = {
     banned_tokens: '',
     sampler_priority: OOBA_DEFAULT_ORDER,
     samplers: LLAMACPP_DEFAULT_ORDER,
+    samplers_priorities: APHRODITE_DEFAULT_ORDER,
     ignore_eos_token: false,
     spaces_between_special_tokens: true,
     speculative_ngram: false,
@@ -195,6 +209,11 @@ const settings = {
     xtc_probability: 0,
     nsigma: 0.0,
     featherless_model: '',
+    generic_model: '',
+};
+
+export {
+    settings as textgenerationwebui_settings,
 };
 
 export let textgenerationwebui_banned_in_macros = [];
@@ -259,6 +278,7 @@ export const setting_names = [
     'sampler_order',
     'sampler_priority',
     'samplers',
+    'samplers_priorities',
     'n',
     'logit_bias',
     'custom_model',
@@ -267,6 +287,7 @@ export const setting_names = [
     'xtc_threshold',
     'xtc_probability',
     'nsigma',
+    'generic_model',
 ];
 
 const DYNATEMP_BLOCK = document.getElementById('dynatemp_block_ooba');
@@ -327,7 +348,7 @@ async function selectPreset(name) {
     saveSettingsDebounced();
 }
 
-function formatTextGenURL(value) {
+export function formatTextGenURL(value) {
     try {
         const noFormatTypes = [MANCER, TOGETHERAI, INFERMATICAI, DREAMGEN, OPENROUTER];
         if (noFormatTypes.includes(settings.type)) {
@@ -465,7 +486,7 @@ function calculateLogitBias() {
     return result;
 }
 
-function loadTextGenSettings(data, loadedSettings) {
+export function loadTextGenSettings(data, loadedSettings) {
     textgenerationwebui_presets = convertPresets(data.textgenerationwebui_presets);
     textgenerationwebui_preset_names = data.textgenerationwebui_preset_names ?? [];
     Object.assign(settings, loadedSettings.textgenerationwebui_settings ?? {});
@@ -556,6 +577,20 @@ function sortOobaItemsByOrder(orderArray) {
     });
 }
 
+/**
+ * Sorts the Aphrodite sampler items by the given order.
+ * @param {string[]} orderArray Sampler order array.
+ */
+function sortAphroditeItemsByOrder(orderArray) {
+    console.debug('Preset samplers order: ', orderArray);
+    const $container = $('#sampler_priority_container_aphrodite');
+
+    orderArray.forEach((name) => {
+        const $item = $container.find(`[data-name="${name}"]`).detach();
+        $container.append($item);
+    });
+}
+
 jQuery(function () {
     $('#koboldcpp_order').sortable({
         delay: getSortableDelay(),
@@ -609,6 +644,19 @@ jQuery(function () {
         },
     });
 
+    $('#sampler_priority_container_aphrodite').sortable({
+        delay: getSortableDelay(),
+        stop: function () {
+            const order = [];
+            $('#sampler_priority_container_aphrodite').children().each(function () {
+                order.push($(this).data('name'));
+            });
+            settings.samplers_priorities = order;
+            console.log('Samplers reordered:', settings.samplers_priorities);
+            saveSettingsDebounced();
+        },
+    });
+
     $('#tabby_json_schema').on('input', function () {
         const json_schema_string = String($(this).val());
 
@@ -624,6 +672,13 @@ jQuery(function () {
         sortOobaItemsByOrder(OOBA_DEFAULT_ORDER);
         settings.sampler_priority = OOBA_DEFAULT_ORDER;
         console.log('Default samplers order loaded:', settings.sampler_priority);
+        saveSettingsDebounced();
+    });
+
+    $('#aphrodite_default_order').on('click', function () {
+        sortAphroditeItemsByOrder(APHRODITE_DEFAULT_ORDER);
+        settings.samplers_priorities = APHRODITE_DEFAULT_ORDER;
+        console.log('Default samplers order loaded:', settings.samplers_priorities);
         saveSettingsDebounced();
     });
 
@@ -784,7 +839,14 @@ jQuery(function () {
 
 function showTypeSpecificControls(type) {
     $('[data-tg-type]').each(function () {
+        const mode = String($(this).attr('data-tg-type-mode') ?? '').toLowerCase().trim();
         const tgTypes = $(this).attr('data-tg-type').split(',').map(x => x.trim());
+
+        if (mode === 'except') {
+            $(this)[tgTypes.includes(type) ? 'hide' : 'show']();
+            return;
+        }
+
         for (const tgType of tgTypes) {
             if (tgType === type || tgType == 'all') {
                 $(this).show();
@@ -832,6 +894,14 @@ function setSettingByName(setting, value, trigger) {
         insertMissingArrayItems(OOBA_DEFAULT_ORDER, value);
         sortOobaItemsByOrder(value);
         settings.sampler_priority = value;
+        return;
+    }
+
+    if ('samplers_priorities' === setting) {
+        value = Array.isArray(value) ? value : APHRODITE_DEFAULT_ORDER;
+        insertMissingArrayItems(APHRODITE_DEFAULT_ORDER, value);
+        sortAphroditeItemsByOrder(value);
+        settings.samplers_priorities = value;
         return;
     }
 
@@ -889,7 +959,7 @@ function setSettingByName(setting, value, trigger) {
  * @returns {Promise<(function(): AsyncGenerator<{swipes: [], text: string, toolCalls: [], logprobs: {token: string, topLogprobs: Candidate[]}|null}, void, *>)|*>}
  * @throws {Error} - If the response status is not OK, or from within the generator
  */
-async function generateTextGenWithStreaming(generate_data, signal) {
+export async function generateTextGenWithStreaming(generate_data, signal) {
     generate_data.stream = true;
 
     const response = await fetch('/api/backends/text-completions/generate', {
@@ -969,12 +1039,30 @@ export function parseTextgenLogprobs(token, logprobs) {
             return { token, topLogprobs: candidates };
         }
         case LLAMACPP: {
-            /** @type {Record<string, number>[]} */
             if (!logprobs?.length) {
                 return null;
             }
-            const candidates = logprobs[0].probs.map(x => [x.tok_str, x.prob]);
-            return { token, topLogprobs: candidates };
+
+            // 3 cases:
+            // 1. Before commit 6c5bc06, "probs" key with "tok_str"/"prob", and probs are [0, 1] so use them directly.
+            // 2. After commit 6c5bc06 but before commit 89d604f broke logprobs (they all return the first token's logprobs)
+            //    We don't know the llama.cpp version so we can't do much about this.
+            // 3. After commit 89d604f uses OpenAI-compatible format with "completion_probabilities" and "token"/"logprob" keys.
+            //    Note that it is also the *actual* logprob (negative number), so we need to convert to [0, 1].
+            if (logprobs?.[0]?.probs) {
+                const candidates = logprobs?.[0]?.probs?.map(x => [x.tok_str, x.prob]);
+                if (!candidates) {
+                    return null;
+                }
+                return { token, topLogprobs: candidates };
+            } else if (logprobs?.[0].top_logprobs) {
+                const candidates = logprobs?.[0]?.top_logprobs?.map(x => [x.token, Math.exp(x.logprob)]);
+                if (!candidates) {
+                    return null;
+                }
+                return { token, topLogprobs: candidates };
+            }
+            return null;
         }
         default:
             return null;
@@ -1041,6 +1129,11 @@ export function getTextGenModel() {
         case OOBA:
             if (settings.custom_model) {
                 return settings.custom_model;
+            }
+            break;
+        case GENERIC:
+            if (settings.generic_model) {
+                return settings.generic_model;
             }
             break;
         case MANCER:
@@ -1259,6 +1352,11 @@ export function getTextGenGenerationData(finalPrompt, maxTokens, isImpersonate, 
         'nsigma': settings.nsigma,
         'custom_token_bans': toIntArray(banned_tokens),
         'no_repeat_ngram_size': settings.no_repeat_ngram_size,
+        'sampler_priority': settings.type === APHRODITE && !arraysEqual(
+            settings.samplers_priorities,
+            APHRODITE_DEFAULT_ORDER)
+            ? settings.samplers_priorities
+            : undefined,
     };
 
     if (settings.type === OPENROUTER) {
@@ -1268,6 +1366,7 @@ export function getTextGenGenerationData(finalPrompt, maxTokens, isImpersonate, 
 
     if (settings.type === KOBOLDCPP) {
         params.grammar = settings.grammar_string;
+        params.trim_stop = true;
     }
 
     if (settings.type === HUGGINGFACE) {
@@ -1339,6 +1438,9 @@ export function getTextGenGenerationData(finalPrompt, maxTokens, isImpersonate, 
             'dry_sequence_breakers': sequenceBreakers,
         };
         params = Object.assign(params, llamaCppParams);
+        if (!Array.isArray(sequenceBreakers) || sequenceBreakers.length === 0) {
+            delete params.dry_sequence_breakers;
+        }
     }
 
     eventSource.emitAndWait(event_types.TEXT_COMPLETION_SETTINGS_READY, params);

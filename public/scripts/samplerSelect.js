@@ -129,6 +129,10 @@ function setSamplerListListeners() {
             relatedDOMElement = $('#sampler_priority_block_ooba');
         }
 
+        if (samplerName === 'samplers_priorities') { //this is for aphrodite's sampler priority
+            relatedDOMElement = $('#sampler_priority_block_aphrodite');
+        }
+
         if (samplerName === 'penalty_alpha') { //contrastive search only has one sampler, does it need its own block?
             relatedDOMElement = $('#contrastiveSearchBlock');
         }
@@ -235,6 +239,11 @@ async function listSamplers(main_api, arrayOnly = false) {
         if (sampler === 'sampler_priority') { //this is for ooba's sampler priority
             targetDOMelement = $('#sampler_priority_block_ooba');
             displayname = 'Ooba Sampler Priority Block';
+        }
+
+        if (sampler === 'samplers_priorities') { //this is for aphrodite's sampler priority
+            targetDOMelement = $('#sampler_priority_block_aphrodite');
+            displayname = 'Aphrodite Sampler Priority Block';
         }
 
         if (sampler === 'penalty_alpha') { //contrastive search only has one sampler, does it need its own block?
@@ -371,6 +380,10 @@ export async function validateDisabledSamplers(redraw = false) {
 
         if (sampler === 'sampler_priority') { //this is for ooba's sampler priority
             relatedDOMElement = $('#sampler_priority_block_ooba');
+        }
+
+        if (sampler === 'samplers_priorities') { //this is for aphrodite's sampler priority
+            relatedDOMElement = $('#sampler_priority_block_aphrodite');
         }
 
         if (sampler === 'dry_multiplier') {

@@ -124,9 +124,10 @@ router.get('/get', jsonParser, function (request, response) {
                 })
                 .map((file) => {
                     const pathToSprite = path.join(spritesPath, file);
+                    const mtime = fs.statSync(pathToSprite).mtime?.toISOString().replace(/[^0-9]/g, '').slice(0, 14);
                     return {
                         label: path.parse(pathToSprite).name.toLowerCase(),
-                        path: `/characters/${name}/${file}`,
+                        path: `/characters/${name}/${file}` + (mtime ? `?t=${mtime}` : ''),
                     };
                 });
         }

@@ -25,6 +25,7 @@ import { isTrueBoolean } from './utils.js';
  * @typedef {object} ToolInvocationResult
  * @property {ToolInvocation[]} invocations Successful tool invocations
  * @property {Error[]} errors Errors that occurred during tool invocation
+ * @property {string[]} stealthCalls Names of stealth tools that were invoked
  */
 
 /**
@@ -36,6 +37,7 @@ import { isTrueBoolean } from './utils.js';
  * @property {function} action - The action to perform when the tool is invoked.
  * @property {function} [formatMessage] - A function to format the tool call message.
  * @property {function} [shouldRegister] - A function to determine if the tool should be registered.
+ * @property {boolean} [stealth] - A tool call result will not be shown in the chat. No follow-up generation will be performed.
  */
 
 /**
@@ -148,6 +150,12 @@ class ToolDefinition {
     #shouldRegister;
 
     /**
+     * A tool call result will not be shown in the chat. No follow-up generation will be performed.
+     * @type {boolean}
+     */
+    #stealth;
+
+    /**
      * Creates a new ToolDefinition.
      * @param {string} name A unique name for the tool.
      * @param {string} displayName A user-friendly display name for the tool.
@@ -156,8 +164,9 @@ class ToolDefinition {
      * @param {function} action A function that will be called when the tool is executed.
      * @param {function} formatMessage A function that will be called to format the tool call toast.
      * @param {function} shouldRegister A function that will be called to determine if the tool should be registered.
+     * @param {boolean} stealth A tool call result will not be shown in the chat. No follow-up generation will be performed.
      */
-    constructor(name, displayName, description, parameters, action, formatMessage, shouldRegister) {
+    constructor(name, displayName, description, parameters, action, formatMessage, shouldRegister, stealth) {
         this.#name = name;
         this.#displayName = displayName;
         this.#description = description;
@@ -165,6 +174,7 @@ class ToolDefinition {
         this.#action = action;
         this.#formatMessage = formatMessage;
         this.#shouldRegister = shouldRegister;
+        this.#stealth = stealth;
     }
 
     /**
@@ -214,6 +224,10 @@ class ToolDefinition {
     get displayName() {
         return this.#displayName;
     }
+
+    get stealth() {
+        return this.#stealth;
+    }
 }
 
 /**
@@ -246,7 +260,7 @@ export class ToolManager {
      * Registers a new tool with the tool registry.
      * @param {ToolRegistration} tool The tool to register.
      */
-    static registerFunctionTool({ name, displayName, description, parameters, action, formatMessage, shouldRegister }) {
+    static registerFunctionTool({ name, displayName, description, parameters, action, formatMessage, shouldRegister, stealth }) {
         // Convert WIP arguments
         if (typeof arguments[0] !== 'object') {
             [name, description, parameters, action] = arguments;
@@ -256,7 +270,16 @@ export class ToolManager {
             console.warn(`[ToolManager] A tool with the name "${name}" has already been registered. The definition will be overwritten.`);
         }
 
-        const definition = new ToolDefinition(name, displayName, description, parameters, action, formatMessage, shouldRegister);
+        const definition = new ToolDefinition(
+            name,
+            displayName,
+            description,
+            parameters,
+            action,
+            formatMessage,
+            shouldRegister,
+            stealth,
+        );
         this.#tools.set(name, definition);
         console.log('[ToolManager] Registered function tool:', definition);
     }
@@ -300,6 +323,20 @@ export class ToolManager {
 
             return new Error('Unknown error occurred while invoking the tool.', { cause: name }).toString();
         }
+    }
+
+    /**
+     * Checks if a tool is a stealth tool.
+     * @param {string} name The name of the tool to check.
+     * @returns {boolean} Whether the tool is a stealth tool.
+     */
+    static isStealthTool(name) {
+        if (!this.#tools.has(name)) {
+            return false;
+        }
+
+        const tool = this.#tools.get(name);
+        return !!tool.stealth;
     }
 
     /**
@@ -608,6 +645,7 @@ export class ToolManager {
         const result = {
             invocations: [],
             errors: [],
+            stealthCalls: [],
         };
         const toolCalls = ToolManager.#getToolCallsFromData(data);
 
@@ -625,7 +663,7 @@ export class ToolManager {
             const parameters = toolCall.function.arguments;
             const name = toolCall.function.name;
             const displayName = ToolManager.getDisplayName(name);
-
+            const isStealth = ToolManager.isStealthTool(name);
             const message = await ToolManager.formatToolCallMessage(name, parameters);
             const toast = message && toastr.info(message, 'Tool Calling', { timeOut: 0 });
             const toolResult = await ToolManager.invokeFunctionTool(name, parameters);
@@ -635,6 +673,12 @@ export class ToolManager {
             // Save a successful invocation
             if (toolResult instanceof Error) {
                 result.errors.push(toolResult);
+                continue;
+            }
+
+            // Don't save stealth tool invocations
+            if (isStealth) {
+                result.stealthCalls.push(name);
                 continue;
             }
 
@@ -860,6 +904,14 @@ export class ToolManager {
                     isRequired: false,
                     acceptsMultiple: false,
                 }),
+                SlashCommandNamedArgument.fromProps({
+                    name: 'stealth',
+                    description: 'If true, a tool call result will not be shown in the chat and no follow-up generation will be performed.',
+                    typeList: [ARGUMENT_TYPE.BOOLEAN],
+                    isRequired: false,
+                    acceptsMultiple: false,
+                    defaultValue: String(false),
+                }),
             ],
             unnamedArgumentList: [
                 SlashCommandArgument.fromProps({
@@ -891,7 +943,7 @@ export class ToolManager {
                     };
                 }
 
-                const { name, displayName, description, parameters, formatMessage, shouldRegister } = args;
+                const { name, displayName, description, parameters, formatMessage, shouldRegister, stealth } = args;
 
                 if (!(action instanceof SlashCommandClosure)) {
                     throw new Error('The unnamed argument must be a closure.');
@@ -927,6 +979,7 @@ export class ToolManager {
                     action: actionFunc,
                     formatMessage: formatMessageFunc,
                     shouldRegister: shouldRegisterFunc,
+                    stealth: stealth && isTrueBoolean(String(stealth)),
                 });
 
                 return '';
@@ -947,7 +1000,7 @@ export class ToolManager {
                     enumProvider: toolsEnumProvider,
                 }),
             ],
-            callback: async (name) => {
+            callback: async (_, name) => {
                 if (typeof name !== 'string' || !name) {
                     throw new Error('The unnamed argument must be a non-empty string.');
                 }

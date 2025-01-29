@@ -46,6 +46,10 @@ function getLocalVariable(name, args = {}) {
 }
 
 function setLocalVariable(name, value, args = {}) {
+    if (!name) {
+        throw new Error('Variable name cannot be empty or undefined.');
+    }
+
     if (!chat_metadata.variables) {
         chat_metadata.variables = {};
     }
@@ -99,6 +103,10 @@ function getGlobalVariable(name, args = {}) {
 }
 
 function setGlobalVariable(name, value, args = {}) {
+    if (!name) {
+        throw new Error('Variable name cannot be empty or undefined.');
+    }
+
     if (args.index !== undefined) {
         try {
             let globalVariable = JSON.parse(extension_settings.variables.global[name] ?? 'null');

@@ -92,8 +92,6 @@
     /* base variable for shadow width slider calculations */
     --shadowWidth: 2;
 
-    color-scheme: only light;
-
     /* Send form variables */
     --bottomFormBlockPadding: calc(var(--mainFontSize) / 2.5);
     --bottomFormIconSize: calc(var(--mainFontSize) * 1.9);
@@ -141,7 +139,7 @@ body {
     height: 100dvh;
     /*defaults as 100%, then reassigned via JS as pixels, will work on PC and Android*/
     /*height: calc(var(--doc-height) - 1px);*/
-    background-color: var(--greyCAIbg);
+    background-color: var(--SmartThemeBlurTintColor);
     background-repeat: no-repeat;
     background-attachment: fixed;
     background-size: cover;
@@ -149,6 +147,7 @@ body {
     font-size: var(--mainFontSize);
     color: var(--SmartThemeBodyColor);
     overflow: hidden;
+    color-scheme: only light;
 }
 
 ::-webkit-scrollbar {
@@ -517,6 +516,40 @@ hr {
     width: 100%;
     height: 100%;
     transition: background-image 0.5s ease-in-out;
+}
+
+/* Background fitting options */
+#background_fitting {
+    max-width: 6em;
+}
+
+/* Fill/Cover - scales to fill width while maintaining aspect ratio */
+#bg1.cover,
+#bg_custom.cover {
+    background-size: cover;
+    background-position: center;
+}
+
+/* Fit/Contain - shows entire image maintaining aspect ratio */
+#bg1.contain,
+#bg_custom.contain {
+    background-size: contain;
+    background-position: center;
+    background-repeat: no-repeat;
+}
+
+/* Stretch - stretches to fill entire space */
+#bg1.stretch,
+#bg_custom.stretch {
+    background-size: 100% 100%;
+}
+
+/* Center - centers without scaling */
+#bg1.center,
+#bg_custom.center {
+    background-size: auto;
+    background-position: center;
+    background-repeat: no-repeat;
 }
 
 body.reduced-motion #bg1,
@@ -1040,8 +1073,14 @@ body .panelControlBar {
     height: var(--swipeCounterHeight);
 }
 
-.mes:not(.last_mes) .swipes-counter {
-    opacity: 0.3;
+body:not(.swipeAllMessages) .mes:not(.last_mes) .swipes-counter {
+    visibility: hidden;
+}
+
+body.swipeAllMessages .mes:not(.last_mes) .swipes-counter {
+    /* Avoid expensive DOM queries */
+    opacity: 0.3 !important;
+    display: flex !important;
 }
 
 .swipe_left {
@@ -1258,6 +1297,7 @@ button {
     text-shadow: 0px 0px calc(var(--shadowWidth) * 1px) var(--SmartThemeShadowColor);
     flex: 1;
     order: 3;
+    field-sizing: content;
 
     --progColor: rgb(146, 190, 252);
     --progFlashColor: rgb(215, 136, 114);
@@ -1276,6 +1316,10 @@ button {
             100% 100%,
             0% 100%);
     transition: clip-path 200ms;
+}
+
+#send_textarea:placeholder-shown {
+    overflow: hidden;
 }
 
 #send_textarea:focus-visible {
@@ -2782,6 +2826,10 @@ select option:not(:checked) {
     width: max-content;
 }
 
+#persona-management-block .menu_button {
+    filter: grayscale(0.5);
+}
+
 input[type=search]::-webkit-search-cancel-button {
     -webkit-appearance: none;
     height: 1em;
@@ -2864,6 +2912,7 @@ input[type=search]:focus::-webkit-search-cancel-button {
 
 .mes_block .ch_name {
     max-width: 100%;
+    min-height: 22px;
 }
 
 /*applies to both groups and solos chars in the char list*/
@@ -3212,6 +3261,18 @@ grammarly-extension {
 #first_message_div {
     display: flex;
     align-items: center;
+}
+
+#creators_notes_div {
+    align-items: baseline;
+}
+
+#creators_note_desc_hidden {
+    display: none;
+}
+
+#creators_notes_div:has(#spoiler_free_desc_button.fa-eye-slash) #creators_note_desc_hidden {
+    display: initial;
 }
 
 .alternate_greeting details {
@@ -3625,7 +3686,9 @@ body #toast-container {
 }
 
 body #toast-container>div {
-    opacity: 0.95;
+    opacity: 1;
+    filter: unset;
+    -ms-filter: unset;
 }
 
 #dialogue_del_mes {
@@ -4033,7 +4096,7 @@ input[type="range"]::-webkit-slider-thumb {
 .mes_button,
 .extraMesButtons>div {
     cursor: pointer;
-    transition: 0.3s ease-in-out;
+    transition: opacity 0.2s ease-in-out;
     filter: drop-shadow(0px 0px 2px black);
     opacity: 0.3;
     padding: 1px 3px;
@@ -4100,6 +4163,7 @@ input[type="range"]::-webkit-slider-thumb {
     line-height: calc(var(--mainFontSize) + .25rem);
     max-height: 75vh;
     max-height: 75dvh;
+    field-sizing: content;
 }
 
 #anchor_order {
@@ -4751,7 +4815,7 @@ body:not(.sd) .mes_img_swipes {
 
 .img_enlarged {
     object-fit: contain;
-    width: 100%;
+    max-width: 100%;
     height: 100%;
     cursor: zoom-in
 }
@@ -5166,7 +5230,7 @@ body:not(.movingUI) .drawer-content.maximized {
     width: 100%;
     height: 100%;
     opacity: 0.8;
-    min-height: 3rem;
+    min-height: 2.5em;
 }
 
 .openai_restorable,
@@ -5686,4 +5750,16 @@ body:not(.movingUI) .drawer-content.maximized {
         flex-basis: 100%;
     }
 
+}
+
+/* Constrict the scroll of alternate greetings to only the dynamic form section */
+.alternate_grettings {
+    display: grid;
+    grid-template-rows: auto auto auto 1fr;
+    max-height: 100%;
+    overflow: hidden;
+}
+
+.alternate_greetings_list {
+    overflow-y: scroll;
 }

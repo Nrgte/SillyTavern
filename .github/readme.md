@@ -28,7 +28,7 @@ English | [中文](readme-zh_cn.md) | [日本語](readme-ja_jp.md) | [Русск
 
 <div align="center">
 
-English | [German](readme-de_de.md) | [中文](readme-zh_cn.md) | [日本語](readme-ja_jp.md) | [Русский](readme-ru_ru.md)
+English | [German](readme-de_de.md) | [中文](readme-zh_cn.md) | [繁體中文](readme-zh_tw.md) | [日本語](readme-ja_jp.md) | [Русский](readme-ru_ru.md) | [한국어](readme-ko_kr.md)
 
 [![GitHub Stars](https://img.shields.io/github/stars/SillyTavern/SillyTavern.svg)](https://github.com/SillyTavern/SillyTavern/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/SillyTavern/SillyTavern.svg)](https://github.com/SillyTavern/SillyTavern/network)
@@ -282,6 +282,7 @@ You will need two mandatory directory mappings and a port mapping to allow Silly
 * [config] - The directory where SillyTavern configuration files will be stored on your host machine
 * [data] - The directory where SillyTavern user data (including characters) will be stored on your host machine
 * [plugins] - (optional) The directory where SillyTavern server plugins will be stored on your host machine
+* [extensions] - (optional) The directory where global UI extensions will be stored on your host machine
 
 ##### Port Mappings
 
@@ -297,7 +298,7 @@ You will need two mandatory directory mappings and a port mapping to allow Silly
 1. Open your Command Line
 2. Run the following command
 
-`docker create --name='sillytavern' --net='[DockerNet]' -p '8000:8000/tcp' -v '[plugins]':'/home/node/app/plugins':'rw' -v '[config]':'/home/node/app/config':'rw' -v '[data]':'/home/node/app/data':'rw' 'ghcr.io/sillytavern/sillytavern:[version]'`
+`docker create --name='sillytavern' --net='[DockerNet]' -p '8000:8000/tcp' -v '[plugins]':'/home/node/app/plugins':'rw' -v '[config]':'/home/node/app/config':'rw' -v '[data]':'/home/node/app/data':'rw' -v '[extensions]':'/home/node/app/public/scripts/extensions/third-party':'rw' 'ghcr.io/sillytavern/sillytavern:[version]'`
 
 > Note that 8000 is a default listening port. Don't forget to use an appropriate port if you change it in the config.
 

@@ -10,10 +10,11 @@ import {
     SVGInject,
     Popper,
     initLibraryShims,
+    slideToggle,
     default as libs,
 } from './lib.js';
 
-import { humanizedDateTime, favsToHotswap, getMessageTimeStamp, dragElement, isMobile, initRossMods, shouldSendOnEnter } from './scripts/RossAscends-mods.js';
+import { humanizedDateTime, favsToHotswap, getMessageTimeStamp, dragElement, isMobile, initRossMods } from './scripts/RossAscends-mods.js';
 import { userStatsHandler, statMesProcess, initStats } from './scripts/stats.js';
 import {
     generateKoboldWithStreaming,
@@ -36,8 +37,6 @@ import {
     parseTextgenLogprobs,
     parseTabbyLogprobs,
 } from './scripts/textgen-settings.js';
-
-const { MANCER, TOGETHERAI, OOBA, VLLM, APHRODITE, TABBY, OLLAMA, INFERMATICAI, DREAMGEN, OPENROUTER, FEATHERLESS } = textgen_types;
 
 import {
     world_info,
@@ -67,9 +66,7 @@ import {
     getGroupChat,
     renameGroupMember,
     createNewGroupChat,
-    getGroupPastChats,
     getGroupAvatar,
-    openGroupChat,
     editGroup,
     deleteGroupChat,
     renameGroupChat,
@@ -98,7 +95,6 @@ import {
     resetMovableStyles,
     forceCharacterEditorTokenize,
     applyPowerUserSettings,
-    switchSwipeNumAllMessages,
 } from './scripts/power-user.js';
 
 import {
@@ -171,11 +167,13 @@ import {
     flashHighlight,
     isTrueBoolean,
     toggleDrawer,
+    isElementInViewport,
+    copyText,
 } from './scripts/utils.js';
 import { debounce_timeout } from './scripts/constants.js';
 
-import { ModuleWorkerWrapper, doDailyExtensionUpdatesCheck, extension_settings, getContext, initExtensions, loadExtensionSettings, renderExtensionTemplate, renderExtensionTemplateAsync, runGenerationInterceptors, saveMetadataDebounced, writeExtensionField } from './scripts/extensions.js';
-import { COMMENT_NAME_DEFAULT, executeSlashCommands, executeSlashCommandsOnChatInput, executeSlashCommandsWithOptions, getSlashCommandsHelp, initDefaultSlashCommands, isExecutingCommandsFromChatInput, pauseScriptExecution, processChatSlashCommands, registerSlashCommand, stopScriptExecution } from './scripts/slash-commands.js';
+import { doDailyExtensionUpdatesCheck, extension_settings, initExtensions, loadExtensionSettings, runGenerationInterceptors, saveMetadataDebounced } from './scripts/extensions.js';
+import { COMMENT_NAME_DEFAULT, executeSlashCommandsOnChatInput, getSlashCommandsHelp, initDefaultSlashCommands, isExecutingCommandsFromChatInput, pauseScriptExecution, processChatSlashCommands, stopScriptExecution } from './scripts/slash-commands.js';
 import {
     tag_map,
     tags,
@@ -225,8 +223,8 @@ import {
     instruct_presets,
     selectContextPreset,
 } from './scripts/instruct-mode.js';
-import { initLocales, t, translate } from './scripts/i18n.js';
-import { getFriendlyTokenizerName, getTokenCount, getTokenCountAsync, getTokenizerModel, initTokenizers, saveTokenCache, TOKENIZER_SUPPORTED_KEY } from './scripts/tokenizers.js';
+import { initLocales, t } from './scripts/i18n.js';
+import { getFriendlyTokenizerName, getTokenCount, getTokenCountAsync, initTokenizers, saveTokenCache, TOKENIZER_SUPPORTED_KEY } from './scripts/tokenizers.js';
 import {
     user_avatar,
     getUserAvatars,
@@ -239,14 +237,14 @@ import {
 import { getBackgrounds, initBackgrounds, loadBackgroundSettings, background_settings } from './scripts/backgrounds.js';
 import { hideLoader, showLoader } from './scripts/loader.js';
 import { BulkEditOverlay, CharacterContextMenu } from './scripts/BulkEditOverlay.js';
-import { loadFeatherlessModels, loadMancerModels, loadOllamaModels, loadTogetherAIModels, loadInfermaticAIModels, loadOpenRouterModels, loadVllmModels, loadAphroditeModels, loadDreamGenModels, initTextGenModels, loadTabbyModels } from './scripts/textgen-models.js';
+import { loadFeatherlessModels, loadMancerModels, loadOllamaModels, loadTogetherAIModels, loadInfermaticAIModels, loadOpenRouterModels, loadVllmModels, loadAphroditeModels, loadDreamGenModels, initTextGenModels, loadTabbyModels, loadGenericModels } from './scripts/textgen-models.js';
 import { appendFileContent, hasPendingFileAttachment, populateFileAttachment, decodeStyleTags, encodeStyleTags, isExternalMediaAllowed, getCurrentEntityId, preserveNeutralChat, restoreNeutralChat } from './scripts/chats.js';
-import { initPresetManager } from './scripts/preset-manager.js';
-import { MacrosParser, evaluateMacros, getLastMessageId } from './scripts/macros.js';
+import { getPresetManager, initPresetManager } from './scripts/preset-manager.js';
+import { evaluateMacros, getLastMessageId, initMacros } from './scripts/macros.js';
 import { currentUser, setUserControls } from './scripts/user.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup, fixToastrForDialogs } from './scripts/popup.js';
 import { renderTemplate, renderTemplateAsync } from './scripts/templates.js';
-import { initScrapers, ScraperManager } from './scripts/scrapers.js';
+import { initScrapers } from './scripts/scrapers.js';
 import { SlashCommandParser } from './scripts/slash-commands/SlashCommandParser.js';
 import { SlashCommand } from './scripts/slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from './scripts/slash-commands/SlashCommandArgument.js';
@@ -268,6 +266,13 @@ import { initServerHistory } from './scripts/server-history.js';
 import { initSettingsSearch } from './scripts/setting-search.js';
 import { initBulkEdit } from './scripts/bulk-edit.js';
 import { deriveTemplatesFromChatTemplate } from './scripts/chat-templates.js';
+import { getContext } from './scripts/st-context.js';
+
+// API OBJECT FOR EXTERNAL WIRING
+globalThis.SillyTavern = {
+    libs,
+    getContext,
+};
 
 import { initTts, getAlltalkTtsUrl } from './scripts/extensions/tts/index.js'
 
@@ -430,10 +435,6 @@ DOMPurify.addHook('uponSanitizeElement', (node, _, config) => {
     }
 });
 
-// API OBJECT FOR EXTERNAL WIRING
-window['SillyTavern'] = {};
-window['SillyTavern'].libs = libs;
-
 // Event source init
 export const event_types = {
     APP_READY: 'app_ready',
@@ -539,7 +540,7 @@ let displayVersion = 'SillyTavern';
 
 let generatedPromptCache = '';
 let generation_started = new Date();
-/** @type {import('scripts/char-data.js').v1CharData[]} */
+/** @type {import('./scripts/char-data.js').v1CharData[]} */
 export let characters = [];
 export let this_chid;
 let saveCharactersPage = 0;
@@ -554,6 +555,7 @@ let optionsPopper = Popper.createPopper(document.getElementById('options_button'
 let exportPopper = Popper.createPopper(document.getElementById('export_button'), document.getElementById('export_format_popup'), {
     placement: 'left',
 });
+let isExportPopupOpen = false;
 
 // Saved here for performance reasons
 const messageTemplate = $('#message_template .mes');
@@ -576,7 +578,7 @@ export const DEFAULT_SAVE_EDIT_TIMEOUT = debounce_timeout.relaxed;
 /** @type {debounce_timeout} The debounce timeout used for printing. debounce_timeout.quick: 100 ms */
 export const DEFAULT_PRINT_TIMEOUT = debounce_timeout.quick;
 
-export const saveSettingsDebounced = debounce(() => saveSettings(), DEFAULT_SAVE_EDIT_TIMEOUT);
+export const saveSettingsDebounced = debounce((loopCounter = 0) => saveSettings(loopCounter), DEFAULT_SAVE_EDIT_TIMEOUT);
 export const saveCharacterDebounced = debounce(() => $('#create_button').trigger('click'), DEFAULT_SAVE_EDIT_TIMEOUT);
 
 /**
@@ -815,7 +817,7 @@ export let menu_type = '';
 export let selected_button = ''; //which button pressed
 
 //create pole save
-let create_save = {
+export let create_save = {
     name: '',
     description: '',
     creator_notes: '',
@@ -852,11 +854,9 @@ export let is_send_press = false; //Send generation
 
 let this_del_mes = -1;
 
-//message editing and chat scroll position persistence
+//message editing
 var this_edit_mes_chname = '';
 var this_edit_mes_id;
-var scroll_holder = 0;
-var is_use_scroll_holder = false;
 
 //settings
 export let settings;
@@ -867,7 +867,7 @@ export let amount_gen = 80; //default max length of AI generated responses
 export let max_context = 2048;
 
 var swipes = true;
-let extension_prompts = {};
+export let extension_prompts = {};
 
 export let main_api;// = "kobold";
 //novel settings
@@ -897,6 +897,13 @@ export function getRequestHeaders() {
     return {
         'Content-Type': 'application/json',
         'X-CSRF-Token': token,
+    };
+}
+
+export function getSlideToggleOptions() {
+    return {
+        miliseconds: animation_duration * 1.5,
+        transitionFunction: animation_duration > 0 ? 'ease-in-out' : 'step-start',
     };
 }
 
@@ -960,6 +967,7 @@ async function firstLoadInit() {
     initDynamicStyles();
     initTags();
     initBookmarks();
+    initMacros();
     await getUserAvatars(true, user_avatar);
     await getCharacters();
     await getBackgrounds();
@@ -1179,7 +1187,7 @@ async function getStatusTextgen() {
         return resultCheckStatus();
     }
 
-    if (textgen_settings.type == OOBA && textgen_settings.bypass_status_check) {
+    if ([textgen_types.GENERIC, textgen_types.OOBA].includes(textgen_settings.type) && textgen_settings.bypass_status_check) {
         setOnlineStatus('Status check bypassed');
         return resultCheckStatus();
     }
@@ -1197,36 +1205,39 @@ async function getStatusTextgen() {
 
         const data = await response.json();
 
-        if (textgen_settings.type === MANCER) {
+        if (textgen_settings.type === textgen_types.MANCER) {
             loadMancerModels(data?.data);
             setOnlineStatus(textgen_settings.mancer_model);
-        } else if (textgen_settings.type === TOGETHERAI) {
+        } else if (textgen_settings.type === textgen_types.TOGETHERAI) {
             loadTogetherAIModels(data?.data);
             setOnlineStatus(textgen_settings.togetherai_model);
-        } else if (textgen_settings.type === OLLAMA) {
+        } else if (textgen_settings.type === textgen_types.OLLAMA) {
             loadOllamaModels(data?.data);
             setOnlineStatus(textgen_settings.ollama_model || 'Connected');
-        } else if (textgen_settings.type === INFERMATICAI) {
+        } else if (textgen_settings.type === textgen_types.INFERMATICAI) {
             loadInfermaticAIModels(data?.data);
             setOnlineStatus(textgen_settings.infermaticai_model);
-        } else if (textgen_settings.type === DREAMGEN) {
+        } else if (textgen_settings.type === textgen_types.DREAMGEN) {
             loadDreamGenModels(data?.data);
             setOnlineStatus(textgen_settings.dreamgen_model);
-        } else if (textgen_settings.type === OPENROUTER) {
+        } else if (textgen_settings.type === textgen_types.OPENROUTER) {
             loadOpenRouterModels(data?.data);
             setOnlineStatus(textgen_settings.openrouter_model);
-        } else if (textgen_settings.type === VLLM) {
+        } else if (textgen_settings.type === textgen_types.VLLM) {
             loadVllmModels(data?.data);
             setOnlineStatus(textgen_settings.vllm_model);
-        } else if (textgen_settings.type === APHRODITE) {
+        } else if (textgen_settings.type === textgen_types.APHRODITE) {
             loadAphroditeModels(data?.data);
             setOnlineStatus(textgen_settings.aphrodite_model);
-        } else if (textgen_settings.type === FEATHERLESS) {
+        } else if (textgen_settings.type === textgen_types.FEATHERLESS) {
             loadFeatherlessModels(data?.data);
             setOnlineStatus(textgen_settings.featherless_model);
-        } else if (textgen_settings.type === TABBY) {
+        } else if (textgen_settings.type === textgen_types.TABBY) {
             loadTabbyModels(data?.data);
             setOnlineStatus(textgen_settings.tabby_model || data?.result);
+        } else if (textgen_settings.type === textgen_types.GENERIC) {
+            loadGenericModels(data?.data);
+            setOnlineStatus(textgen_settings.generic_model || data?.result || 'Connected');
         } else {
             setOnlineStatus(data?.result);
         }
@@ -1641,7 +1652,7 @@ export function getEntitiesList({ doFilter = false, doSort = true } = {}) {
                 subEntities = entitiesFilter.applyFilters(subEntities, { clearScoreCache: false, tempOverrides: { [FILTER_TYPES.FOLDER]: FILTER_STATES.UNDEFINED }, clearFuzzySearchCaches: false });
             }
             if (doSort) {
-                sortEntitiesList(subEntities);
+                sortEntitiesList(subEntities, false);
             }
             entity.entities = subEntities;
             entity.hidden = subCount - subEntities.length;
@@ -1669,7 +1680,7 @@ export function getEntitiesList({ doFilter = false, doSort = true } = {}) {
 
     // Sort before returning if requested
     if (doSort) {
-        sortEntitiesList(entities);
+        sortEntitiesList(entities, false);
     }
     entitiesFilter.clearFuzzySearchCaches();
     return entities;
@@ -1823,10 +1834,10 @@ export async function replaceCurrentChat() {
     }
 }
 
-export function showMoreMessages() {
+export function showMoreMessages(messagesToLoad = null) {
     const firstDisplayedMesId = $('#chat').children('.mes').first().attr('mesid');
     let messageId = Number(firstDisplayedMesId);
-    let count = power_user.chat_truncation || Number.MAX_SAFE_INTEGER;
+    let count = messagesToLoad || power_user.chat_truncation || Number.MAX_SAFE_INTEGER;
 
     // If there are no messages displayed, or the message somehow has no mesid, we default to one higher than last message id,
     // so the first "new" message being shown will be the last available message
@@ -1836,6 +1847,7 @@ export function showMoreMessages() {
 
     console.debug('Inserting messages before', messageId, 'count', count, 'chat length', chat.length);
     const prevHeight = $('#chat').prop('scrollHeight');
+    const isButtonInView = isElementInViewport($('#show_more_messages')[0]);
 
     while (messageId > 0 && count > 0) {
         let newMessageId = messageId - 1;
@@ -1848,8 +1860,10 @@ export function showMoreMessages() {
         $('#show_more_messages').remove();
     }
 
-    const newHeight = $('#chat').prop('scrollHeight');
-    $('#chat').scrollTop(newHeight - prevHeight);
+    if (isButtonInView) {
+        const newHeight = $('#chat').prop('scrollHeight');
+        $('#chat').scrollTop(newHeight - prevHeight);
+    }
 }
 
 export async function printMessages() {
@@ -2307,16 +2321,15 @@ export function addCopyToCodeBlocks(messageElement) {
     const codeBlocks = $(messageElement).find('pre code');
     for (let i = 0; i < codeBlocks.length; i++) {
         hljs.highlightElement(codeBlocks.get(i));
-        if (navigator.clipboard !== undefined) {
-            const copyButton = document.createElement('i');
-            copyButton.classList.add('fa-solid', 'fa-copy', 'code-copy', 'interactable');
-            copyButton.title = 'Copy code';
-            codeBlocks.get(i).appendChild(copyButton);
-            copyButton.addEventListener('pointerup', function (event) {
-                navigator.clipboard.writeText(codeBlocks.get(i).innerText);
-                toastr.info(t`Copied!`, '', { timeOut: 2000 });
-            });
-        }
+        const copyButton = document.createElement('i');
+        copyButton.classList.add('fa-solid', 'fa-copy', 'code-copy', 'interactable');
+        copyButton.title = 'Copy code';
+        codeBlocks.get(i).appendChild(copyButton);
+        copyButton.addEventListener('pointerup', async function () {
+            const text = codeBlocks.get(i).innerText;
+            await copyText(text);
+            toastr.info(t`Copied!`, '', { timeOut: 2000 });
+        });
     }
 }
 
@@ -2620,15 +2633,18 @@ export function substituteParams(content, _name1, _name2, _original, _group, _re
         };
     }
 
-    const getGroupValue = () => {
+    const getGroupValue = (includeMuted) => {
         if (typeof _group === 'string') {
             return _group;
         }
 
         if (selected_group) {
             const members = groups.find(x => x.id === selected_group)?.members;
+            /** @type {string[]} */
+            const disabledMembers = groups.find(x => x.id === selected_group)?.disabled_members ?? [];
+            const isMuted = x => includeMuted ? true : !disabledMembers.includes(x);
             const names = Array.isArray(members)
-                ? members.map(m => characters.find(c => c.avatar === m)?.name).filter(Boolean).join(', ')
+                ? members.filter(isMuted).map(m => characters.find(c => c.avatar === m)?.name).filter(Boolean).join(', ')
                 : '';
             return names;
         } else {
@@ -2652,7 +2668,8 @@ export function substituteParams(content, _name1, _name2, _original, _group, _re
     // Must be substituted last so that they're replaced inside {{description}}
     environment.user = _name1 ?? name1;
     environment.char = _name2 ?? name2;
-    environment.group = environment.charIfNotGroup = getGroupValue();
+    environment.group = environment.charIfNotGroup = getGroupValue(true);
+    environment.groupNotMuted = getGroupValue(false);
     environment.model = getGeneratingModel();
 
     if (additionalMacro && typeof additionalMacro === 'object') {
@@ -2715,15 +2732,15 @@ export function getStoppingStrings(isImpersonate, isContinue) {
  * @param {string} quietImage Image to use for the quiet prompt
  * @param {string} quietName Name to use for the quiet prompt (defaults to "System:")
  * @param {number} [responseLength] Maximum response length. If unset, the global default value is used.
+ * @param {number} force_chid Character ID to use for this generation run. Works in groups only.
  * @returns
  */
-export async function generateQuietPrompt(quiet_prompt, quietToLoud, skipWIAN, quietImage = null, quietName = null, responseLength = null) {
+export async function generateQuietPrompt(quiet_prompt, quietToLoud, skipWIAN, quietImage = null, quietName = null, responseLength = null, force_chid = null) {
     console.debug('got into genQuietPrompt. quietName = ', quietName);
     const responseLengthCustomized = typeof responseLength === 'number' && responseLength > 0;
     let originalResponseLength = -1;
-    let forceCharacterId;
-    if (characters.findIndex(c => c.name == quietName) >= 0)
-        forceCharacterId = characters.findIndex(c => c.name == quietName);
+    if (characters.findIndex(c => c.name == quietName) >= 0 && force_chid == null)
+        force_chid = characters.findIndex(c => c.name == quietName);
     try {
         /** @type {GenerateOptions} */
         const options = {
@@ -2731,15 +2748,19 @@ export async function generateQuietPrompt(quiet_prompt, quietToLoud, skipWIAN, q
             quietToLoud,
             skipWIAN: skipWIAN,
             force_name2: true,
-            force_chid: forceCharacterId,
             quietImage: quietImage,
             quietName: quietName,
+            force_chid: force_chid,
         };
-        originalResponseLength = responseLengthCustomized ? saveResponseLength(main_api, responseLength) : -1;
+        if (responseLengthCustomized) {
+            TempResponseLength.save(main_api, responseLength);
+            eventHook = TempResponseLength.setupEventHook(main_api);
+        }
         return await Generate('quiet', options);
     } finally {
-        if (responseLengthCustomized) {
-            restoreResponseLength(main_api, originalResponseLength);
+        if (responseLengthCustomized && TempResponseLength.isCustomized()) {
+            TempResponseLength.restore(main_api);
+            TempResponseLength.removeEventHook(main_api, eventHook);
         }
     }
 }
@@ -2888,23 +2909,54 @@ function addPersonaDescriptionExtensionPrompt() {
     }
 }
 
-function getAllExtensionPrompts() {
-    const value = Object
-        .values(extension_prompts)
-        .filter(x => x.value)
-        .map(x => x.value.trim())
-        .join('\n');
+/**
+ * Returns all extension prompts combined.
+ * @returns {Promise<string>} Combined extension prompts
+ */
+async function getAllExtensionPrompts() {
+    const values = [];
 
-    return value.length ? substituteParams(value) : '';
+    for (const prompt of Object.values(extension_prompts)) {
+        const value = prompt?.value?.trim();
+
+        if (!value) {
+            continue;
+        }
+
+        const hasFilter = typeof prompt.filter === 'function';
+        if (hasFilter && !await prompt.filter()) {
+            continue;
+        }
+
+        values.push(value);
+    }
+
+    return substituteParams(values.join('\n'));
 }
 
-// Wrapper to fetch extension prompts by module name
-export function getExtensionPromptByName(moduleName) {
-    if (moduleName) {
-        return substituteParams(extension_prompts[moduleName]?.value);
-    } else {
-        return;
+/**
+ * Wrapper to fetch extension prompts by module name
+ * @param {string} moduleName Module name
+ * @returns {Promise<string>} Extension prompt
+ */
+export async function getExtensionPromptByName(moduleName) {
+    if (!moduleName) {
+        return '';
     }
+
+    const prompt = extension_prompts[moduleName];
+
+    if (!prompt) {
+        return '';
+    }
+
+    const hasFilter = typeof prompt.filter === 'function';
+
+    if (hasFilter && !await prompt.filter()) {
+        return '';
+    }
+
+    return substituteParams(prompt.value);
 }
 
 /**
@@ -2915,27 +2967,36 @@ export function getExtensionPromptByName(moduleName) {
  * @param {string} [separator] Separator for joining multiple prompts
  * @param {number} [role] Role of the prompt
  * @param {boolean} [wrap] Wrap start and end with a separator
- * @returns {string} Extension prompt
+ * @returns {Promise<string>} Extension prompt
  */
-export function getExtensionPrompt(position = extension_prompt_types.IN_PROMPT, depth = undefined, separator = '\n', role = undefined, wrap = true) {
-    let extension_prompt = Object.keys(extension_prompts)
+export async function getExtensionPrompt(position = extension_prompt_types.IN_PROMPT, depth = undefined, separator = '\n', role = undefined, wrap = true) {
+    const filterByFunction = async (prompt) => {
+        const hasFilter = typeof prompt.filter === 'function';
+        if (hasFilter && !await prompt.filter()) {
+            return false;
+        }
+        return true;
+    };
+    const promptPromises = Object.keys(extension_prompts)
         .sort()
         .map((x) => extension_prompts[x])
         .filter(x => x.position == position && x.value)
         .filter(x => depth === undefined || x.depth === undefined || x.depth === depth)
         .filter(x => role === undefined || x.role === undefined || x.role === role)
-        .map(x => x.value.trim())
-        .join(separator);
-    if (wrap && extension_prompt.length && !extension_prompt.startsWith(separator)) {
-        extension_prompt = separator + extension_prompt;
+        .filter(filterByFunction);
+    const prompts = await Promise.all(promptPromises);
+
+    let values = prompts.map(x => x.value.trim()).join(separator);
+    if (wrap && values.length && !values.startsWith(separator)) {
+        values = separator + values;
     }
-    if (wrap && extension_prompt.length && !extension_prompt.endsWith(separator)) {
-        extension_prompt = extension_prompt + separator;
+    if (wrap && values.length && !values.endsWith(separator)) {
+        values = values + separator;
     }
-    if (extension_prompt.length) {
-        extension_prompt = substituteParams(extension_prompt);
+    if (values.length) {
+        values = substituteParams(values);
     }
-    return extension_prompt;
+    return values;
 }
 
 export function baseChatReplace(value, name1, name2) {
@@ -3343,9 +3404,9 @@ export async function generateRaw(prompt, api, instructOverride, quietToLoud, sy
 
     const abortController = new AbortController();
     const responseLengthCustomized = typeof responseLength === 'number' && responseLength > 0;
-    let originalResponseLength = -1;
     const isInstruct = power_user.instruct.enabled && api !== 'openai' && api !== 'novel' && !instructOverride;
     const isQuiet = true;
+    let eventHook = () => { };
 
     if (systemPrompt) {
         systemPrompt = substituteParams(systemPrompt);
@@ -3359,7 +3420,9 @@ export async function generateRaw(prompt, api, instructOverride, quietToLoud, sy
     prompt = isInstruct ? (prompt + formatInstructModePrompt(name2, false, '', name1, name2, isQuiet, quietToLoud)) : (prompt + '\n');
 
     try {
-        originalResponseLength = responseLengthCustomized ? saveResponseLength(api, responseLength) : -1;
+        if (responseLengthCustomized) {
+            TempResponseLength.save(api, responseLength);
+        }
         let generateData = {};
 
         switch (api) {
@@ -3372,20 +3435,24 @@ export async function generateRaw(prompt, api, instructOverride, quietToLoud, sy
                     const koboldSettings = koboldai_settings[koboldai_setting_names[preset_settings]];
                     generateData = getKoboldGenerationData(prompt, koboldSettings, amount_gen, max_context, isHorde, 'quiet');
                 }
+                TempResponseLength.restore(api);
                 break;
             case 'novel': {
                 const novelSettings = novelai_settings[novelai_setting_names[nai_settings.preset_settings_novel]];
                 generateData = getNovelGenerationData(prompt, novelSettings, amount_gen, false, false, null, 'quiet');
+                TempResponseLength.restore(api);
                 break;
             }
             case 'textgenerationwebui':
                 generateData = getTextGenGenerationData(prompt, amount_gen, false, false, null, 'quiet');
+                TempResponseLength.restore(api);
                 break;
             case 'openai': {
                 generateData = [{ role: 'user', content: prompt.trim() }];
                 if (systemPrompt) {
                     generateData.unshift({ role: 'system', content: systemPrompt.trim() });
                 }
+                eventHook = TempResponseLength.setupEventHook(api);
             } break;
         }
 
@@ -3427,41 +3494,100 @@ export async function generateRaw(prompt, api, instructOverride, quietToLoud, sy
 
         return message;
     } finally {
-        if (responseLengthCustomized) {
-            restoreResponseLength(api, originalResponseLength);
+        if (responseLengthCustomized && TempResponseLength.isCustomized()) {
+            TempResponseLength.restore(api);
+            TempResponseLength.removeEventHook(api, eventHook);
         }
     }
 }
 
-/**
- * Temporarily change the response length for the specified API.
- * @param {string} api API to use.
- * @param {number} responseLength Target response length.
- * @returns {number} The original response length.
- */
-function saveResponseLength(api, responseLength) {
-    let oldValue = -1;
-    if (api === 'openai') {
-        oldValue = oai_settings.openai_max_tokens;
-        oai_settings.openai_max_tokens = responseLength;
-    } else {
-        oldValue = amount_gen;
-        amount_gen = responseLength;
-    }
-    return oldValue;
-}
+class TempResponseLength {
+    static #originalResponseLength = -1;
+    static #lastApi = null;
 
-/**
- * Restore the original response length for the specified API.
- * @param {string} api API to use.
- * @param {number} responseLength Target response length.
- * @returns {void}
- */
-function restoreResponseLength(api, responseLength) {
-    if (api === 'openai') {
-        oai_settings.openai_max_tokens = responseLength;
-    } else {
-        amount_gen = responseLength;
+    static isCustomized() {
+        return this.#originalResponseLength > -1;
+    }
+
+    /**
+     * Save the current response length for the specified API.
+     * @param {string} api API identifier
+     * @param {number} responseLength New response length
+     */
+    static save(api, responseLength) {
+        if (api === 'openai') {
+            this.#originalResponseLength = oai_settings.openai_max_tokens;
+            oai_settings.openai_max_tokens = responseLength;
+        } else {
+            this.#originalResponseLength = amount_gen;
+            amount_gen = responseLength;
+        }
+
+        this.#lastApi = api;
+        console.log('[TempResponseLength] Saved original response length:', TempResponseLength.#originalResponseLength);
+    }
+
+    /**
+     * Restore the original response length for the specified API.
+     * @param {string|null} api API identifier
+     * @returns {void}
+     */
+    static restore(api) {
+        if (this.#originalResponseLength === -1) {
+            return;
+        }
+        if (!api && this.#lastApi) {
+            api = this.#lastApi;
+        }
+        if (api === 'openai') {
+            oai_settings.openai_max_tokens = this.#originalResponseLength;
+        } else {
+            amount_gen = this.#originalResponseLength;
+        }
+
+        console.log('[TempResponseLength] Restored original response length:', this.#originalResponseLength);
+        this.#originalResponseLength = -1;
+        this.#lastApi = null;
+    }
+
+    /**
+     * Sets up an event hook to restore the original response length when the event is emitted.
+     * @param {string} api API identifier
+     * @returns {function(): void} Event hook function
+     */
+    static setupEventHook(api) {
+        const eventHook = () => {
+            if (this.isCustomized()) {
+                this.restore(api);
+            }
+        };
+
+        switch (api) {
+            case 'openai':
+                eventSource.once(event_types.CHAT_COMPLETION_SETTINGS_READY, eventHook);
+                break;
+            default:
+                eventSource.once(event_types.GENERATE_AFTER_DATA, eventHook);
+                break;
+        }
+
+        return eventHook;
+    }
+
+    /**
+     * Removes the event hook for the specified API.
+     * @param {string} api API identifier
+     * @param {function(): void} eventHook Previously set up event hook
+     */
+    static removeEventHook(api, eventHook) {
+        switch (api) {
+            case 'openai':
+                eventSource.removeListener(event_types.CHAT_COMPLETION_SETTINGS_READY, eventHook);
+                break;
+            default:
+                eventSource.removeListener(event_types.GENERATE_AFTER_DATA, eventHook);
+                break;
+        }
     }
 }
 
@@ -3730,9 +3856,9 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     // Determine token limit
     let this_max_context = getMaxContextSize();
 
-    if (!dryRun && type !== 'quiet') {
+    if (!dryRun) {
         console.debug('Running extension interceptors');
-        const aborted = await runGenerationInterceptors(coreChat, this_max_context);
+        const aborted = await runGenerationInterceptors(coreChat, this_max_context, type);
 
         if (aborted) {
             console.debug('Generation aborted by extension interceptors');
@@ -3758,6 +3884,23 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         }
     }
 
+    // Fetches the combined prompt for both negative and positive prompts
+    const cfgGuidanceScale = getGuidanceScale();
+    const useCfgPrompt = cfgGuidanceScale && cfgGuidanceScale.value !== 1;
+
+    // Adjust max context based on CFG prompt to prevent overfitting
+    if (useCfgPrompt) {
+        const negativePrompt = getCfgPrompt(cfgGuidanceScale, true, true)?.value || '';
+        const positivePrompt = getCfgPrompt(cfgGuidanceScale, false, true)?.value || '';
+        if (negativePrompt || positivePrompt) {
+            const previousMaxContext = this_max_context;
+            const [negativePromptTokenCount, positivePromptTokenCount] = await Promise.all([getTokenCountAsync(negativePrompt), getTokenCountAsync(positivePrompt)]);
+            const decrement = Math.max(negativePromptTokenCount, positivePromptTokenCount);
+            this_max_context -= decrement;
+            console.log(`Max context reduced by ${decrement} tokens of CFG prompt (${previousMaxContext} -> ${this_max_context})`);
+        }
+    }
+
     console.log(`Core/all messages: ${coreChat.length}/${chat.length}`);
 
     // kingbri MARK: - Make sure the prompt bias isn't the same as the user bias
@@ -3776,7 +3919,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
      * @returns {string[]} Examples array with block heading
      */
     function parseMesExamples(examplesStr) {
-        if (examplesStr.length === 0 || examplesStr === '<START>') {
+        if (!examplesStr || examplesStr.length === 0 || examplesStr === '<START>') {
             return [];
         }
 
@@ -3850,7 +3993,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     // Inject all Depth prompts. Chat Completion does it separately
     let injectedIndices = [];
     if (main_api !== 'openai') {
-        injectedIndices = doChatInject(coreChat, isContinue);
+        injectedIndices = await doChatInject(coreChat, isContinue);
     }
 
     // Insert character jailbreak as the last user message (if exists, allowed, preferred, and not using Chat Completion)
@@ -3923,8 +4066,8 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     }
 
     // Call combined AN into Generate
-    const beforeScenarioAnchor = getExtensionPrompt(extension_prompt_types.BEFORE_PROMPT).trimStart();
-    const afterScenarioAnchor = getExtensionPrompt(extension_prompt_types.IN_PROMPT);
+    const beforeScenarioAnchor = (await getExtensionPrompt(extension_prompt_types.BEFORE_PROMPT)).trimStart();
+    const afterScenarioAnchor = await getExtensionPrompt(extension_prompt_types.IN_PROMPT);
 
     const storyStringParams = {
         description: description,
@@ -4265,10 +4408,6 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         setPromptString();
     }
 
-    // Fetches the combined prompt for both negative and positive prompts
-    const cfgGuidanceScale = getGuidanceScale();
-    const useCfgPrompt = cfgGuidanceScale && cfgGuidanceScale.value !== 1;
-
     // For prompt bit itemization
     let mesSendString = '';
 
@@ -4487,7 +4626,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             ...thisPromptBits[currentArrayEntry],
             rawPrompt: generate_data.prompt || generate_data.input,
             mesId: getNextMessageId(type),
-            allAnchors: getAllExtensionPrompts(),
+            allAnchors: await getAllExtensionPrompts(),
             chatInjects: injectedIndices?.map(index => arrMes[arrMes.length - index - 1])?.join('') || '',
             summarizeString: (extension_prompts['1_memory']?.value || ''),
             authorsNoteString: (extension_prompts['2_floating_prompt']?.value || ''),
@@ -4512,6 +4651,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             instruction: main_api !== 'openai' && power_user.sysprompt.enabled ? substituteParams(power_user.prefer_character_prompt && system ? system : power_user.sysprompt.content) : '',
             userPersona: (power_user.persona_description_position == persona_description_positions.IN_PROMPT ? (persona || '') : ''),
             tokenizer: getFriendlyTokenizerName(main_api).tokenizerName || '',
+            presetName: getPresetManager()?.getSelectedPresetName() || '',
         };
 
         //console.log(additionalPromptStuff);
@@ -4551,9 +4691,12 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
                 const shouldDeleteMessage = type !== 'swipe' && ['', '...'].includes(lastMessage?.mes) && ['', '...'].includes(streamingProcessor?.result);
                 hasToolCalls && shouldDeleteMessage && await deleteLastMessage();
                 const invocationResult = await ToolManager.invokeFunctionTools(streamingProcessor.toolCalls);
+                const shouldStopGeneration = (!invocationResult.invocations.length && shouldDeleteMessage) || invocationResult.stealthCalls.length;
                 if (hasToolCalls) {
-                    if (!invocationResult.invocations.length && shouldDeleteMessage) {
-                        ToolManager.showToolCallError(invocationResult.errors);
+                    if (shouldStopGeneration) {
+                        if (Array.isArray(invocationResult.errors) && invocationResult.errors.length) {
+                            ToolManager.showToolCallError(invocationResult.errors);
+                        }
                         unblockGeneration(type);
                         generatedPromptCache = '';
                         streamingProcessor = null;
@@ -4657,9 +4800,12 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             const shouldDeleteMessage = type !== 'swipe' && ['', '...'].includes(getMessage);
             hasToolCalls && shouldDeleteMessage && await deleteLastMessage();
             const invocationResult = await ToolManager.invokeFunctionTools(data);
+            const shouldStopGeneration = (!invocationResult.invocations.length && shouldDeleteMessage) || invocationResult.stealthCalls.length;
             if (hasToolCalls) {
-                if (!invocationResult.invocations.length && shouldDeleteMessage) {
-                    ToolManager.showToolCallError(invocationResult.errors);
+                if (shouldStopGeneration) {
+                    if (Array.isArray(invocationResult.errors) && invocationResult.errors.length) {
+                        ToolManager.showToolCallError(invocationResult.errors);
+                    }
                     unblockGeneration(type);
                     generatedPromptCache = '';
                     return;
@@ -4759,9 +4905,9 @@ export function stopGeneration() {
  * Injects extension prompts into chat messages.
  * @param {object[]} messages Array of chat messages
  * @param {boolean} isContinue Whether the generation is a continuation. If true, the extension prompts of depth 0 are injected at position 1.
- * @returns {number[]} Array of indices where the extension prompts were injected
+ * @returns {Promise<number[]>} Array of indices where the extension prompts were injected
  */
-function doChatInject(messages, isContinue) {
+async function doChatInject(messages, isContinue) {
     const injectedIndices = [];
     let totalInsertedMessages = 0;
     messages.reverse();
@@ -4779,7 +4925,7 @@ function doChatInject(messages, isContinue) {
         const wrap = false;
 
         for (const role of roles) {
-            const extensionPrompt = String(getExtensionPrompt(extension_prompt_types.IN_CHAT, i, separator, role, wrap)).trimStart();
+            const extensionPrompt = String(await getExtensionPrompt(extension_prompt_types.IN_CHAT, i, separator, role, wrap)).trimStart();
             const isNarrator = role === extension_prompt_roles.SYSTEM;
             const isUser = role === extension_prompt_roles.USER;
             const name = names[role];
@@ -5183,6 +5329,7 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
         dataBankVectorsStringTokens: await getTokenCountAsync(itemizedPrompts[thisPromptSet].dataBankVectorsString),
         modelUsed: chat[incomingMesId]?.extra?.model,
         apiUsed: chat[incomingMesId]?.extra?.api,
+        presetName: itemizedPrompts[thisPromptSet].presetName || t`(Unknown)`,
     };
 
     const getFriendlyName = (value) => $(`#rm_api_block select option[value="${value}"]`).first().text() || value;
@@ -5344,7 +5491,7 @@ async function promptItemize(itemizedPrompts, requestedMesId) {
     } else {
         diffPrevPrompt.style.display = 'none';
     }
-    popup.dlg.querySelector('#copyPromptToClipboard').addEventListener('click', function () {
+    popup.dlg.querySelector('#copyPromptToClipboard').addEventListener('pointerup', async function () {
         let rawPrompt = itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt;
         let rawPromptValues = rawPrompt;
 
@@ -5352,7 +5499,7 @@ async function promptItemize(itemizedPrompts, requestedMesId) {
             rawPromptValues = rawPrompt.map(x => x.content).join('\n');
         }
 
-        navigator.clipboard.writeText(rawPromptValues);
+        await copyText(rawPromptValues);
         toastr.info(t`Copied!`);
     });
 
@@ -5373,20 +5520,24 @@ async function promptItemize(itemizedPrompts, requestedMesId) {
     await popup.show();
 }
 
-function setInContextMessages(lastmsg, type) {
+function setInContextMessages(msgInContextCount, type) {
     $('#chat .mes').removeClass('lastInContext');
 
     if (type === 'swipe' || type === 'regenerate' || type === 'continue') {
-        lastmsg++;
+        msgInContextCount++;
     }
 
-    const lastMessageBlock = $('#chat .mes:not([is_system="true"])').eq(-lastmsg);
+    const lastMessageBlock = $('#chat .mes:not([is_system="true"])').eq(-msgInContextCount);
     lastMessageBlock.addClass('lastInContext');
 
     if (lastMessageBlock.length === 0) {
         const firstMessageId = getFirstDisplayedMessageId();
         $(`#chat .mes[mesid="${firstMessageId}"`).addClass('lastInContext');
     }
+
+    // Update last id to chat. No metadata save on purpose, gets hopefully saved via another call
+    const lastMessageId = Math.max(0, chat.length - msgInContextCount);
+    chat_metadata['lastInContextMessageId'] = lastMessageId;
 }
 
 /**
@@ -5559,7 +5710,7 @@ function extractMultiSwipes(data, type) {
         return swipes;
     }
 
-    if (main_api === 'openai' || (main_api === 'textgenerationwebui' && [MANCER, VLLM, APHRODITE, TABBY, INFERMATICAI].includes(textgen_settings.type))) {
+    if (main_api === 'openai' || (main_api === 'textgenerationwebui' && [textgen_types.MANCER, textgen_types.VLLM, textgen_types.APHRODITE, textgen_types.TABBY, textgen_types.INFERMATICAI].includes(textgen_settings.type))) {
         if (!Array.isArray(data.choices)) {
             return swipes;
         }
@@ -5722,10 +5873,7 @@ export function cleanUpMessage(getMessage, isImpersonate, isContinue, displayInc
     return getMessage;
 }
 
-async function saveReply(type, getMessage, fromStreaming, title, swipes) {
-
-    console.log("Adding a new reply");
-
+export async function saveReply(type, getMessage, fromStreaming, title, swipes) {
     if (type != 'append' && type != 'continue' && type != 'appendFinal' && chat.length && (chat[chat.length - 1]['swipe_id'] === undefined ||
         chat[chat.length - 1]['is_user'])) {
         type = 'normal';
@@ -6816,10 +6964,21 @@ function selectKoboldGuiPreset() {
         .trigger('change');
 }
 
-export async function saveSettings(type) {
+export async function saveSettings(loopCounter = 0) {
     if (!settingsReady) {
         console.warn('Settings not ready, aborting save');
         return;
+    }
+
+    const MAX_RETRIES = 3;
+    if (TempResponseLength.isCustomized()) {
+        if (loopCounter < MAX_RETRIES) {
+            console.warn('Response length is currently being overridden, scheduling another save');
+            saveSettingsDebounced(++loopCounter);
+            return;
+        }
+        console.error('Response length is currently being overridden, but the save loop has reached the maximum number of retries');
+        TempResponseLength.restore(null);
     }
 
     //console.log('Entering settings with name1 = '+name1);
@@ -7260,7 +7419,7 @@ export function select_rm_info(type, charId, previousCharId = null) {
     // Set a timeout so multiple flashes don't overlap
     clearTimeout(importFlashTimeout);
     importFlashTimeout = setTimeout(function () {
-        if (type === 'char_import' || type === 'char_create') {
+        if (type === 'char_import' || type === 'char_create' || type === 'char_import_no_toast') {
             // Find the page at which the character is located
             const avatarFileName = charId;
             const charData = getEntitiesList({ doFilter: true });
@@ -7483,14 +7642,16 @@ function select_rm_characters() {
  * @param {number} depth Insertion depth. 0 represets the last message in context. Expected values up to MAX_INJECTION_DEPTH.
  * @param {number} role Extension prompt role. Defaults to SYSTEM.
  * @param {boolean} scan Should the prompt be included in the world info scan.
+ * @param {(function(): Promise<boolean>|boolean)} filter Filter function to determine if the prompt should be injected.
  */
-export function setExtensionPrompt(key, value, position, depth, scan = false, role = extension_prompt_roles.SYSTEM) {
+export function setExtensionPrompt(key, value, position, depth, scan = false, role = extension_prompt_roles.SYSTEM, filter = null) {
     extension_prompts[key] = {
         value: String(value),
         position: Number(position),
         depth: Number(depth),
         scan: !!scan,
         role: Number(role ?? extension_prompt_roles.SYSTEM),
+        filter: filter,
     };
 }
 
@@ -7692,14 +7853,12 @@ export function showSwipeButtons() {
     //allows for writing individual swipe counters for past messages
     const lastSwipeCounter = $('.last_mes .swipes-counter');
     lastSwipeCounter.text(swipeCounterText).show();
-
-    switchSwipeNumAllMessages();
 }
 
 export function hideSwipeButtons() {
-    $('#chat').find('.swipe_right').hide();
-    $('#chat').find('.last_mes .swipes-counter').hide();
-    $('#chat').find('.swipe_left').hide();
+    chatElement.find('.swipe_right').hide();
+    chatElement.find('.last_mes .swipes-counter').hide();
+    chatElement.find('.swipe_left').hide();
 }
 
 /**
@@ -7786,25 +7945,31 @@ export async function saveChatConditional() {
     }
 }
 
-async function importCharacterChat(formData) {
-    await jQuery.ajax({
-        type: 'POST',
-        url: '/api/chats/import',
-        data: formData,
-        beforeSend: function () {
-        },
-        cache: false,
-        contentType: false,
-        processData: false,
-        success: async function (data) {
-            if (data.res) {
-                await displayPastChats();
-            }
-        },
-        error: function () {
-            $('#create_button').removeAttr('disabled');
-        },
+/**
+ * Saves the chat to the server.
+ * @param {FormData} formData Form data to send to the server.
+ * @param {EventTarget} eventTarget Event target to trigger the event on.
+ */
+async function importCharacterChat(formData, eventTarget) {
+    const headers = getRequestHeaders();
+    delete headers['Content-Type'];
+    const fetchResult = await fetch('/api/chats/import', {
+        method: 'POST',
+        body: formData,
+        headers: headers,
+        cache: 'no-cache',
     });
+
+    if (fetchResult.ok) {
+        const data = await fetchResult.json();
+        if (data.res) {
+            await displayPastChats();
+        }
+    }
+
+    if (eventTarget instanceof HTMLInputElement) {
+        eventTarget.value = '';
+    }
 }
 
 function updateViewMessageIds(startFromZero = false) {
@@ -8258,102 +8423,6 @@ async function createOrEditCharacter(e) {
         }
     }
 }
-
-window['SillyTavern'].getContext = function () {
-    return {
-        chat: chat,
-        characters: characters,
-        groups: groups,
-        name1: name1,
-        name2: name2,
-        characterId: this_chid,
-        groupId: selected_group,
-        chatId: selected_group
-            ? groups.find(x => x.id == selected_group)?.chat_id
-            : (this_chid && characters[this_chid] && characters[this_chid].chat),
-        getCurrentChatId: getCurrentChatId,
-        getRequestHeaders: getRequestHeaders,
-        reloadCurrentChat: reloadCurrentChat,
-        renameChat: renameChat,
-        saveSettingsDebounced: saveSettingsDebounced,
-        onlineStatus: online_status,
-        maxContext: Number(max_context),
-        chatMetadata: chat_metadata,
-        streamingProcessor,
-        eventSource: eventSource,
-        eventTypes: event_types,
-        addOneMessage: addOneMessage,
-        generate: Generate,
-        sendStreamingRequest: sendStreamingRequest,
-        sendGenerationRequest: sendGenerationRequest,
-        stopGeneration: stopGeneration,
-        getTokenCount: getTokenCount,
-        extensionPrompts: extension_prompts,
-        setExtensionPrompt: setExtensionPrompt,
-        updateChatMetadata: updateChatMetadata,
-        saveChat: saveChatConditional,
-        openCharacterChat: openCharacterChat,
-        openGroupChat: openGroupChat,
-        saveMetadata: saveMetadata,
-        sendSystemMessage: sendSystemMessage,
-        activateSendButtons,
-        deactivateSendButtons,
-        saveReply,
-        substituteParams,
-        substituteParamsExtended,
-        SlashCommandParser,
-        SlashCommand,
-        SlashCommandArgument,
-        SlashCommandNamedArgument,
-        ARGUMENT_TYPE,
-        executeSlashCommandsWithOptions,
-        /** @deprecated Use SlashCommandParser.addCommandObject() instead */
-        registerSlashCommand: registerSlashCommand,
-        /** @deprecated Use executeSlashCommandWithOptions instead */
-        executeSlashCommands: executeSlashCommands,
-        timestampToMoment: timestampToMoment,
-        /** @deprecated Handlebars for extensions are no longer supported. */
-        registerHelper: () => { },
-        registerMacro: MacrosParser.registerMacro.bind(MacrosParser),
-        unregisterMacro: MacrosParser.unregisterMacro.bind(MacrosParser),
-        registerFunctionTool: ToolManager.registerFunctionTool.bind(ToolManager),
-        unregisterFunctionTool: ToolManager.unregisterFunctionTool.bind(ToolManager),
-        isToolCallingSupported: ToolManager.isToolCallingSupported.bind(ToolManager),
-        canPerformToolCalls: ToolManager.canPerformToolCalls.bind(ToolManager),
-        registerDebugFunction: registerDebugFunction,
-        /** @deprecated Use renderExtensionTemplateAsync instead. */
-        renderExtensionTemplate: renderExtensionTemplate,
-        renderExtensionTemplateAsync: renderExtensionTemplateAsync,
-        registerDataBankScraper: ScraperManager.registerDataBankScraper,
-        /** @deprecated Use callGenericPopup or Popup instead. */
-        callPopup: callPopup,
-        callGenericPopup: callGenericPopup,
-        showLoader: showLoader,
-        hideLoader: hideLoader,
-        mainApi: main_api,
-        extensionSettings: extension_settings,
-        ModuleWorkerWrapper: ModuleWorkerWrapper,
-        getTokenizerModel: getTokenizerModel,
-        generateQuietPrompt: generateQuietPrompt,
-        writeExtensionField: writeExtensionField,
-        getThumbnailUrl: getThumbnailUrl,
-        selectCharacterById: selectCharacterById,
-        messageFormatting: messageFormatting,
-        shouldSendOnEnter: shouldSendOnEnter,
-        isMobile: isMobile,
-        t: t,
-        translate: translate,
-        tags: tags,
-        tagMap: tag_map,
-        menuType: menu_type,
-        createCharacterData: create_save,
-        /** @deprecated Legacy snake-case naming, compatibility with old extensions */
-        event_types: event_types,
-        Popup: Popup,
-        POPUP_TYPE: POPUP_TYPE,
-        POPUP_RESULT: POPUP_RESULT,
-    };
-};
 
 /**
  * Formats a counter for a swipe view.
@@ -8902,24 +8971,61 @@ export async function processDroppedFiles(files, data = new Map()) {
         'charx',
     ];
 
+    const avatarFileNames = [];
     for (const file of files) {
         const extension = file.name.split('.').pop().toLowerCase();
         if (allowedMimeTypes.some(x => file.type.startsWith(x)) || allowedExtensions.includes(extension)) {
             const preservedName = data instanceof Map && data.get(file);
-            await importCharacter(file, preservedName);
+            const avatarFileName = await importCharacter(file, { preserveFileName: preservedName });
+            if (avatarFileName !== undefined) {
+                avatarFileNames.push(avatarFileName);
+            }
         } else {
             toastr.warning(t`Unsupported file type: ` + file.name);
+        }
+    }
+
+    if (avatarFileNames.length > 0) {
+        await importCharactersTags(avatarFileNames);
+        selectImportedChar(avatarFileNames[avatarFileNames.length - 1]);
+    }
+}
+
+/**
+ * Imports tags for the given characters
+ * @param {string[]} avatarFileNames character avatar filenames whose tags are to import
+ */
+async function importCharactersTags(avatarFileNames) {
+    await getCharacters();
+    for (let i = 0; i < avatarFileNames.length; i++) {
+        if (power_user.tag_import_setting !== tag_import_setting.NONE) {
+            const importedCharacter = characters.find(character => character.avatar === avatarFileNames[i]);
+            await importTags(importedCharacter);
         }
     }
 }
 
 /**
+ * Selects the given imported char
+ * @param {string} charId char to select
+ */
+function selectImportedChar(charId) {
+    let oldSelectedChar = null;
+    if (this_chid !== undefined) {
+        oldSelectedChar = characters[this_chid].avatar;
+    }
+    select_rm_info('char_import_no_toast', charId, oldSelectedChar);
+}
+
+/**
  * Imports a character from a file.
  * @param {File} file File to import
- * @param {string?} preserveFileName Whether to preserve original file name
- * @returns {Promise<void>}
+ * @param {object} [options] - Options
+ * @param {string} [options.preserveFileName] Whether to preserve original file name
+ * @param {Boolean} [options.importTags=false] Whether to import tags
+ * @returns {Promise<string>}
  */
-async function importCharacter(file, preserveFileName = '') {
+async function importCharacter(file, { preserveFileName = '', importTags = false } = {}) {
     if (is_group_generating || is_send_press) {
         toastr.error(t`Cannot import characters while generating. Stop the request and try again.`, t`Import aborted`);
         throw new Error('Cannot import character while generating');
@@ -8955,19 +9061,14 @@ async function importCharacter(file, preserveFileName = '') {
     if (data.file_name !== undefined) {
         $('#character_search_bar').val('').trigger('input');
 
-        let oldSelectedChar = null;
-        if (this_chid !== undefined) {
-            oldSelectedChar = characters[this_chid].avatar;
-        }
+        toastr.success(t`Character Created: ${String(data.file_name).replace('.png', '')}`);
+        let avatarFileName = `${data.file_name}.png`;
+        if (importTags) {
+            await importCharactersTags([avatarFileName]);
 
-        await getCharacters();
-        select_rm_info('char_import', data.file_name, oldSelectedChar);
-        if (power_user.tag_import_setting !== tag_import_setting.NONE) {
-            let currentContext = getContext();
-            let avatarFileName = `${data.file_name}.png`;
-            let importedCharacter = currentContext.characters.find(character => character.avatar === avatarFileName);
-            await importTags(importedCharacter);
+            selectImportedChar(data.file_name);
         }
+        return avatarFileName;
     }
 }
 
@@ -9280,40 +9381,48 @@ function doDrawerOpenClick() {
  * @returns {void}
  */
 function doNavbarIconClick() {
-    var icon = $(this).find('.drawer-icon');
-    var drawer = $(this).parent().find('.drawer-content');
+    const icon = $(this).find('.drawer-icon');
+    const drawer = $(this).parent().find('.drawer-content');
     if (drawer.hasClass('resizing')) { return; }
-    var drawerWasOpenAlready = $(this).parent().find('.drawer-content').hasClass('openDrawer');
-    let targetDrawerID = $(this).parent().find('.drawer-content').attr('id');
+    const drawerWasOpenAlready = $(this).parent().find('.drawer-content').hasClass('openDrawer');
+    const targetDrawerID = $(this).parent().find('.drawer-content').attr('id');
     const pinnedDrawerClicked = drawer.hasClass('pinnedOpen');
 
     if (!drawerWasOpenAlready) { //to open the drawer
-        $('.openDrawer').not('.pinnedOpen').addClass('resizing').slideToggle(200, 'swing', async function () {
-            await delay(50); $(this).closest('.drawer-content').removeClass('resizing');
+        $('.openDrawer').not('.pinnedOpen').addClass('resizing').each((_, el) => {
+            slideToggle(el, {
+                ...getSlideToggleOptions(),
+                onAnimationEnd: function (el) {
+                    el.closest('.drawer-content').classList.remove('resizing');
+                },
+            });
         });
-        $('.openIcon').toggleClass('closedIcon openIcon');
+        $('.openIcon').not('.drawerPinnedOpen').toggleClass('closedIcon openIcon');
         $('.openDrawer').not('.pinnedOpen').toggleClass('closedDrawer openDrawer');
         icon.toggleClass('openIcon closedIcon');
         drawer.toggleClass('openDrawer closedDrawer');
 
         //console.log(targetDrawerID);
         if (targetDrawerID === 'right-nav-panel') {
-            $(this).closest('.drawer').find('.drawer-content').addClass('resizing').slideToggle({
-                duration: 200,
-                easing: 'swing',
-                start: function () {
-                    jQuery(this).css('display', 'flex'); //flex needed to make charlist scroll
-                },
-                complete: async function () {
-                    favsToHotswap();
-                    await delay(50);
-                    $(this).closest('.drawer-content').removeClass('resizing');
-                    $('#rm_print_characters_block').trigger('scroll');
-                },
+            $(this).closest('.drawer').find('.drawer-content').addClass('resizing').each((_, el) => {
+                slideToggle(el, {
+                    ...getSlideToggleOptions(),
+                    elementDisplayStyle: 'flex',
+                    onAnimationEnd: function (el) {
+                        el.closest('.drawer-content').classList.remove('resizing');
+                        favsToHotswap();
+                        $('#rm_print_characters_block').trigger('scroll');
+                    },
+                });
             });
         } else {
-            $(this).closest('.drawer').find('.drawer-content').addClass('resizing').slideToggle(200, 'swing', async function () {
-                await delay(50); $(this).closest('.drawer-content').removeClass('resizing');
+            $(this).closest('.drawer').find('.drawer-content').addClass('resizing').each((_, el) => {
+                slideToggle(el, {
+                    ...getSlideToggleOptions(),
+                    onAnimationEnd: function (el) {
+                        el.closest('.drawer-content').classList.remove('resizing');
+                    },
+                });
             });
         }
 
@@ -9329,13 +9438,23 @@ function doNavbarIconClick() {
         icon.toggleClass('closedIcon openIcon');
 
         if (pinnedDrawerClicked) {
-            $(drawer).addClass('resizing').slideToggle(200, 'swing', async function () {
-                await delay(50); $(this).removeClass('resizing');
+            $(drawer).addClass('resizing').each((_, el) => {
+                slideToggle(el, {
+                    ...getSlideToggleOptions(),
+                    onAnimationEnd: function (el) {
+                        el.classList.remove('resizing');
+                    },
+                });
             });
         }
         else {
-            $('.openDrawer').not('.pinnedOpen').addClass('resizing').slideToggle(200, 'swing', async function () {
-                await delay(50); $(this).closest('.drawer-content').removeClass('resizing');
+            $('.openDrawer').not('.pinnedOpen').addClass('resizing').each((_, el) => {
+                slideToggle(el, {
+                    ...getSlideToggleOptions(),
+                    onAnimationEnd: function (el) {
+                        el.closest('.drawer-content').classList.remove('resizing');
+                    },
+                });
             });
         }
 
@@ -9393,6 +9512,11 @@ function addDebugFunctions() {
         toastr.info('Event tracing is now ' + (localStorage.getItem('eventTracing') === 'true' ? 'enabled' : 'disabled'));
     });
 
+    registerDebugFunction('toggleRegenerateWarning', 'Toggle Ctrl+Enter regeneration confirmation', 'Toggle the warning when regenerating a message with a Ctrl+Enter hotkey.', () => {
+        localStorage.setItem('RegenerateWithCtrlEnter', localStorage.getItem('RegenerateWithCtrlEnter') === 'true' ? 'false' : 'true');
+        toastr.info('Regenerate warning is now ' + (localStorage.getItem('RegenerateWithCtrlEnter') === 'true' ? 'disabled' : 'enabled'));
+    });
+
     registerDebugFunction('copySetup', 'Copy ST setup to clipboard [WIP]', 'Useful data when reporting bugs', async () => {
         const getContextContents = getContext();
         const getSettingsContents = settings;
@@ -9413,7 +9537,7 @@ API Settings: ${JSON.stringify(getSettingsContents[getSettingsContents.main_api 
         //console.log(logMessage);
 
         try {
-            await navigator.clipboard.writeText(logMessage);
+            await copyText(logMessage);
             toastr.info('Your ST API setup data has been copied to the clipboard.');
         } catch (error) {
             toastr.error('Failed to copy ST Setup to clipboard:', error);
@@ -9771,25 +9895,29 @@ jQuery(async function () {
         chooseBogusFolder($(this), tagId);
     });
 
-    /**
-     * Sets the scroll height of the edit textarea to fit the content.
-     * @param {HTMLTextAreaElement} e Textarea element to auto-fit
-     */
-    function autoFitEditTextArea(e) {
-        scroll_holder = chatElement[0].scrollTop;
-        e.style.height = '0px';
-        const newHeight = e.scrollHeight + 4;
-        e.style.height = `${newHeight}px`;
-        is_use_scroll_holder = true;
-    }
-    const autoFitEditTextAreaDebounced = debounce(autoFitEditTextArea, debounce_timeout.short);
-    document.addEventListener('input', e => {
-        if (e.target instanceof HTMLTextAreaElement && e.target.classList.contains('edit_textarea')) {
-            const scrollbarShown = e.target.clientWidth < e.target.offsetWidth && e.target.offsetHeight >= window.innerHeight * 0.75;
-            const immediately = (e.target.scrollHeight > e.target.offsetHeight && !scrollbarShown) || e.target.value === '';
-            immediately ? autoFitEditTextArea(e.target) : autoFitEditTextAreaDebounced(e.target);
+    const cssAutofit = CSS.supports('field-sizing', 'content');
+    if (!cssAutofit) {
+        /**
+         * Sets the scroll height of the edit textarea to fit the content.
+         * @param {HTMLTextAreaElement} e Textarea element to auto-fit
+         */
+        function autoFitEditTextArea(e) {
+            const scrollTop = chatElement.scrollTop();
+            e.style.height = '0px';
+            const newHeight = e.scrollHeight + 4;
+            e.style.height = `${newHeight}px`;
+            chatElement.scrollTop(scrollTop);
         }
-    });
+        const autoFitEditTextAreaDebounced = debounce(autoFitEditTextArea, debounce_timeout.short);
+        document.addEventListener('input', e => {
+            if (e.target instanceof HTMLTextAreaElement && e.target.classList.contains('edit_textarea')) {
+                const scrollbarShown = e.target.clientWidth < e.target.offsetWidth && e.target.offsetHeight >= window.innerHeight * 0.75;
+                const immediately = (e.target.scrollHeight > e.target.offsetHeight && !scrollbarShown) || e.target.value === '';
+                immediately ? autoFitEditTextArea(e.target) : autoFitEditTextAreaDebounced(e.target);
+            }
+        });
+    }
+
     const chatElementScroll = document.getElementById('chat');
     const chatScrollHandler = function () {
         if (power_user.waifuMode) {
@@ -9811,12 +9939,6 @@ jQuery(async function () {
     };
     chatElementScroll.addEventListener('wheel', chatScrollHandler, { passive: true });
     chatElementScroll.addEventListener('touchmove', chatScrollHandler, { passive: true });
-    chatElementScroll.addEventListener('scroll', function () {
-        if (is_use_scroll_holder) {
-            this.scrollTop = scroll_holder;
-            is_use_scroll_holder = false;
-        }
-    }, { passive: true });
 
     $(document).on('click', '.mes', function () {
         //when a 'delete message' parent div is clicked
@@ -10122,6 +10244,7 @@ jQuery(async function () {
             { id: 'api_key_llamacpp', secret: SECRET_KEYS.LLAMACPP },
             { id: 'api_key_featherless', secret: SECRET_KEYS.FEATHERLESS },
             { id: 'api_key_huggingface', secret: SECRET_KEYS.HUGGINGFACE },
+            { id: 'api_key_generic', secret: SECRET_KEYS.GENERIC },
         ];
 
         for (const key of keys) {
@@ -10156,20 +10279,21 @@ jQuery(async function () {
         await getStatusNovel();
     });
 
-    var button = $('#options_button');
-    var menu = $('#options');
+    const button = $('#options_button');
+    const menu = $('#options');
+    let isOptionsMenuVisible = false;
 
     function showMenu() {
         showBookmarksButtons();
-        // menu.stop()
         menu.fadeIn(animation_duration);
         optionsPopper.update();
+        isOptionsMenuVisible = true;
     }
 
     function hideMenu() {
-        // menu.stop();
         menu.fadeOut(animation_duration);
         optionsPopper.update();
+        isOptionsMenuVisible = false;
     }
 
     function isMouseOverButtonOrMenu() {
@@ -10177,26 +10301,15 @@ jQuery(async function () {
     }
 
     button.on('click', function () {
-        if (menu.is(':visible')) {
+        if (isOptionsMenuVisible) {
             hideMenu();
         } else {
             showMenu();
         }
     });
-    button.on('blur', function () {
-        //delay to prevent menu hiding when mouse leaves button into menu
-        setTimeout(() => {
-            if (!isMouseOverButtonOrMenu()) { hideMenu(); }
-        }, 100);
-    });
-    menu.on('blur', function () {
-        //delay to prevent menu hide when mouseleaves menu into button
-        setTimeout(() => {
-            if (!isMouseOverButtonOrMenu()) { hideMenu(); }
-        }, 100);
-    });
     $(document).on('click', function () {
-        if (!isMouseOverButtonOrMenu() && menu.is(':visible')) { hideMenu(); }
+        if (!isOptionsMenuVisible) return;
+        if (!isMouseOverButtonOrMenu()) { hideMenu(); }
     });
 
     /* $('#set_chat_scenario').on('click', setScenarioOverride); */
@@ -10489,24 +10602,18 @@ jQuery(async function () {
         setTimeout(function () { $('#shadow_select_chat_popup').css('display', 'none'); }, animation_duration);
     });
 
-    if (navigator.clipboard === undefined) {
-        // No clipboard support
-        $('.mes_copy').remove();
-    }
-    else {
-        $(document).on('pointerup', '.mes_copy', function () {
-            if (this_chid !== undefined || selected_group || name2 === neutralCharacterName) {
-                try {
-                    const messageId = $(this).closest('.mes').attr('mesid');
-                    const text = chat[messageId]['mes'];
-                    navigator.clipboard.writeText(text);
-                    toastr.info('Copied!', '', { timeOut: 2000 });
-                } catch (err) {
-                    console.error('Failed to copy: ', err);
-                }
+    $(document).on('pointerup', '.mes_copy', async function () {
+        if (this_chid !== undefined || selected_group || name2 === neutralCharacterName) {
+            try {
+                const messageId = $(this).closest('.mes').attr('mesid');
+                const text = chat[messageId]['mes'];
+                await copyText(text);
+                toastr.info('Copied!', '', { timeOut: 2000 });
+            } catch (err) {
+                console.error('Failed to copy: ', err);
             }
-        });
-    }
+        }
+    });
 
     $(document).on('pointerup', '.mes_prompt', async function () {
         let mesIdForItemization = $(this).closest('.mes').attr('mesId');
@@ -10564,14 +10671,16 @@ jQuery(async function () {
                 .closest('.mes_block')
                 .find('.mes_text')
                 .append(
-                    '<textarea id=\'curEditTextarea\' class=\'edit_textarea mdHotkeys\' style=\'max-width:auto;\'></textarea>',
+                    '<textarea id=\'curEditTextarea\' class=\'edit_textarea mdHotkeys\'></textarea>',
                 );
             $('#curEditTextarea').val(text);
             let edit_textarea = $(this)
                 .closest('.mes_block')
                 .find('.edit_textarea');
-            edit_textarea.height(0);
-            edit_textarea.height(edit_textarea[0].scrollHeight);
+            if (!cssAutofit) {
+                edit_textarea.height(0);
+                edit_textarea.height(edit_textarea[0].scrollHeight);
+            }
             edit_textarea.focus();
             edit_textarea[0].setSelectionRange(     //this sets the cursor at the end of the text
                 String(edit_textarea.val()).length,
@@ -10592,22 +10701,28 @@ jQuery(async function () {
     });
 
     $(document).on('click', '.extraMesButtonsHint', function (e) {
-        const elmnt = e.target;
-        $(elmnt).transition({
+        const $hint = $(e.target);
+        const $buttons = $hint.siblings('.extraMesButtons');
+
+        $hint.transition({
             opacity: 0,
             duration: animation_duration,
-            easing: 'ease-in-out',
+            easing: animation_easing,
+            complete: function () {
+                $hint.hide();
+                $buttons
+                    .addClass('visible')
+                    .css({
+                        opacity: 0,
+                        display: 'flex',
+                    })
+                    .transition({
+                        opacity: 1,
+                        duration: animation_duration,
+                        easing: animation_easing,
+                    });
+            },
         });
-        setTimeout(function () {
-            $(elmnt).hide();
-            $(elmnt).siblings('.extraMesButtons').css('opcacity', '0');
-            $(elmnt).siblings('.extraMesButtons').css('display', 'flex');
-            $(elmnt).siblings('.extraMesButtons').transition({
-                opacity: 1,
-                duration: animation_duration,
-                easing: 'ease-in-out',
-            });
-        }, animation_duration);
     });
 
     $(document).on('click', function (e) {
@@ -10618,23 +10733,36 @@ jQuery(async function () {
 
         // Check if the click was outside the relevant elements
         if (!$(e.target).closest('.extraMesButtons, .extraMesButtonsHint').length) {
+            const $visibleButtons = $('.extraMesButtons.visible');
+
+            if (!$visibleButtons.length) {
+                return;
+            }
+
+            const $hiddenHints = $('.extraMesButtonsHint:hidden');
+
             // Transition out the .extraMesButtons first
-            $('.extraMesButtons:visible').transition({
+            $visibleButtons.transition({
                 opacity: 0,
                 duration: animation_duration,
-                easing: 'ease-in-out',
+                easing: animation_easing,
                 complete: function () {
-                    $(this).hide(); // Hide the .extraMesButtons after the transition
+                    // Hide the .extraMesButtons after the transition
+                    $(this)
+                        .hide()
+                        .removeClass('visible');
 
                     // Transition the .extraMesButtonsHint back in
-                    $('.extraMesButtonsHint:not(:visible)').show().transition({
-                        opacity: .3,
-                        duration: animation_duration,
-                        easing: 'ease-in-out',
-                        complete: function () {
-                            $(this).css('opacity', '');
-                        },
-                    });
+                    $hiddenHints
+                        .show()
+                        .transition({
+                            opacity: 0.3,
+                            duration: animation_duration,
+                            easing: animation_easing,
+                            complete: function () {
+                                $(this).css('opacity', '');
+                            },
+                        });
                 },
             });
         }
@@ -10813,13 +10941,23 @@ jQuery(async function () {
             return;
         }
 
+        const avatarFileNames = [];
         for (const file of e.target.files) {
-            await importCharacter(file);
+            const avatarFileName = await importCharacter(file);
+            if (avatarFileName !== undefined) {
+                avatarFileNames.push(avatarFileName);
+            }
+        }
+
+        if (avatarFileNames.length > 0) {
+            await importCharactersTags(avatarFileNames);
+            selectImportedChar(avatarFileNames[avatarFileNames.length - 1]);
         }
     });
 
-    $('#export_button').on('click', function (e) {
-        $('#export_format_popup').toggle();
+    $('#export_button').on('click', function () {
+        isExportPopupOpen = !isExportPopupOpen;
+        $('#export_format_popup').toggle(isExportPopupOpen);
         exportPopper.update();
     });
 
@@ -10829,6 +10967,10 @@ jQuery(async function () {
         if (!format) {
             return;
         }
+
+        $('#export_format_popup').hide();
+        isExportPopupOpen = false;
+        exportPopper.update();
 
         // Save before exporting
         await createOrEditCharacter();
@@ -10851,9 +10993,6 @@ jQuery(async function () {
             URL.revokeObjectURL(a.href);
             document.body.removeChild(a);
         }
-
-
-        $('#export_format_popup').hide();
     });
     //**************************CHAT IMPORT EXPORT*************************//
     $('#chat_import_button').click(function () {
@@ -10861,13 +11000,13 @@ jQuery(async function () {
     });
 
     $('#chat_import_file').on('change', async function (e) {
-        var file = e.target.files[0];
+        const file = e.target.files[0];
 
         if (!file) {
             return;
         }
 
-        var ext = file.name.match(/\.(\w+)$/);
+        const ext = file.name.match(/\.(\w+)$/);
         if (
             !ext ||
             (ext[1].toLowerCase() != 'json' && ext[1].toLowerCase() != 'jsonl')
@@ -10880,17 +11019,17 @@ jQuery(async function () {
             return;
         }
 
-        var format = ext[1].toLowerCase();
+        const format = ext[1].toLowerCase();
         $('#chat_import_file_type').val(format);
 
-        var formData = new FormData($('#form_import_chat').get(0));
+        const formData = new FormData($('#form_import_chat').get(0));
         formData.append('user_name', name1);
         $('#select_chat_div').html('');
 
         if (selected_group) {
-            await importGroupChat(formData);
+            await importGroupChat(formData, e.originalEvent.target);
         } else {
-            await importCharacterChat(formData);
+            await importCharacterChat(formData, e.originalEvent.target);
         }
     });
 
@@ -10925,15 +11064,18 @@ jQuery(async function () {
     });
 
     $(document).on('click', '.drawer-opener', doDrawerOpenClick);
+
     $('.drawer-toggle').on('click', doNavbarIconClick);
 
     $('html').on('touchstart mousedown', function (e) {
         var clickTarget = $(e.target);
 
-        if ($('#export_format_popup').is(':visible')
+        if (isExportPopupOpen
             && clickTarget.closest('#export_button').length == 0
             && clickTarget.closest('#export_format_popup').length == 0) {
             $('#export_format_popup').hide();
+            isExportPopupOpen = false;
+            exportPopper.update();
         }
 
         const forbiddenTargets = [
@@ -10958,12 +11100,16 @@ jQuery(async function () {
             if ($('.openDrawer').length !== 0) {
                 if (targetParentHasOpenDrawer === 0) {
                     //console.log($('.openDrawer').not('.pinnedOpen').length);
-                    $('.openDrawer').not('.pinnedOpen').addClass('resizing').slideToggle(200, 'swing', function () {
-                        $(this).closest('.drawer-content').removeClass('resizing');
+                    $('.openDrawer').not('.pinnedOpen').addClass('resizing').each((_, el) => {
+                        slideToggle(el, {
+                            ...getSlideToggleOptions(),
+                            onAnimationEnd: (el) => {
+                                el.closest('.drawer-content').classList.remove('resizing');
+                            },
+                        });
                     });
                     $('.openIcon').not('.drawerPinnedOpen').toggleClass('closedIcon openIcon');
                     $('.openDrawer').not('.pinnedOpen').toggleClass('closedDrawer openDrawer');
-
                 }
             }
         }
@@ -11129,14 +11275,6 @@ jQuery(async function () {
             case 'renameCharButton':
                 renameCharacter();
                 break;
-            /*case 'dupe_button':
-                DupeChar();
-                break;
-            case 'export_button':
-                $('#export_format_popup').toggle();
-                exportPopper.update();
-                break;
-            */
             case 'import_character_info':
                 await importEmbeddedWorldInfo();
                 saveCharacterDebounced();
@@ -11369,4 +11507,3 @@ jQuery(async function () {
 
     initCustomSelectedSamplers();
 });
-

@@ -23,6 +23,7 @@ router.post('/logout', async (request, response) => {
         }
 
         request.session.handle = null;
+        request.session = null;
         return response.sendStatus(204);
     } catch (error) {
         console.error(error);

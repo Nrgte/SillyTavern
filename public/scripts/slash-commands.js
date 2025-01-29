@@ -39,6 +39,7 @@ import {
     setCharacterName,
     setExtensionPrompt,
     setUserName,
+    showMoreMessages,
     stopGeneration,
     substituteParams,
     system_avatar,
@@ -47,12 +48,12 @@ import {
 } from '../script.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { SlashCommandParserError } from './slash-commands/SlashCommandParserError.js';
-import { getMessageTimeStamp } from './RossAscends-mods.js';
+import { getMessageTimeStamp, isMobile } from './RossAscends-mods.js';
 import { hideChatMessageRange } from './chats.js';
 import { getContext, saveMetadataDebounced } from './extensions.js';
 import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
 import { findGroupMemberId, groups, is_group_generating, openGroupById, resetSelectedGroup, saveGroupChat, selected_group } from './group-chats.js';
-import { chat_completion_sources, oai_settings, setupChatCompletionPromptManager } from './openai.js';
+import { chat_completion_sources, oai_settings, promptManager } from './openai.js';
 import { autoSelectPersona, retriggerFirstMessageOnEmptyChat, setPersonaLockState, togglePersonaLock, user_avatar } from './personas.js';
 import { addEphemeralStoppingString, chat_styles, flushEphemeralStoppingStrings, power_user } from './power-user.js';
 import { SERVER_INPUTS, textgen_types, textgenerationwebui_settings } from './textgen-settings.js';
@@ -85,6 +86,25 @@ export const parser = new SlashCommandParser();
  */
 const registerSlashCommand = SlashCommandParser.addCommand.bind(SlashCommandParser);
 const getSlashCommandsHelp = parser.getHelpString.bind(parser);
+
+/**
+ * Converts a SlashCommandClosure to a filter function that returns a boolean.
+ * @param {SlashCommandClosure} closure
+ * @returns {() => Promise<boolean>}
+ */
+function closureToFilter(closure) {
+    return async () => {
+        try {
+            const localClosure = closure.getCopy();
+            localClosure.onProgress = () => { };
+            const result = await localClosure.execute();
+            return isTrueBoolean(result.pipe);
+        } catch (e) {
+            console.error('Error executing filter closure', e);
+            return false;
+        }
+    };
+}
 
 export function initDefaultSlashCommands() {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
@@ -271,7 +291,7 @@ export function initDefaultSlashCommands() {
             }),
             SlashCommandNamedArgument.fromProps({
                 name: 'at',
-                description: 'position to insert the message (index-based, corresponding to message id). If not set, the message will be inserted at the end of the chat.\nNegative values are accepted and will work similarly to how \'depth\' usually works. For example, -1 will insert the message right before the last message in chat.',
+                description: 'position to insert the message (index-based, corresponding to message id). If not set, the message will be inserted at the end of the chat.\nNegative values (including -0) are accepted and will work similarly to how \'depth\' usually works. For example, -1 will insert the message right before the last message in chat.',
                 typeList: [ARGUMENT_TYPE.NUMBER],
                 enumProvider: commonEnumProviders.messages({ allowIdAfter: true }),
             }),
@@ -327,7 +347,7 @@ export function initDefaultSlashCommands() {
             ),
             SlashCommandNamedArgument.fromProps({
                 name: 'at',
-                description: 'position to insert the message (index-based, corresponding to message id). If not set, the message will be inserted at the end of the chat.\nNegative values are accepted and will work similarly to how \'depth\' usually works. For example, -1 will insert the message right before the last message in chat.',
+                description: 'position to insert the message (index-based, corresponding to message id). If not set, the message will be inserted at the end of the chat.\nNegative values (including -0) are accepted and will work similarly to how \'depth\' usually works. For example, -1 will insert the message right before the last message in chat.',
                 typeList: [ARGUMENT_TYPE.NUMBER],
                 enumProvider: commonEnumProviders.messages({ allowIdAfter: true }),
             }),
@@ -390,7 +410,7 @@ export function initDefaultSlashCommands() {
             ),
             SlashCommandNamedArgument.fromProps({
                 name: 'at',
-                description: 'position to insert the message (index-based, corresponding to message id). If not set, the message will be inserted at the end of the chat.\nNegative values are accepted and will work similarly to how \'depth\' usually works. For example, -1 will insert the message right before the last message in chat.',
+                description: 'position to insert the message (index-based, corresponding to message id). If not set, the message will be inserted at the end of the chat.\nNegative values (including -0) are accepted and will work similarly to how \'depth\' usually works. For example, -1 will insert the message right before the last message in chat.',
                 typeList: [ARGUMENT_TYPE.NUMBER],
                 enumProvider: commonEnumProviders.messages({ allowIdAfter: true }),
             }),
@@ -608,7 +628,7 @@ export function initDefaultSlashCommands() {
             ),
             SlashCommandNamedArgument.fromProps({
                 name: 'at',
-                description: 'position to insert the message (index-based, corresponding to message id). If not set, the message will be inserted at the end of the chat.\nNegative values are accepted and will work similarly to how \'depth\' usually works. For example, -1 will insert the message right before the last message in chat.',
+                description: 'position to insert the message (index-based, corresponding to message id). If not set, the message will be inserted at the end of the chat.\nNegative values (including -0) are accepted and will work similarly to how \'depth\' usually works. For example, -1 will insert the message right before the last message in chat.',
                 typeList: [ARGUMENT_TYPE.NUMBER],
                 enumProvider: commonEnumProviders.messages({ allowIdAfter: true }),
             }),
@@ -1613,6 +1633,13 @@ export function initDefaultSlashCommands() {
             new SlashCommandNamedArgument(
                 'ephemeral', 'remove injection after generation', [ARGUMENT_TYPE.BOOLEAN], false, false, 'false',
             ),
+            SlashCommandNamedArgument.fromProps({
+                name: 'filter',
+                description: 'if a filter is defined, an injection will only be performed if the closure returns true',
+                typeList: [ARGUMENT_TYPE.CLOSURE],
+                isRequired: false,
+                acceptsMultiple: false,
+            }),
         ],
         unnamedArgumentList: [
             new SlashCommandArgument(
@@ -1701,6 +1728,49 @@ export function initDefaultSlashCommands() {
         helpString: 'Sets the model for the current API. Gets the current model name if no argument is provided.',
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'getpromptentry',
+        aliases: ['getpromptentries'],
+        callback: getPromptEntryCallback,
+        returns: 'true/false state of prompt(s)',
+        namedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'identifier',
+                description: 'Prompt entry identifier(s) to retrieve',
+                typeList: [ARGUMENT_TYPE.STRING, ARGUMENT_TYPE.LIST],
+                acceptsMultiple: true,
+                enumProvider: () =>
+                    promptManager.serviceSettings.prompts
+                        .map(prompt => prompt.identifier)
+                        .map(identifier => new SlashCommandEnumValue(identifier)),
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'name',
+                description: 'Prompt entry name(s) to retrieve',
+                typeList: [ARGUMENT_TYPE.STRING, ARGUMENT_TYPE.LIST],
+                acceptsMultiple: true,
+                enumProvider: () =>
+                    promptManager.serviceSettings.prompts
+                        .map(prompt => prompt.name)
+                        .map(name => new SlashCommandEnumValue(name)),
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'return',
+                description: 'Whether the return will be simple, a list, or a dict.',
+                typeList: [ARGUMENT_TYPE.STRING],
+                defaultValue: 'simple',
+                enumList: ['simple', 'list', 'dict'],
+            }),
+        ],
+        helpString: `
+            <div>
+                Gets the state of the specified prompt entries.
+            </div>
+            <div>
+                If <code>return</code> is <code>simple</code> (default) then the return will be a single value if only one value was retrieved; otherwise uses a dict (if the identifier parameter was used) or a list.
+            </div>
+        `,
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'setpromptentry',
         aliases: ['setpromptentries'],
         callback: setPromptEntryCallback,
@@ -1711,7 +1781,6 @@ export function initDefaultSlashCommands() {
                 typeList: [ARGUMENT_TYPE.STRING, ARGUMENT_TYPE.LIST],
                 acceptsMultiple: true,
                 enumProvider: () => {
-                    const promptManager = setupChatCompletionPromptManager(oai_settings);
                     const prompts = promptManager.serviceSettings.prompts;
                     return prompts.map(prompt => new SlashCommandEnumValue(prompt.identifier, prompt.name, enumTypes.enum));
                 },
@@ -1722,7 +1791,6 @@ export function initDefaultSlashCommands() {
                 typeList: [ARGUMENT_TYPE.STRING, ARGUMENT_TYPE.LIST],
                 acceptsMultiple: true,
                 enumProvider: () => {
-                    const promptManager = setupChatCompletionPromptManager(oai_settings);
                     const prompts = promptManager.serviceSettings.prompts;
                     return prompts.map(prompt => new SlashCommandEnumValue(prompt.name, prompt.identifier, enumTypes.enum));
                 },
@@ -1853,6 +1921,85 @@ export function initDefaultSlashCommands() {
         ],
         helpString: 'Converts the provided string to lowercase.',
     }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'substr',
+        aliases: ['substring'],
+        callback: (arg, text) => typeof text === 'string' ? text.slice(...[Number(arg.start), arg.end && Number(arg.end)]) : '',
+        returns: 'substring',
+        namedArgumentList: [
+            new SlashCommandNamedArgument(
+                'start', 'start index', [ARGUMENT_TYPE.NUMBER], false, false,
+            ),
+            new SlashCommandNamedArgument(
+                'end', 'end index', [ARGUMENT_TYPE.NUMBER], false, false,
+            ),
+        ],
+        unnamedArgumentList: [
+            new SlashCommandArgument(
+                'string', [ARGUMENT_TYPE.STRING], true, false,
+            ),
+        ],
+        helpString: `
+            <div>
+                Extracts text from the provided string.
+            </div>
+            <div>
+                If <code>start</code> is omitted, it's treated as 0.<br />
+                If <code>start</code> < 0, the index is counted from the end of the string.<br />
+                If <code>start</code> >= the string's length, an empty string is returned.<br />
+                If <code>end</code> is omitted, or if <code>end</code> >= the string's length, extracts to the end of the string.<br />
+                If <code>end</code> < 0, the index is counted from the end of the string.<br />
+                If <code>end</code> <= <code>start</code> after normalizing negative values, an empty string is returned.
+            </div>
+            <div>
+                <strong>Example:</strong>
+                <pre>/let x The morning is upon us.     ||                                     </pre>
+                <pre>/substr start=-3 {{var::x}}         | /echo  |/# us.                    ||</pre>
+                <pre>/substr start=-3 end=-1 {{var::x}}  | /echo  |/# us                     ||</pre>
+                <pre>/substr end=-1 {{var::x}}           | /echo  |/# The morning is upon us ||</pre>
+                <pre>/substr start=4 end=-1 {{var::x}}   | /echo  |/# morning is upon us     ||</pre>
+            </div>
+        `,
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'is-mobile',
+        callback: () => String(isMobile()),
+        returns: ARGUMENT_TYPE.BOOLEAN,
+        helpString: 'Returns true if the current device is a mobile device, false otherwise. Equivalent to <code>{{isMobile}}</code> macro.',
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'chat-render',
+        helpString: 'Renders a specified number of messages into the chat window. Displays all messages if no argument is provided.',
+        callback: (args, number) => {
+            showMoreMessages(number && !isNaN(Number(number)) ? Number(number) : Number.MAX_SAFE_INTEGER);
+            if (isTrueBoolean(String(args?.scroll ?? ''))) {
+                $('#chat').scrollTop(0);
+            }
+            return '';
+        },
+        namedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'scroll',
+                description: 'scroll to the top after rendering',
+                typeList: [ARGUMENT_TYPE.BOOLEAN],
+                defaultValue: 'false',
+                enumList: commonEnumProviders.boolean('trueFalse')(),
+            }),
+        ],
+        unnamedArgumentList: [
+            new SlashCommandArgument(
+                'number of messages', [ARGUMENT_TYPE.NUMBER], false,
+            ),
+        ],
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'chat-reload',
+        helpString: 'Reloads the current chat.',
+        callback: async () => {
+            await reloadCurrentChat();
+            return '';
+        },
+    }));
 
     registerVariableCommands();
 }
@@ -1862,6 +2009,11 @@ const NARRATOR_NAME_DEFAULT = 'System';
 export const COMMENT_NAME_DEFAULT = 'Note';
 const SCRIPT_PROMPT_KEY = 'script_inject_';
 
+/**
+ * Adds a new script injection to the chat.
+ * @param {import('./slash-commands/SlashCommand.js').NamedArguments} args Named arguments
+ * @param {import('./slash-commands/SlashCommand.js').UnnamedArguments} value Unnamed argument
+ */
 function injectCallback(args, value) {
     const positions = {
         'before': extension_prompt_types.BEFORE_PROMPT,
@@ -1875,8 +2027,8 @@ function injectCallback(args, value) {
         'assistant': extension_prompt_roles.ASSISTANT,
     };
 
-    const id = args?.id;
-    const ephemeral = isTrueBoolean(args?.ephemeral);
+    const id = String(args?.id);
+    const ephemeral = isTrueBoolean(String(args?.ephemeral));
 
     if (!id) {
         console.warn('WARN: No ID provided for /inject command');
@@ -1892,8 +2044,14 @@ function injectCallback(args, value) {
     const depth = isNaN(depthValue) ? defaultDepth : depthValue;
     const roleValue = typeof args?.role === 'string' ? args.role.toLowerCase().trim() : Number(args?.role ?? extension_prompt_roles.SYSTEM);
     const role = roles[roleValue] ?? roles[extension_prompt_roles.SYSTEM];
-    const scan = isTrueBoolean(args?.scan);
+    const scan = isTrueBoolean(String(args?.scan));
+    const filter = args?.filter instanceof SlashCommandClosure ? args.filter.rawText : null;
+    const filterFunction = args?.filter instanceof SlashCommandClosure ? closureToFilter(args.filter) : null;
     value = value || '';
+
+    if (args?.filter && !String(filter ?? '').trim()) {
+        throw new Error('Failed to parse the filter argument. Make sure it is a valid non-empty closure.');
+    }
 
     const prefixedId = `${SCRIPT_PROMPT_KEY}${id}`;
 
@@ -1902,13 +2060,13 @@ function injectCallback(args, value) {
     }
 
     if (value) {
-        const inject = { value, position, depth, scan, role };
+        const inject = { value, position, depth, scan, role, filter };
         chat_metadata.script_injects[id] = inject;
     } else {
         delete chat_metadata.script_injects[id];
     }
 
-    setExtensionPrompt(prefixedId, value, position, depth, scan, role);
+    setExtensionPrompt(prefixedId, String(value), position, depth, scan, role, filterFunction);
     saveMetadataDebounced();
 
     if (ephemeral) {
@@ -1919,7 +2077,7 @@ function injectCallback(args, value) {
             }
             console.log('Removing ephemeral script injection', id);
             delete chat_metadata.script_injects[id];
-            setExtensionPrompt(prefixedId, '', position, depth, scan, role);
+            setExtensionPrompt(prefixedId, '', position, depth, scan, role, filterFunction);
             saveMetadataDebounced();
             deleted = true;
         };
@@ -2014,9 +2172,28 @@ export function processChatSlashCommands() {
     }
 
     for (const [id, inject] of Object.entries(context.chatMetadata.script_injects)) {
+        /**
+         * Rehydrates a filter closure from a string.
+         * @returns {SlashCommandClosure | null}
+         */
+        function reviveFilterClosure() {
+            if (!inject.filter) {
+                return null;
+            }
+
+            try {
+                return new SlashCommandParser().parse(inject.filter, true);
+            } catch (error) {
+                console.warn('Failed to revive filter closure for script injection', id, error);
+                return null;
+            }
+        }
+
         const prefixedId = `${SCRIPT_PROMPT_KEY}${id}`;
+        const filterClosure = reviveFilterClosure();
+        const filter = filterClosure ? closureToFilter(filterClosure) : null;
         console.log('Adding script injection', id);
-        setExtensionPrompt(prefixedId, inject.value, inject.position, inject.depth, inject.scan, inject.role);
+        setExtensionPrompt(prefixedId, inject.value, inject.position, inject.depth, inject.scan, inject.role, filter);
     }
 }
 
@@ -3027,7 +3204,7 @@ async function sendUserMessageCallback(args, text) {
     let insertAt = Number(args?.at);
 
     // Convert possible depth parameter to index
-    if (!isNaN(insertAt) && (insertAt < 0 || insertAt === Number(-0))) {
+    if (!isNaN(insertAt) && (insertAt < 0 || Object.is(insertAt, -0))) {
         // Negative value means going back from current chat length. (E.g.: 8 messages, Depth 1 means insert at index 7)
         insertAt = chat.length + insertAt;
     }
@@ -3407,7 +3584,7 @@ export async function sendMessageAs(args, text) {
     let insertAt = Number(args.at);
 
     // Convert possible depth parameter to index
-    if (!isNaN(insertAt) && (insertAt < 0 || insertAt === Number(-0))) {
+    if (!isNaN(insertAt) && (insertAt < 0 || Object.is(insertAt, -0))) {
         // Negative value means going back from current chat length. (E.g.: 8 messages, Depth 1 means insert at index 7)
         insertAt = chat.length + insertAt;
     }
@@ -3461,7 +3638,7 @@ export async function sendNarratorMessage(args, text) {
     let insertAt = Number(args.at);
 
     // Convert possible depth parameter to index
-    if (!isNaN(insertAt) && (insertAt < 0 || insertAt === Number(-0))) {
+    if (!isNaN(insertAt) && (insertAt < 0 || Object.is(insertAt, -0))) {
         // Negative value means going back from current chat length. (E.g.: 8 messages, Depth 1 means insert at index 7)
         insertAt = chat.length + insertAt;
     }
@@ -3550,7 +3727,7 @@ async function sendCommentMessage(args, text) {
     let insertAt = Number(args.at);
 
     // Convert possible depth parameter to index
-    if (!isNaN(insertAt) && (insertAt < 0 || insertAt === Number(-0))) {
+    if (!isNaN(insertAt) && (insertAt < 0 || Object.is(insertAt, -0))) {
         // Negative value means going back from current chat length. (E.g.: 8 messages, Depth 1 means insert at index 7)
         insertAt = chat.length + insertAt;
     }
@@ -3654,6 +3831,7 @@ function setBackgroundCallback(_, bg) {
 function getModelOptions(quiet) {
     const nullResult = { control: null, options: null };
     const modelSelectMap = [
+        { id: 'generic_model_textgenerationwebui', api: 'textgenerationwebui', type: textgen_types.GENERIC },
         { id: 'custom_model_textgenerationwebui', api: 'textgenerationwebui', type: textgen_types.OOBA },
         { id: 'model_togetherai_select', api: 'textgenerationwebui', type: textgen_types.TOGETHERAI },
         { id: 'openrouter_model', api: 'textgenerationwebui', type: textgen_types.OPENROUTER },
@@ -3679,6 +3857,7 @@ function getModelOptions(quiet) {
         { id: 'model_nanogpt_select', api: 'openai', type: chat_completion_sources.NANOGPT },
         { id: 'model_01ai_select', api: 'openai', type: chat_completion_sources.ZEROONEAI },
         { id: 'model_blockentropy_select', api: 'openai', type: chat_completion_sources.BLOCKENTROPY },
+        { id: 'model_deepseek_select', api: 'openai', type: chat_completion_sources.DEEPSEEK },
         { id: 'model_novel_select', api: 'novel', type: null },
         { id: 'horde_model', api: 'koboldhorde', type: null },
     ];
@@ -3795,6 +3974,75 @@ function modelCallback(args, model) {
 }
 
 /**
+ * Gets the state of prompt entries (toggles) either via identifier/uuid or name.
+ * @param {object} args Object containing arguments
+ * @param {string} args.identifier Select prompt entry using an identifier (uuid)
+ * @param {string} args.name Select prompt entry using name
+ * @param {string} args.return The type of return value to use (simple, list, dict)
+ * @returns {Object} An object containing the states of the requested prompt entries
+ */
+function getPromptEntryCallback(args) {
+    const prompts = promptManager.serviceSettings.prompts;
+    let returnType = args.return ?? 'simple';
+
+    function parseArgs(arg) {
+        // Arg is already an array
+        if (Array.isArray(arg)) {
+            return arg;
+        }
+        const list = [];
+        try {
+            // Arg is a JSON-stringified array
+            const parsedArg = JSON.parse(arg);
+            list.push(...Array.isArray(parsedArg) ? parsedArg : [arg]);
+        } catch {
+            // Arg is a string
+            list.push(arg);
+        }
+        return list;
+    }
+
+    let identifiersList = parseArgs(args.identifier);
+    let nameList = parseArgs(args.name);
+
+    // Check if identifiers exists in prompt, else remove from list
+    if (identifiersList.length !== 0) {
+        identifiersList = identifiersList.filter(identifier => prompts.some(prompt => prompt.identifier === identifier));
+    }
+
+    if (nameList.length !== 0) {
+        nameList.forEach(name => {
+            let identifiers = prompts
+                .filter(entry => entry.name === name)
+                .map(entry => entry.identifier);
+            identifiersList = identifiersList.concat(identifiers);
+        });
+    }
+
+    // Get the state for each prompt entry
+    let promptStates = new Map();
+    identifiersList.forEach(identifier => {
+        const promptOrderEntry = promptManager.getPromptOrderEntry(promptManager.activeCharacter, identifier);
+        if (promptOrderEntry) {
+            promptStates.set(identifier, promptOrderEntry.enabled);
+        }
+    });
+
+    // If return is simple (default) but more than one prompt state was retrieved, then change return type
+    if (returnType === 'simple' && promptStates.size > 1) {
+        returnType = args.identifier ? 'dict' : 'list';
+    }
+
+    const result = (() => {
+        if (returnType === 'list') return [...promptStates.values()];
+        if (returnType === 'dict') return Object.fromEntries(promptStates);
+        return [...promptStates.values()][0];
+    })();
+
+    return result;
+}
+
+/**
  * Sets state of prompt entries (toggles) either via identifier/uuid or name.
  * @param {object} args Object containing arguments
  * @param {string} args.identifier Select prompt entry using an identifier (uuid)
@@ -3804,7 +4052,6 @@ function modelCallback(args, model) {
  */
 function setPromptEntryCallback(args, targetState) {
     // needs promptManager to manipulate prompt entries
-    const promptManager = setupChatCompletionPromptManager(oai_settings);
     const prompts = promptManager.serviceSettings.prompts;
 
     function parseArgs(arg) {

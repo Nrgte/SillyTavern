@@ -393,7 +393,7 @@ jQuery(async function () {
         const sendButton = $(`
         <div id="send_picture" class="list-group-item flex-container flexGap5">
             <div class="fa-solid fa-image extensionsMenuExtensionButton"></div>
-            Generate Caption
+            <span data-i18n="Generate Caption">Generate Caption</span>
         </div>`);
 
         $('#caption_wand_container').append(sendButton);

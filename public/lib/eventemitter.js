@@ -95,13 +95,14 @@ EventEmitter.prototype.removeListener = function (event, listener) {
 };
 
 EventEmitter.prototype.emit = async function (event) {
+    let args = [].slice.call(arguments, 1);
     if (localStorage.getItem('eventTracing') === 'true') {
         console.trace('Event emitted: ' + event, args);
     } else {
         console.debug('Event emitted: ' + event);
     }
 
-    var i, listeners, length, args = [].slice.call(arguments, 1);
+    let i, listeners, length;
 
     if (typeof this.events[event] === 'object') {
         listeners = this.events[event].slice();
@@ -120,13 +121,14 @@ EventEmitter.prototype.emit = async function (event) {
 };
 
 EventEmitter.prototype.emitAndWait = function (event) {
+    let args = [].slice.call(arguments, 1);
     if (localStorage.getItem('eventTracing') === 'true') {
         console.trace('Event emitted: ' + event, args);
     } else {
         console.debug('Event emitted: ' + event);
     }
 
-    var i, listeners, length, args = [].slice.call(arguments, 1);
+    let i, listeners, length;
 
     if (typeof this.events[event] === 'object') {
         listeners = this.events[event].slice();

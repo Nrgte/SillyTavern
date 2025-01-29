@@ -13,6 +13,7 @@ import {
     VLLM_KEYS,
     DREAMGEN_KEYS,
     FEATHERLESS_KEYS,
+    OPENAI_KEYS,
 } from '../../constants.js';
 import { forwardFetchResponse, trimV1, getConfigValue } from '../../util.js';
 import { setAdditionalHeaders } from '../../additional-headers.js';
@@ -113,8 +114,8 @@ router.post('/status', jsonParser, async function (request, response) {
         let url = baseUrl;
         let result = '';
 
-
         switch (apiType) {
+            case TEXTGEN_TYPES.GENERIC:
             case TEXTGEN_TYPES.OOBA:
             case TEXTGEN_TYPES.VLLM:
             case TEXTGEN_TYPES.APHRODITE:
@@ -287,6 +288,7 @@ router.post('/generate', jsonParser, async function (request, response) {
         let url = trimV1(baseUrl);
 
         switch (request.body.api_type) {
+            case TEXTGEN_TYPES.GENERIC:
             case TEXTGEN_TYPES.VLLM:
             case TEXTGEN_TYPES.FEATHERLESS:
             case TEXTGEN_TYPES.APHRODITE:
@@ -344,6 +346,12 @@ router.post('/generate', jsonParser, async function (request, response) {
             request.body = _.pickBy(request.body, (_, key) => DREAMGEN_KEYS.includes(key));
             // NOTE: DreamGen sometimes get confused by the unusual formatting in the character cards.
             request.body.stop?.push('### User', '## User');
+            args.body = JSON.stringify(request.body);
+        }
+
+        if (request.body.api_type === TEXTGEN_TYPES.GENERIC) {
+            request.body = _.pickBy(request.body, (_, key) => OPENAI_KEYS.includes(key));
+            if (Array.isArray(request.body.stop)) { request.body.stop = request.body.stop.slice(0, 4); }
             args.body = JSON.stringify(request.body);
         }
 

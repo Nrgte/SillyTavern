@@ -226,6 +226,7 @@ const llama3_tokenizer = new WebTokenizer('src/tokenizers/llama3.json');
 const commandTokenizer = new WebTokenizer('https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/command-r.json', 'src/tokenizers/llama3.json');
 const qwen2Tokenizer = new WebTokenizer('https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/qwen2.json', 'src/tokenizers/llama3.json');
 const nemoTokenizer = new WebTokenizer('https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/nemo.json', 'src/tokenizers/llama3.json');
+const deepseekTokenizer = new WebTokenizer('https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/deepseek.json', 'src/tokenizers/llama3.json');
 
 export const sentencepieceTokenizers = [
     'llama',
@@ -405,6 +406,10 @@ export function getTokenizerModel(requestModel) {
 
     if (requestModel.includes('yi')) {
         return 'yi';
+    }
+
+    if (requestModel.includes('deepseek')) {
+        return 'deepseek';
     }
 
     if (requestModel.includes('gemma') || requestModel.includes('gemini')) {
@@ -655,6 +660,7 @@ router.post('/llama3/encode', jsonParser, createWebTokenizerEncodingHandler(llam
 router.post('/qwen2/encode', jsonParser, createWebTokenizerEncodingHandler(qwen2Tokenizer));
 router.post('/command-r/encode', jsonParser, createWebTokenizerEncodingHandler(commandTokenizer));
 router.post('/nemo/encode', jsonParser, createWebTokenizerEncodingHandler(nemoTokenizer));
+router.post('/deepseek/encode', jsonParser, createWebTokenizerEncodingHandler(deepseekTokenizer));
 router.post('/llama/decode', jsonParser, createSentencepieceDecodingHandler(spp_llama));
 router.post('/nerdstash/decode', jsonParser, createSentencepieceDecodingHandler(spp_nerd));
 router.post('/nerdstash_v2/decode', jsonParser, createSentencepieceDecodingHandler(spp_nerd_v2));
@@ -668,6 +674,7 @@ router.post('/llama3/decode', jsonParser, createWebTokenizerDecodingHandler(llam
 router.post('/qwen2/decode', jsonParser, createWebTokenizerDecodingHandler(qwen2Tokenizer));
 router.post('/command-r/decode', jsonParser, createWebTokenizerDecodingHandler(commandTokenizer));
 router.post('/nemo/decode', jsonParser, createWebTokenizerDecodingHandler(nemoTokenizer));
+router.post('/deepseek/decode', jsonParser, createWebTokenizerDecodingHandler(deepseekTokenizer));
 
 router.post('/openai/encode', jsonParser, async function (req, res) {
     try {
@@ -720,6 +727,11 @@ router.post('/openai/encode', jsonParser, async function (req, res) {
 
         if (queryModel.includes('nemo')) {
             const handler = createWebTokenizerEncodingHandler(nemoTokenizer);
+            return handler(req, res);
+        }
+
+        if (queryModel.includes('deepseek')) {
+            const handler = createWebTokenizerEncodingHandler(deepseekTokenizer);
             return handler(req, res);
         }
 
@@ -783,6 +795,11 @@ router.post('/openai/decode', jsonParser, async function (req, res) {
 
         if (queryModel.includes('nemo')) {
             const handler = createWebTokenizerDecodingHandler(nemoTokenizer);
+            return handler(req, res);
+        }
+
+        if (queryModel.includes('deepseek')) {
+            const handler = createWebTokenizerDecodingHandler(deepseekTokenizer);
             return handler(req, res);
         }
 
@@ -859,6 +876,13 @@ router.post('/openai/count', jsonParser, async function (req, res) {
         if (model === 'nemo') {
             const instance = await nemoTokenizer.get();
             if (!instance) throw new Error('Failed to load the Nemo tokenizer');
+            num_tokens = countWebTokenizerTokens(instance, req.body);
+            return res.send({ 'token_count': num_tokens });
+        }
+
+        if (model === 'deepseek') {
+            const instance = await deepseekTokenizer.get();
+            if (!instance) throw new Error('Failed to load the DeepSeek tokenizer');
             num_tokens = countWebTokenizerTokens(instance, req.body);
             return res.send({ 'token_count': num_tokens });
         }

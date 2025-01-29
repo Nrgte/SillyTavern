@@ -431,7 +431,8 @@ export function formatInstructModeExamples(mesExamplesArray, name1, name2) {
         return mesExamplesArray.map(x => x.replace(/<START>\n/i, blockHeading));
     }
 
-    const includeNames = power_user.instruct.names_behavior === names_behavior_types.ALWAYS || (!!selected_group && power_user.instruct.names_behavior === names_behavior_types.FORCE);
+    const includeNames = power_user.instruct.names_behavior === names_behavior_types.ALWAYS;
+    const includeGroupNames = selected_group && [names_behavior_types.ALWAYS, names_behavior_types.FORCE].includes(power_user.instruct.names_behavior);
 
     let inputPrefix = power_user.instruct.input_sequence || '';
     let outputPrefix = power_user.instruct.output_sequence || '';
@@ -463,7 +464,7 @@ export function formatInstructModeExamples(mesExamplesArray, name1, name2) {
 
     for (const item of mesExamplesArray) {
         const cleanedItem = item.replace(/<START>/i, '{Example Dialogue:}').replace(/\r/gm, '');
-        const blockExamples = parseExampleIntoIndividual(cleanedItem);
+        const blockExamples = parseExampleIntoIndividual(cleanedItem, includeGroupNames);
 
         if (blockExamples.length === 0) {
             continue;
@@ -474,8 +475,9 @@ export function formatInstructModeExamples(mesExamplesArray, name1, name2) {
         }
 
         for (const example of blockExamples) {
-            // If force group/persona names is set, we should override the include names for the user placeholder
-            const includeThisName = includeNames || (power_user.instruct.names_behavior === names_behavior_types.FORCE && example.name == 'example_user');
+            // If group names were included, we don't want to add any additional prefix as it already was applied.
+            // Otherwise, if force group/persona names is set, we should override the include names for the user placeholder
+            const includeThisName = !includeGroupNames && (includeNames || (power_user.instruct.names_behavior === names_behavior_types.FORCE && example.name == 'example_user'));
 
             const prefix = example.name == 'example_user' ? inputPrefix : outputPrefix;
             const suffix = example.name == 'example_user' ? inputSuffix : outputSuffix;
@@ -489,7 +491,6 @@ export function formatInstructModeExamples(mesExamplesArray, name1, name2) {
     if (formattedExamples.length === 0) {
         return mesExamplesArray.map(x => x.replace(/<START>\n/i, blockHeading));
     }
-
     return formattedExamples;
 }
 

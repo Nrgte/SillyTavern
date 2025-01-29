@@ -75,7 +75,7 @@ const showPopupHelper = {
      * Asynchronously displays an input popup with the given header and text, and returns the user's input.
      *
      * @param {string?} header - The header text for the popup.
-     * @param {string?} text - The main text for the popup.
+     * @param {string?} [text] - The main text for the popup.
      * @param {string} [defaultValue=''] - The default value for the input field.
      * @param {PopupOptions} [popupOptions={}] - Options for the popup.
      * @return {Promise<string?>} A Promise that resolves with the user's input.
@@ -94,7 +94,7 @@ const showPopupHelper = {
      * Asynchronously displays a confirmation popup with the given header and text, returning the clicked result button value.
      *
      * @param {string?} header - The header text for the popup.
-     * @param {string?} text - The main text for the popup.
+     * @param {string?} [text] - The main text for the popup.
      * @param {PopupOptions} [popupOptions={}] - Options for the popup.
      * @return {Promise<POPUP_RESULT?>} A Promise that resolves with the result of the user's interaction.
      */

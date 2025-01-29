@@ -52,3 +52,5 @@ public/css/user.css
 /default/scaffold
 public/scripts/extensions/third-party
 /certs
+.aider*
+.env

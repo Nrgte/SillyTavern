@@ -60,7 +60,6 @@ import { ToolManager } from '../../tool-calling.js';
 export { MODULE_NAME };
 
 const MODULE_NAME = 'sd';
-const UPDATE_INTERVAL = 1000;
 // This is a 1x1 transparent PNG
 const PNG_PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
 const CUSTOM_STOP_EVENT = 'sd_stop_generation';
@@ -219,7 +218,7 @@ const defaultSettings = {
     // CFG Scale
     scale_min: 1,
     scale_max: 30,
-    scale_step: 0.5,
+    scale_step: 0.1,
     scale: 7,
 
     // Sampler steps
@@ -320,6 +319,7 @@ const defaultSettings = {
     wand_visible: false,
     command_visible: false,
     interactive_visible: false,
+    tool_visible: false,
 
     // Stability AI settings
     stability_style_preset: 'anime',
@@ -330,7 +330,18 @@ const defaultSettings = {
 
 const writePromptFieldsDebounced = debounce(writePromptFields, debounce_timeout.relaxed);
 
-function processTriggers(chat, _, abort) {
+/**
+ * Generate interceptor for interactive mode triggers.
+ * @param {any[]} chat Chat messages
+ * @param {number} _ Context size (unused)
+ * @param {function(boolean): void} abort Abort generation function
+ * @param {string} type Type of the generation
+ */
+function processTriggers(chat, _, abort, type) {
+    if (type === 'quiet') {
+        return;
+    }
+
     if (extension_settings.sd.function_tool && ToolManager.isToolCallingSupported()) {
         return;
     }
@@ -489,6 +500,7 @@ async function loadSettings() {
     $('#sd_wand_visible').prop('checked', extension_settings.sd.wand_visible);
     $('#sd_command_visible').prop('checked', extension_settings.sd.command_visible);
     $('#sd_interactive_visible').prop('checked', extension_settings.sd.interactive_visible);
+    $('#sd_tool_visible').prop('checked', extension_settings.sd.tool_visible);
     $('#sd_stability_style_preset').val(extension_settings.sd.stability_style_preset);
     $('#sd_huggingface_model_id').val(extension_settings.sd.huggingface_model_id);
     $('#sd_function_tool').prop('checked', extension_settings.sd.function_tool);
@@ -845,6 +857,11 @@ function onInteractiveVisibleInput() {
     saveSettingsDebounced();
 }
 
+function onToolVisibleInput() {
+    extension_settings.sd.tool_visible = !!$('#sd_tool_visible').prop('checked');
+    saveSettingsDebounced();
+}
+
 function onClipSkipInput() {
     extension_settings.sd.clip_skip = Number($('#sd_clip_skip').val());
     $('#sd_clip_skip_value').val(extension_settings.sd.clip_skip);
@@ -1105,7 +1122,8 @@ function onHrSecondPassStepsInput() {
 }
 
 function onComfyUrlInput() {
-    extension_settings.sd.comfy_url = $('#sd_comfy_url').val();
+    // Remove trailing slashes
+    extension_settings.sd.comfy_url = String($('#sd_comfy_url').val());
     saveSettingsDebounced();
 }
 
@@ -1606,17 +1624,12 @@ async function loadVladSamplers() {
 }
 
 async function loadNovelSamplers() {
-    if (!secret_state[SECRET_KEYS.NOVEL]) {
-        console.debug('NovelAI API key is not set.');
-        return [];
-    }
-
     return [
+        'k_euler_ancestral',
+        'k_euler',
         'k_dpmpp_2m',
         'k_dpmpp_sde',
         'k_dpmpp_2s_ancestral',
-        'k_euler',
-        'k_euler_ancestral',
         'k_dpm_fast',
         'ddim',
     ];
@@ -1972,12 +1985,11 @@ async function loadVladModels() {
 }
 
 async function loadNovelModels() {
-    if (!secret_state[SECRET_KEYS.NOVEL]) {
-        console.debug('NovelAI API key is not set.');
-        return [];
-    }
-
     return [
+        {
+            value: 'nai-diffusion-4-curated-preview',
+            text: 'NAI Diffusion Anime V4 (Curated Preview)',
+        },
         {
             value: 'nai-diffusion-3',
             text: 'NAI Diffusion Anime V3',
@@ -1987,22 +1999,14 @@ async function loadNovelModels() {
             text: 'NAI Diffusion Anime V2',
         },
         {
-            value: 'nai-diffusion',
-            text: 'NAI Diffusion Anime V1 (Full)',
-        },
-        {
-            value: 'safe-diffusion',
-            text: 'NAI Diffusion Anime V1 (Curated)',
-        },
-        {
             value: 'nai-diffusion-furry-3',
             text: 'NAI Diffusion Furry V3',
         },
-        {
-            value: 'nai-diffusion-furry',
-            text: 'NAI Diffusion Furry',
-        },
     ];
+}
+
+function loadNovelSchedulers() {
+    return ['karras', 'native', 'exponential', 'polyexponential'];
 }
 
 async function loadComfyModels() {
@@ -2042,7 +2046,7 @@ async function loadSchedulers() {
             schedulers = await getAutoRemoteSchedulers();
             break;
         case sources.novel:
-            schedulers = ['N/A'];
+            schedulers = loadNovelSchedulers();
             break;
         case sources.vlad:
             schedulers = ['N/A'];
@@ -3042,12 +3046,14 @@ async function generateAutoImage(prompt, negativePrompt, signal) {
         enable_hr: !!extension_settings.sd.enable_hr,
         hr_upscaler: extension_settings.sd.hr_upscaler,
         hr_scale: extension_settings.sd.hr_scale,
+        hr_additional_modules: [],
         denoising_strength: extension_settings.sd.denoising_strength,
         hr_second_pass_steps: extension_settings.sd.hr_second_pass_steps,
         seed: extension_settings.sd.seed >= 0 ? extension_settings.sd.seed : undefined,
         override_settings: {
             CLIP_stop_at_last_layers: extension_settings.sd.clip_skip,
             sd_vae: isValidVae ? extension_settings.sd.vae : undefined,
+            forge_additional_modules: isValidVae ? [extension_settings.sd.vae] : undefined, // For SD Forge
         },
         override_settings_restore_afterwards: true,
         clip_skip: extension_settings.sd.clip_skip, // For SD.Next
@@ -3151,6 +3157,7 @@ async function generateNovelImage(prompt, negativePrompt, signal) {
             prompt: prompt,
             model: extension_settings.sd.model,
             sampler: extension_settings.sd.sampler,
+            scheduler: extension_settings.sd.scheduler,
             steps: steps,
             scale: extension_settings.sd.scale,
             width: width,
@@ -3178,13 +3185,19 @@ async function generateNovelImage(prompt, negativePrompt, signal) {
  * @returns {{steps: number, width: number, height: number, sm: boolean, sm_dyn: boolean}} - A tuple of parameters for NovelAI API.
  */
 function getNovelParams() {
-    let steps = extension_settings.sd.steps;
+    let steps = Math.min(extension_settings.sd.steps, 50);
     let width = extension_settings.sd.width;
     let height = extension_settings.sd.height;
     let sm = extension_settings.sd.novel_sm;
     let sm_dyn = extension_settings.sd.novel_sm_dyn;
 
-    if (extension_settings.sd.sampler === 'ddim') {
+    // If a source was never changed after the scheduler setting was added, we need to set it to 'karras' for compatibility.
+    const schedulers = loadNovelSchedulers();
+    if (!schedulers.includes(extension_settings.sd.scheduler)) {
+        extension_settings.sd.scheduler = 'karras';
+    }
+
+    if (extension_settings.sd.sampler === 'ddim' || extension_settings.sd.model === 'nai-diffusion-4-curated-preview') {
         sm = false;
         sm_dyn = false;
     }
@@ -3315,7 +3328,6 @@ async function generateComfyImage(prompt, negativePrompt, signal) {
         'scale',
         'width',
         'height',
-        'clip_skip',
     ];
 
     const workflowResponse = await fetch('/api/sd/comfy/workflow', {
@@ -3337,6 +3349,9 @@ async function generateComfyImage(prompt, negativePrompt, signal) {
 
     const denoising_strength = extension_settings.sd.denoising_strength === undefined ? 1.0 : extension_settings.sd.denoising_strength;
     workflow = workflow.replaceAll('"%denoise%"', JSON.stringify(denoising_strength));
+
+    const clip_skip = isNaN(extension_settings.sd.clip_skip) ? -1 : -extension_settings.sd.clip_skip;
+    workflow = workflow.replaceAll('"%clip_skip%"', JSON.stringify(clip_skip));
 
     placeholders.forEach(ph => {
         workflow = workflow.replaceAll(`"%${ph}%"`, JSON.stringify(extension_settings.sd[ph]));
@@ -3671,6 +3686,8 @@ function getVisibilityByInitiator(initiator) {
             return !!extension_settings.sd.wand_visible;
         case initiators.command:
             return !!extension_settings.sd.command_visible;
+        case initiators.tool:
+            return !!extension_settings.sd.tool_visible;
         default:
             return false;
     }
@@ -3687,8 +3704,6 @@ async function addSDGenButtons() {
     const button = $('#sd_gen');
     const dropdown = $('#sd_dropdown');
     dropdown.hide();
-    button.hide();
-    messageButton.hide();
 
     let popper = Popper.createPopper(button.get(0), dropdown.get(0), {
         placement: 'top',
@@ -3770,18 +3785,6 @@ function isValidState() {
     }
 }
 
-async function moduleWorker() {
-    if (isValidState()) {
-        $('#sd_gen').show();
-        $('.sd_message_gen').show();
-    }
-    else {
-        $('#sd_gen').hide();
-        $('.sd_message_gen').hide();
-    }
-}
-
-setInterval(moduleWorker, UPDATE_INTERVAL);
 let buttonAbortController = null;
 
 async function sdMessageButton(e) {
@@ -3950,7 +3953,7 @@ async function onImageSwiped({ message, element, direction }) {
             const generationType = message?.extra?.generationType ?? generationMode.FREE;
             const dimensions = setTypeSpecificDimensions(generationType);
             const originalSeed = extension_settings.sd.seed;
-            extension_settings.sd.seed = Math.round(Math.random() * (Math.pow(2, 32) - 1));
+            extension_settings.sd.seed = extension_settings.sd.seed >= 0 ? Math.round(Math.random() * (Math.pow(2, 32) - 1)) : -1;
             let imagePath = '';
 
             try {
@@ -4432,6 +4435,7 @@ jQuery(async () => {
     $('#sd_wand_visible').on('input', onWandVisibleInput);
     $('#sd_command_visible').on('input', onCommandVisibleInput);
     $('#sd_interactive_visible').on('input', onInteractiveVisibleInput);
+    $('#sd_tool_visible').on('input', onToolVisibleInput);
     $('#sd_swap_dimensions').on('click', onSwapDimensionsClick);
     $('#sd_stability_key').on('click', onStabilityKeyClick);
     $('#sd_stability_style_preset').on('change', onStabilityStylePresetChange);

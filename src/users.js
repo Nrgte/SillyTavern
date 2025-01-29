@@ -783,6 +783,34 @@ function createRouteHandler(directoryFn) {
 }
 
 /**
+ * Creates a route handler for serving extensions.
+ * @param {(req: import('express').Request) => string} directoryFn A function that returns the directory path to serve files from
+ * @returns {import('express').RequestHandler}
+ */
+function createExtensionsRouteHandler(directoryFn) {
+    return async (req, res) => {
+        try {
+            const directory = directoryFn(req);
+            const filePath = decodeURIComponent(req.params[0]);
+
+            const existsLocal = fs.existsSync(path.join(directory, filePath));
+            if (existsLocal) {
+                return res.sendFile(filePath, { root: directory });
+            }
+
+            const existsGlobal = fs.existsSync(path.join(PUBLIC_DIRECTORIES.globalExtensions, filePath));
+            if (existsGlobal) {
+                return res.sendFile(filePath, { root: PUBLIC_DIRECTORIES.globalExtensions });
+            }
+
+            return res.sendStatus(404);
+        } catch (error) {
+            return res.sendStatus(500);
+        }
+    };
+}
+
+/**
  * Verifies that the current user is an admin.
  * @param {import('express').Request} request Request object
  * @param {import('express').Response} response Response object
@@ -872,4 +900,4 @@ router.use('/User%20Avatars/*', createRouteHandler(req => req.user.directories.a
 router.use('/assets/*', createRouteHandler(req => req.user.directories.assets));
 router.use('/user/images/*', createRouteHandler(req => req.user.directories.userImages));
 router.use('/user/files/*', createRouteHandler(req => req.user.directories.files));
-router.use('/scripts/extensions/third-party/*', createRouteHandler(req => req.user.directories.extensions));
+router.use('/scripts/extensions/third-party/*', createExtensionsRouteHandler(req => req.user.directories.extensions));

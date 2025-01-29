@@ -109,7 +109,7 @@
                 <i data-i18n="The server must be accessible from the SillyTavern host machine.">The server must be accessible from the SillyTavern host machine.</i>
             </div>
             <div data-sd-source="horde">
-                <i data-i18n="Hint: Save an API key in Horde KoboldAI API settings to use it here.">Hint: Save an API key in Horde KoboldAI API settings to use it here.</i>
+                <i data-i18n="Hint: Save an API key in AI Horde API settings to use it here.">Hint: Save an API key in AI Horde API settings to use it here.</i>
                 <label for="sd_horde_nsfw" class="checkbox_label">
                     <input id="sd_horde_nsfw" type="checkbox" />
                     <span data-i18n="Allow NSFW images from Horde">
@@ -274,7 +274,7 @@
                     <select id="sd_sampler"></select>
                 </div>
 
-                <div class="flex1" data-sd-source="comfy,auto">
+                <div class="flex1" data-sd-source="comfy,auto,novel">
                     <label for="sd_scheduler" data-i18n="Scheduler">Scheduler</label>
                     <select id="sd_scheduler"></select>
                 </div>
@@ -459,24 +459,31 @@
             <div class="flex-container flexFlowColumn marginTopBot5 flexGap10">
                 <label for="sd_wand_visible" class="checkbox_label">
                     <span class="flex1 flex-container alignItemsCenter">
-                        <i class="fa-solid fa-wand-magic-sparkles"></i>
+                        <i class="fa-solid fa-wand-magic-sparkles fa-fw"></i>
                         <span data-i18n="Extensions Menu">Extensions Menu</span>
                     </span>
                     <input id="sd_wand_visible" type="checkbox" />
                 </label>
                 <label for="sd_command_visible" class="checkbox_label">
                     <span class="flex1 flex-container alignItemsCenter">
-                        <i class="fa-solid fa-terminal"></i>
+                        <i class="fa-solid fa-terminal fa-fw"></i>
                         <span data-i18n="Slash Command">Slash Command</span>
                     </span>
                     <input id="sd_command_visible" type="checkbox" />
                 </label>
                 <label for="sd_interactive_visible" class="checkbox_label">
                     <span class="flex1 flex-container alignItemsCenter">
-                        <i class="fa-solid fa-message"></i>
+                        <i class="fa-solid fa-message fa-fw"></i>
                         <span data-i18n="Interactive Mode">Interactive Mode</span>
                     </span>
                     <input id="sd_interactive_visible" type="checkbox" />
+                </label>
+                <label for="sd_tool_visible" class="checkbox_label">
+                    <span class="flex1 flex-container alignItemsCenter">
+                        <i class="fa-solid fa-wrench fa-fw"></i>
+                        <span data-i18n="Function Tool">Function Tool</span>
+                    </span>
+                    <input id="sd_tool_visible" type="checkbox" />
                 </label>
             </div>
         </div>

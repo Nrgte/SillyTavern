@@ -1,4 +1,4 @@
-import { DOMPurify, Bowser } from '../lib.js';
+import { DOMPurify, Bowser, slideToggle } from '../lib.js';
 
 import {
     characters,
@@ -19,6 +19,7 @@ import {
     menu_type,
     substituteParams,
     sendTextareaMessage,
+    getSlideToggleOptions,
 } from '../script.js';
 
 import {
@@ -315,7 +316,7 @@ function RA_checkOnlineStatus() {
     if (online_status == 'no_connection') {
         const send_textarea = $('#send_textarea');
         send_textarea.attr('placeholder', send_textarea.attr('no_connection_text')); //Input bar placeholder tells users they are not connected
-        //$('#send_form').addClass('no-connection'); //entire input form area is red when not connected
+        $('#send_form').addClass('no-connection');
         $('#send_but').addClass('displayNone'); //send button is hidden when not connected;
         $('#mes_continue').addClass('displayNone'); //continue button is hidden when not connected;
         $('#mes_impersonate').addClass('displayNone'); //continue button is hidden when not connected;
@@ -326,7 +327,7 @@ function RA_checkOnlineStatus() {
         if (online_status !== undefined && online_status !== 'no_connection') {
             const send_textarea = $('#send_textarea');
             send_textarea.attr('placeholder', send_textarea.attr('connected_text')); //on connect, placeholder tells user to type message
-            //$('#send_form').removeClass('no-connection');
+            $('#send_form').removeClass('no-connection');
             $('#API-status-top').removeClass('fa-plug-circle-exclamation redOverlayGlow');
             $('#API-status-top').addClass('fa-plug');
             connection_made = true;
@@ -389,6 +390,7 @@ function RA_autoconnect(PrevApi) {
                     || (secret_state[SECRET_KEYS.ZEROONEAI] && oai_settings.chat_completion_source == chat_completion_sources.ZEROONEAI)
                     || (secret_state[SECRET_KEYS.BLOCKENTROPY] && oai_settings.chat_completion_source == chat_completion_sources.BLOCKENTROPY)
                     || (secret_state[SECRET_KEYS.NANOGPT] && oai_settings.chat_completion_source == chat_completion_sources.NANOGPT)
+                    || (secret_state[SECRET_KEYS.DEEPSEEK] && oai_settings.chat_completion_source == chat_completion_sources.DEEPSEEK)
                     || (isValidUrl(oai_settings.custom_url) && oai_settings.chat_completion_source == chat_completion_sources.CUSTOM)
                 ) {
                     $('#api_button_openai').trigger('click');
@@ -748,8 +750,8 @@ export function initRossMods() {
             $(RightNavDrawerIcon).removeClass('drawerPinnedOpen');
 
             if ($(RightNavPanel).hasClass('openDrawer') && $('.openDrawer').length > 1) {
-                $(RightNavPanel).slideToggle(200, 'swing');
-                $(RightNavDrawerIcon).toggleClass('openIcon closedIcon');
+                slideToggle(RightNavPanel, getSlideToggleOptions());
+                $(RightNavDrawerIcon).toggleClass('closedIcon openIcon');
                 $(RightNavPanel).toggleClass('openDrawer closedDrawer');
             }
         }
@@ -766,8 +768,8 @@ export function initRossMods() {
             $(LeftNavDrawerIcon).removeClass('drawerPinnedOpen');
 
             if ($(LeftNavPanel).hasClass('openDrawer') && $('.openDrawer').length > 1) {
-                $(LeftNavPanel).slideToggle(200, 'swing');
-                $(LeftNavDrawerIcon).toggleClass('openIcon closedIcon');
+                slideToggle(LeftNavPanel, getSlideToggleOptions());
+                $(LeftNavDrawerIcon).toggleClass('closedIcon openIcon');
                 $(LeftNavPanel).toggleClass('openDrawer closedDrawer');
             }
         }
@@ -786,8 +788,8 @@ export function initRossMods() {
 
             if ($(WorldInfo).hasClass('openDrawer') && $('.openDrawer').length > 1) {
                 console.debug('closing WI after lock removal');
-                $(WorldInfo).slideToggle(200, 'swing');
-                $(WIDrawerIcon).toggleClass('openIcon closedIcon');
+                slideToggle(WorldInfo, getSlideToggleOptions());
+                $(WIDrawerIcon).toggleClass('closedIcon openIcon');
                 $(WorldInfo).toggleClass('openDrawer closedDrawer');
             }
         }
@@ -886,7 +888,40 @@ export function initRossMods() {
         saveSettingsDebounced();
     });
 
+    const cssAutofit = CSS.supports('field-sizing', 'content');
+
+    if (cssAutofit) {
+        let lastHeight = chatBlock.offsetHeight;
+        const chatBlockResizeObserver = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                if (entry.target !== chatBlock) {
+                    continue;
+                }
+
+                const threshold = 1;
+                const newHeight = chatBlock.offsetHeight;
+                const deltaHeight = newHeight - lastHeight;
+                const isScrollAtBottom = Math.abs(chatBlock.scrollHeight - chatBlock.scrollTop - newHeight) <= threshold;
+
+                if (!isScrollAtBottom && Math.abs(deltaHeight) > threshold) {
+                    chatBlock.scrollTop -= deltaHeight;
+                }
+                lastHeight = newHeight;
+            }
+        });
+
+        chatBlockResizeObserver.observe(chatBlock);
+    }
+
     sendTextArea.addEventListener('input', () => {
+        saveUserInputDebounced();
+
+        if (cssAutofit) {
+            // Unset modifications made with a manual resize
+            sendTextArea.style.height = 'auto';
+            return;
+        }
+
         const hasContent = sendTextArea.value !== '';
         const fitsCurrentSize = sendTextArea.scrollHeight <= sendTextArea.offsetHeight;
         const isScrollbarShown = sendTextArea.clientWidth < sendTextArea.offsetWidth;
@@ -894,7 +929,6 @@ export function initRossMods() {
         const needsDebounce = hasContent && (fitsCurrentSize || (isScrollbarShown && isHalfScreenHeight));
         if (needsDebounce) autoFitSendTextAreaDebounced();
         else autoFitSendTextArea();
-        saveUserInputDebounced();
     });
 
     restoreUserInput();

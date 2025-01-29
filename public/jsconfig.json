@@ -5,7 +5,8 @@
         "module": "ESNext",
         "moduleResolution": "node",
         "allowUmdGlobalAccess": true,
-        "allowSyntheticDefaultImports": true
+        "allowSyntheticDefaultImports": true,
+        "strictBindCallApply": true
     },
     "exclude": [
         "**/node_modules/**",

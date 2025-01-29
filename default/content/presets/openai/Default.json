@@ -39,8 +39,8 @@
     "proxy_password": "",
     "max_context_unlocked": false,
     "wi_format": "{0}",
-    "scenario_format": "[Circumstances and context of the dialogue: {{scenario}}]",
-    "personality_format": "[{{char}}'s personality: {{personality}}]",
+    "scenario_format": "{{scenario}}",
+    "personality_format": "{{personality}}",
     "group_nudge_prompt": "[Write the next reply only as {{char}}.]",
     "stream_openai": true,
     "prompts": [

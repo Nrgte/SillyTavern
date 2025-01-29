@@ -54,6 +54,7 @@ module.exports = {
             },
             // These scripts are loaded in HTML; tell ESLint not to complain about them being undefined
             globals: {
+                globalThis: 'readonly',
                 ePub: 'readonly',
                 pdfjsLib: 'readonly',
                 toastr: 'readonly',
@@ -90,6 +91,8 @@ module.exports = {
         'space-infix-ops': 'error',
         'no-unused-expressions': ['error', { allowShortCircuit: true, allowTernary: true }],
         'no-cond-assign': 'error',
+        'no-unneeded-ternary': 'error',
+        'no-irregular-whitespace': ['error', { skipStrings: true, skipTemplates: true }],
 
         // These rules should eventually be enabled.
         'no-async-promise-executor': 'off',

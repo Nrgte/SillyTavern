@@ -440,7 +440,7 @@ async function onChatChanged() {
     const context = getContext();
 
     // Disable the chara note if in a group
-    $('#extension_floating_chara').prop('disabled', context.groupId ? true : false);
+    $('#extension_floating_chara').prop('disabled', !!context.groupId);
 
     const tokenCounter1 = chat_metadata[metadata_keys.prompt] ? await getTokenCountAsync(chat_metadata[metadata_keys.prompt]) : 0;
     $('#extension_floating_prompt_token_counter').text(tokenCounter1);

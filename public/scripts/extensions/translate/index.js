@@ -14,6 +14,8 @@ import { POPUP_RESULT, POPUP_TYPE, callGenericPopup } from '../../popup.js';
 import { findSecret, secret_state, writeSecret } from '../../secrets.js';
 import { SlashCommand } from '../../slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '../../slash-commands/SlashCommandArgument.js';
+import { enumIcons } from '../../slash-commands/SlashCommandCommonEnumsProvider.js';
+import { enumTypes, SlashCommandEnumValue } from '../../slash-commands/SlashCommandEnumValue.js';
 import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
 import { splitRecursive } from '../../utils.js';
 
@@ -32,6 +34,7 @@ const defaultSettings = {
     internal_language: 'en',
     provider: 'google',
     auto_mode: autoModeOptions.NONE,
+    deepl_endpoint: 'free',
 };
 
 const languageCodes = {
@@ -106,7 +109,8 @@ const languageCodes = {
     'Pashto': 'ps',
     'Persian': 'fa',
     'Polish': 'pl',
-    'Portuguese (Portugal, Brazil)': 'pt',
+    'Portuguese (Portugal)': 'pt-PT',
+    'Portuguese (Brazil)': 'pt-BR',
     'Punjabi': 'pa',
     'Romanian': 'ro',
     'Russian': 'ru',
@@ -151,6 +155,7 @@ function showKeysButton() {
     $('#translate_key_button').toggleClass('success', Boolean(secret_state[extension_settings.translate.provider]));
     $('#translate_url_button').toggle(providerOptionalUrl);
     $('#translate_url_button').toggleClass('success', Boolean(secret_state[extension_settings.translate.provider + '_url']));
+    $('#deepl_api_endpoint').toggle(extension_settings.translate.provider === 'deepl');
 }
 
 function loadSettings() {
@@ -160,9 +165,10 @@ function loadSettings() {
         }
     }
 
-    $(`#translation_provider option[value="${extension_settings.translate.provider}"]`).attr('selected', true);
-    $(`#translation_target_language option[value="${extension_settings.translate.target_language}"]`).attr('selected', true);
-    $(`#translation_auto_mode option[value="${extension_settings.translate.auto_mode}"]`).attr('selected', true);
+    $(`#translation_provider option[value="${extension_settings.translate.provider}"]`).attr('selected', 'true');
+    $(`#translation_target_language option[value="${extension_settings.translate.target_language}"]`).attr('selected', 'true');
+    $(`#translation_auto_mode option[value="${extension_settings.translate.auto_mode}"]`).attr('selected', 'true');
+    $('#deepl_api_endpoint').val(extension_settings.translate.deepl_endpoint).toggle(extension_settings.translate.provider === 'deepl');
     showKeysButton();
 }
 
@@ -284,10 +290,11 @@ async function translateProviderDeepl(text, lang) {
         throw new Error('No DeepL API key');
     }
 
+    const endpoint = extension_settings.translate.deepl_endpoint || 'free';
     const response = await fetch('/api/translate/deepl', {
         method: 'POST',
         headers: getRequestHeaders(),
-        body: JSON.stringify({ text: text, lang: lang }),
+        body: JSON.stringify({ text: text, lang: lang, endpoint: endpoint }),
     });
 
     if (response.ok) {
@@ -394,9 +401,10 @@ async function chunkedTranslate(text, lang, translateFn, chunkSize = 5000) {
  * Translates text using the selected translation provider
  * @param {string} text Text to translate
  * @param {string} lang Target language code
+ * @param {string} provider Translation provider to use
  * @returns {Promise<string>} Translated text
  */
-async function translate(text, lang) {
+async function translate(text, lang, provider = null) {
     try {
         if (text == '') {
             return '';
@@ -406,13 +414,17 @@ async function translate(text, lang) {
             lang = extension_settings.translate.target_language;
         }
 
+        if (!provider) {
+            provider = extension_settings.translate.provider;
+        }
+
         // split text by embedded images links
         const chunks = text.split(/!\[.*?]\([^)]*\)/);
         const links = [...text.matchAll(/!\[.*?]\([^)]*\)/g)];
 
         let result = '';
         for (let i = 0; i < chunks.length; i++) {
-            result += await translateInner(chunks[i], lang);
+            result += await translateInner(chunks[i], lang, provider);
             if (i < links.length) result += links[i][0];
         }
 
@@ -423,11 +435,21 @@ async function translate(text, lang) {
     }
 }
 
-async function translateInner(text, lang) {
+/**
+ * Common translation function that handles the translation logic
+ * @param {string} text Text to translate
+ * @param {string} lang Target language code
+ * @param {string} provider Translation provider to use
+ * @returns {Promise<string>} Translated text
+ */
+async function translateInner(text, lang, provider) {
     if (text == '') {
         return '';
     }
-    switch (extension_settings.translate.provider) {
+    if (!provider) {
+        provider = extension_settings.translate.provider;
+    }
+    switch (provider) {
         case 'libre':
             return await translateProviderLibre(text, lang);
         case 'google':
@@ -445,7 +467,7 @@ async function translateInner(text, lang) {
         case 'yandex':
             return await translateProviderYandex(text, lang);
         default:
-            console.error('Unknown translation provider', extension_settings.translate.provider);
+            console.error('Unknown translation provider', provider);
             return text;
     }
 }
@@ -600,16 +622,32 @@ jQuery(async () => {
     }
 
     $('#translation_auto_mode').on('change', (event) => {
+        if (!(event.target instanceof HTMLSelectElement)) {
+            return;
+        }
         extension_settings.translate.auto_mode = event.target.value;
         saveSettingsDebounced();
     });
     $('#translation_provider').on('change', (event) => {
+        if (!(event.target instanceof HTMLSelectElement)) {
+            return;
+        }
         extension_settings.translate.provider = event.target.value;
         showKeysButton();
         saveSettingsDebounced();
     });
     $('#translation_target_language').on('change', (event) => {
+        if (!(event.target instanceof HTMLSelectElement)) {
+            return;
+        }
         extension_settings.translate.target_language = event.target.value;
+        saveSettingsDebounced();
+    });
+    $('#deepl_api_endpoint').on('change', (event) => {
+        if (!(event.target instanceof HTMLSelectElement)) {
+            return;
+        }
+        extension_settings.translate.deepl_endpoint = event.target.value;
         saveSettingsDebounced();
     });
     $(document).on('click', '.mes_translate', onMessageTranslateClick);
@@ -687,6 +725,14 @@ jQuery(async () => {
         helpString: 'Translate text to a target language. If target language is not provided, the value from the extension settings will be used.',
         namedArgumentList: [
             new SlashCommandNamedArgument('target', 'The target language code to translate to', ARGUMENT_TYPE.STRING, false, false, '', Object.values(languageCodes)),
+            SlashCommandNamedArgument.fromProps({
+                name: 'provider',
+                description: 'The translation provider to use. If not provided, the value from the extension settings will be used.',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: false,
+                acceptsMultiple: false,
+                enumProvider: () => Array.from(document.getElementById('translation_provider').querySelectorAll('option')).map((option) => new SlashCommandEnumValue(option.value, option.text, enumTypes.name, enumIcons.server)),
+            }),
         ],
         unnamedArgumentList: [
             new SlashCommandArgument('The text to translate', ARGUMENT_TYPE.STRING, true, false, ''),
@@ -695,7 +741,8 @@ jQuery(async () => {
             const target = args?.target && Object.values(languageCodes).includes(String(args.target))
                 ? String(args.target)
                 : extension_settings.translate.target_language;
-            return await translate(String(value), target);
+            const provider = args?.provider || extension_settings.translate.provider;
+            return await translate(String(value), target, provider);
         },
         returns: ARGUMENT_TYPE.STRING,
     }));

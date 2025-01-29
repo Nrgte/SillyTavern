@@ -307,15 +307,18 @@ router.post('/generate-image', jsonParser, async (request, response) => {
             },
             body: JSON.stringify({
                 action: 'generate',
-                input: request.body.prompt,
+                input: request.body.prompt ?? '',
                 model: request.body.model ?? 'nai-diffusion',
                 parameters: {
+                    params_version: 3,
+                    prefer_brownian: true,
                     negative_prompt: request.body.negative_prompt ?? '',
                     height: request.body.height ?? 512,
                     width: request.body.width ?? 512,
                     scale: request.body.scale ?? 9,
                     seed: request.body.seed >= 0 ? request.body.seed : Math.floor(Math.random() * 9999999999),
                     sampler: request.body.sampler ?? 'k_dpmpp_2m',
+                    noise_schedule: request.body.scheduler ?? 'karras',
                     steps: request.body.steps ?? 28,
                     n_samples: 1,
                     // NAI handholding for prompts
@@ -323,11 +326,32 @@ router.post('/generate-image', jsonParser, async (request, response) => {
                     qualityToggle: false,
                     add_original_image: false,
                     controlnet_strength: 1,
+                    deliberate_euler_ancestral_bug: false,
                     dynamic_thresholding: request.body.decrisper ?? false,
                     legacy: false,
+                    legacy_v3_extend: false,
                     sm: request.body.sm ?? false,
                     sm_dyn: request.body.sm_dyn ?? false,
                     uncond_scale: 1,
+                    use_coords: false,
+                    characterPrompts: [],
+                    reference_image_multiple: [],
+                    reference_information_extracted_multiple: [],
+                    reference_strength_multiple: [],
+                    v4_negative_prompt: {
+                        caption: {
+                            base_caption: request.body.negative_prompt ?? '',
+                            char_captions: [],
+                        },
+                    },
+                    v4_prompt: {
+                        caption: {
+                            base_caption: request.body.prompt ?? '',
+                            char_captions: [],
+                        },
+                        use_coords: false,
+                        use_order: true,
+                    },
                 },
             }),
         });

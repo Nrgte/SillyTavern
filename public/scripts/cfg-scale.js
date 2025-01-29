@@ -451,8 +451,14 @@ function getCustomSeparator() {
     }
 }
 
-// Gets the CFG prompt
-export function getCfgPrompt(guidanceScale, isNegative) {
+/**
+ * Gets the CFG prompt based on the guidance scale.
+ * @param {{type: number, value: number}} guidanceScale The CFG guidance scale
+ * @param {boolean} isNegative Whether to get the negative prompt
+ * @param {boolean} quiet Whether to suppress console output
+ * @returns {{value: string, depth: number}} The CFG prompt and insertion depth
+ */
+export function getCfgPrompt(guidanceScale, isNegative, quiet = false) {
     let splitCfgPrompt = [];
 
     const cfgPromptCombine = chat_metadata[metadataKeys.prompt_combine] ?? [];
@@ -484,7 +490,7 @@ export function getCfgPrompt(guidanceScale, isNegative) {
     const customSeparator = getCustomSeparator();
     const combinedCfgPrompt = splitCfgPrompt.filter((e) => e.length > 0).join(customSeparator);
     const insertionDepth = chat_metadata[metadataKeys.prompt_insertion_depth] ?? 1;
-    console.log(`Setting CFG with guidance scale: ${guidanceScale.value}, negatives: ${combinedCfgPrompt}`);
+    !quiet && console.log(`Setting CFG with guidance scale: ${guidanceScale.value}, negatives: ${combinedCfgPrompt}`);
 
     return {
         value: combinedCfgPrompt,

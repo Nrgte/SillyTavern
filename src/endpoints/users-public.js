@@ -67,17 +67,17 @@ router.post('/login', jsonParser, async (request, response) => {
         const user = await storage.getItem(toKey(request.body.handle));
 
         if (!user) {
-            console.log('Login failed: User not found');
+            console.log('Login failed: User', request.body.handle, 'not found');
             return response.status(403).json({ error: 'Incorrect credentials' });
         }
 
         if (!user.enabled) {
-            console.log('Login failed: User is disabled');
+            console.log('Login failed: User', user.handle, 'is disabled');
             return response.status(403).json({ error: 'User is disabled' });
         }
 
         if (user.password && user.password !== getPasswordHash(request.body.password, user.salt)) {
-            console.log('Login failed: Incorrect password');
+            console.log('Login failed: Incorrect password for', user.handle);
             return response.status(403).json({ error: 'Incorrect credentials' });
         }
 
@@ -88,7 +88,7 @@ router.post('/login', jsonParser, async (request, response) => {
 
         await loginLimiter.delete(ip);
         request.session.handle = user.handle;
-        console.log('Login successful:', user.handle, request.session);
+        console.log('Login successful:', user.handle, 'from', ip, 'at', new Date().toLocaleString());
         return response.json({ handle: user.handle });
     } catch (error) {
         if (error instanceof RateLimiterRes) {
@@ -115,12 +115,12 @@ router.post('/recover-step1', jsonParser, async (request, response) => {
         const user = await storage.getItem(toKey(request.body.handle));
 
         if (!user) {
-            console.log('Recover step 1 failed: User not found');
+            console.log('Recover step 1 failed: User', request.body.handle, 'not found');
             return response.status(404).json({ error: 'User not found' });
         }
 
         if (!user.enabled) {
-            console.log('Recover step 1 failed: User is disabled');
+            console.log('Recover step 1 failed: User', user.handle, 'is disabled');
             return response.status(403).json({ error: 'User is disabled' });
         }
 
@@ -153,12 +153,12 @@ router.post('/recover-step2', jsonParser, async (request, response) => {
         const ip = getIpFromRequest(request);
 
         if (!user) {
-            console.log('Recover step 2 failed: User not found');
+            console.log('Recover step 2 failed: User', request.body.handle, 'not found');
             return response.status(404).json({ error: 'User not found' });
         }
 
         if (!user.enabled) {
-            console.log('Recover step 2 failed: User is disabled');
+            console.log('Recover step 2 failed: User', user.handle, 'is disabled');
             return response.status(403).json({ error: 'User is disabled' });
         }
 

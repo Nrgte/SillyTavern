@@ -651,6 +651,19 @@
                                         <input type="number" id="n_openai" name="n_openai" class="text_pole" min="1" value="1">
                                     </div>
                                 </div>
+                                <div data-source="openrouter" class="range-block">
+                                    <div class="range-block-title" title="Allow compressing requests by removing messages from the middle of the prompt.">
+                                        <span data-i18n="Middle-out Transform">Middle-out Transform</span>
+                                        <a href="https://openrouter.ai/docs/transforms" target="_blank" rel="noreferrer noopener"  class="note-link-span fa-solid fa-circle-question"></a>
+                                    </div>
+                                    <div class="wide100p">
+                                        <select id="openrouter_middleout" class="text_pole">
+                                            <option value="auto" data-i18n="Auto">Auto</option>
+                                            <option value="on" data-i18n="Allow">Allow</option>
+                                            <option value="off" data-i18n="Forbid">Forbid</option>
+                                        </select>
+                                    </div>
+                                </div>
                                 <div data-source="openrouter">
                                     Max prompt cost: <span id="openrouter_max_prompt_cost">Unknown</span>
                                 </div>
@@ -669,7 +682,7 @@
                                         </span>
                                     </div>
                                 </div>
-                                <div class="range-block" data-source="openai,claude,windowai,openrouter,ai21,scale,makersuite,mistralai,custom,cohere,perplexity,groq,01ai">
+                                <div class="range-block" data-source="openai,claude,windowai,openrouter,ai21,scale,makersuite,mistralai,custom,cohere,perplexity,groq,01ai,nanogpt,deepseek">
                                     <div class="range-block-title" data-i18n="Temperature">
                                         Temperature
                                     </div>
@@ -682,7 +695,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="range-block" data-source="openai,openrouter,custom,cohere,perplexity,groq,mistralai">
+                                <div class="range-block" data-source="openai,openrouter,custom,cohere,perplexity,groq,mistralai,nanogpt,deepseek">
                                     <div class="range-block-title" data-i18n="Frequency Penalty">
                                         Frequency Penalty
                                     </div>
@@ -695,7 +708,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="range-block" data-source="openai,openrouter,custom,cohere,perplexity,groq,mistralai">
+                                <div class="range-block" data-source="openai,openrouter,custom,cohere,perplexity,groq,mistralai,nanogpt,deepseek">
                                     <div class="range-block-title" data-i18n="Presence Penalty">
                                         Presence Penalty
                                     </div>
@@ -721,7 +734,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="range-block" data-source="openai,claude,openrouter,ai21,scale,makersuite,mistralai,custom,cohere,perplexity,groq,01ai">
+                                <div class="range-block" data-source="openai,claude,openrouter,ai21,scale,makersuite,mistralai,custom,cohere,perplexity,groq,01ai,nanogpt,deepseek">
                                     <div class="range-block-title" data-i18n="Top P">
                                         Top P
                                     </div>
@@ -958,7 +971,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="range-block" data-source="openai,openrouter,mistralai,custom,cohere,groq">
+                                <div class="range-block" data-source="openai,openrouter,mistralai,custom,cohere,groq,nanogpt">
                                     <div class="range-block-title justifyLeft" data-i18n="Seed">
                                         Seed
                                     </div>
@@ -1235,7 +1248,8 @@
                                         <input class="neo-range-slider" type="range" id="temp_textgenerationwebui" name="volume" min="0.0" max="5.0" step="0.01" x-setting-id="temp">
                                         <input class="neo-range-input" type="number" min="0.0" max="5.0" step="0.01" data-for="temp_textgenerationwebui" id="temp_counter_textgenerationwebui">
                                     </div>
-                                    <div class="alignitemscenter flex-container flexFlowColumn flexBasis30p flexGrow flexShrink gap0">
+                                    <!-- Note: "except" mode = show for all BUT types in data-tg-type -->
+                                    <div data-tg-type-mode="except" data-tg-type="generic" class="alignitemscenter flex-container flexFlowColumn flexBasis30p flexGrow flexShrink gap0">
                                         <small>
                                             <span data-i18n="Top K">Top K</span>
                                             <div class="fa-solid fa-circle-info opacity50p" title="Top K sets a maximum amount of top tokens that can be chosen from.&#13;E.g Top K is 20, this means only the 20 highest ranking tokens will be kept (regardless of their probabilities being diverse or limited).&#13;Set to 0 (or -1, depending on your backend) to disable." data-i18n="[title]Top_K_desc"></div>
@@ -1251,7 +1265,7 @@
                                         <input class="neo-range-slider" type="range" id="top_p_textgenerationwebui" name="volume" min="0" max="1" step="0.01">
                                         <input class="neo-range-input" type="number" min="0" max="1" step="0.01" data-for="top_p_textgenerationwebui" id="top_p_counter_textgenerationwebui">
                                     </div>
-                                    <div class="alignitemscenter flex-container flexFlowColumn flexBasis30p flexGrow flexShrink gap0">
+                                    <div data-tg-type-mode="except" data-tg-type="generic" class="alignitemscenter flex-container flexFlowColumn flexBasis30p flexGrow flexShrink gap0">
                                         <small>
                                             <span data-i18n="Typical P">Typical P</span>
                                             <div class="fa-solid fa-circle-info opacity50p" title="Typical P Sampling prioritizes tokens based on their deviation from the average entropy of the set.&#13;It maintains tokens whose cumulative probability is close to a predefined threshold (e.g., 0.5), emphasizing those with average information content.&#13;Set to 1.0 to disable." data-i18n="[title]Typical_P_desc"></div>
@@ -1259,7 +1273,7 @@
                                         <input class="neo-range-slider" type="range" id="typical_p_textgenerationwebui" name="volume" min="0" max="1" step="0.01">
                                         <input class="neo-range-input" type="number" min="0" max="1" step="0.01" data-for="typical_p_textgenerationwebui" id="typical_p_counter_textgenerationwebui">
                                     </div>
-                                    <div class="alignitemscenter flex-container flexFlowColumn flexBasis30p flexGrow flexShrink gap0">
+                                    <div data-tg-type-mode="except" data-tg-type="generic" class="alignitemscenter flex-container flexFlowColumn flexBasis30p flexGrow flexShrink gap0">
                                         <small>
                                             <span data-i18n="Min P">Min P</span>
                                             <div class="fa-solid fa-circle-info opacity50p" data-i18n="[title]Min_P_desc" title="Min P sets a base minimum probability. This is scaled according to the top token's probability.&#13;E.g If Top token is 80% probability, and Min P is 0.1, only tokens higher than 8% would be considered.&#13;Set to 0 to disable."></div>
@@ -1267,7 +1281,7 @@
                                         <input class="neo-range-slider" type="range" id="min_p_textgenerationwebui" name="volume" min="0" max="1" step="0.001">
                                         <input class="neo-range-input" type="number" min="0" max="1" step="0.001" data-for="min_p_textgenerationwebui" id="min_p_counter_textgenerationwebui">
                                     </div>
-                                    <div class="alignitemscenter flex-container flexFlowColumn flexBasis30p flexGrow flexShrink gap0">
+                                    <div data-tg-type-mode="except" data-tg-type="generic" class="alignitemscenter flex-container flexFlowColumn flexBasis30p flexGrow flexShrink gap0">
                                         <small>
                                             <span data-i18n="Top A">Top A</span>
                                             <div class="fa-solid fa-circle-info opacity50p" title="Top A sets a threshold for token selection based on the square of the highest token probability.&#13;E.g if the Top-A value is 0.2 and the top token's probability is 50%, tokens with probabilities below 5% (0.2 * 0.5^2) are excluded.&#13;Set to 0 to disable." data-i18n="[title]Top_A_desc"></div>
@@ -1275,7 +1289,7 @@
                                         <input class="neo-range-slider" type="range" id="top_a_textgenerationwebui" name="volume" min="0" max="1" step="0.01">
                                         <input class="neo-range-input" type="number" min="0" max="1" step="0.01" data-for="top_a_textgenerationwebui" id="top_a_counter_textgenerationwebui">
                                     </div>
-                                    <div class="alignitemscenter flex-container flexFlowColumn flexBasis30p flexGrow flexShrink gap0">
+                                    <div data-tg-type-mode="except" data-tg-type="generic" class="alignitemscenter flex-container flexFlowColumn flexBasis30p flexGrow flexShrink gap0">
                                         <small>
                                             <span data-i18n="TFS">TFS</span>
                                             <div class="fa-solid fa-circle-info opacity50p" data-i18n="[title]Tail_Free_Sampling_desc" title="Tail-Free Sampling (TFS) searches for a tail of low-probability tokens in the distribution,&#13;by analyzing the rate of change in token probabilities using derivatives. It retains tokens up to a threshold (e.g., 0.3) based on the normalized second derivative.&#13;The closer to 0, the more discarded tokens. Set to 1.0 to disable."></div>
@@ -1307,7 +1321,7 @@
                                         <input class="neo-range-slider" type="range" id="eta_cutoff_textgenerationwebui" name="volume" min="0" max="20" step="0.01">
                                         <input class="neo-range-input" type="number" min="0" max="20" step="0.01" data-for="eta_cutoff_textgenerationwebui" id="eta_cutoff_counter_textgenerationwebui">
                                     </div>
-                                    <div class="alignitemscenter flex-container flexFlowColumn flexBasis30p flexGrow flexShrink gap0">
+                                    <div data-tg-type-mode="except" data-tg-type="generic" class="alignitemscenter flex-container flexFlowColumn flexBasis30p flexGrow flexShrink gap0">
                                         <small data-i18n="rep.pen">Repetition Penalty</small>
                                         <input class="neo-range-slider" type="range" id="rep_pen_textgenerationwebui" name="volume" min="1" max="3" step="0.01">
                                         <input class="neo-range-input" type="number" min="1" max="3" step="0.01" data-for="rep_pen_textgenerationwebui" id="rep_pen_counter_textgenerationwebui">
@@ -1425,7 +1439,7 @@
                                                 <input class="neo-range-slider" type="range" id="dry_allowed_length_textgenerationwebui" min="1" max="20" step="1" />
                                                 <input class="neo-range-input" type="number" min="1" max="20" step="1" data-for="dry_allowed_length_textgenerationwebui" id="dry_allowed_length_counter_textgenerationwebui">
                                             </div>
-                                            <div class="alignItemsCenter flex-container flexFlowColumn flexBasis48p flexGrow flexShrink gap0" data-tg-type="llamacpp, koboldcpp, tabby">
+                                            <div class="alignItemsCenter flex-container flexFlowColumn flexBasis48p flexGrow flexShrink gap0" data-tg-type="llamacpp, koboldcpp, tabby, aphrodite">
                                                 <small data-i18n="Penalty Range">Penalty Range</small>
                                                 <input class="neo-range-slider" type="range" id="dry_penalty_last_n_textgenerationwebui" min="0" max="8192" step="1" />
                                                 <input class="neo-range-input" type="number" min="0" max="8192" step="1" data-for="dry_penalty_last_n_textgenerationwebui" id="dry_penalty_last_n_counter_textgenerationwebui">
@@ -1569,7 +1583,7 @@
                                                 <small data-i18n="Ignore EOS Token">Ignore EOS Token</small>
                                                 <div class="fa-solid fa-circle-info opacity50p " data-i18n="[title]Ignore the EOS Token even if it generates." title="Ignore the EOS Token even if it generates."></div>
                                             </label>
-                                            <label class="checkbox_label flexGrow flexShrink" for="skip_special_tokens_textgenerationwebui">
+                                            <label data-tg-type-mode="except" data-tg-type="generic" class="checkbox_label flexGrow flexShrink" for="skip_special_tokens_textgenerationwebui">
                                                 <input type="checkbox" id="skip_special_tokens_textgenerationwebui" />
                                                 <small data-i18n="Skip Special Tokens">Skip Special Tokens</small>
                                             </label>
@@ -1594,14 +1608,14 @@
                                             </label>
                                         </div>
                                     </div>
-                                    <div data-tg-type="mancer, ooba, koboldcpp, vllm, aphrodite, llamacpp, ollama, infermaticai, huggingface" class="flex-container flexFlowColumn alignitemscenter flexBasis48p flexGrow flexShrink gap0">
+                                    <div data-tg-type="mancer, ooba, koboldcpp, vllm, aphrodite, llamacpp, ollama, infermaticai, huggingface, generic" class="flex-container flexFlowColumn alignitemscenter flexBasis48p flexGrow flexShrink gap0">
                                         <label>
                                             <small data-i18n="Seed">Seed</small>
                                             <div class="fa-solid fa-circle-info opacity50p " data-i18n="[title]Seed_desc" title="A random seed to use for deterministic and reproducable outputs. Set to -1 to use a random seed."></div>
                                         </label>
                                         <input type="number" id="seed_textgenerationwebui" class="text_pole textAlignCenter" min="-1" value="-1" />
                                     </div>
-                                    <div id="banned_tokens_block_ooba" class="wide100p">
+                                    <div data-tg-type-mode="except" data-tg-type="generic" id="banned_tokens_block_ooba" class="wide100p">
                                         <hr class="width100p">
                                         <h4 class="range-block-title justifyCenter">
                                             <span data-i18n="Banned Tokens">Banned Tokens/Strings</span>
@@ -1735,6 +1749,7 @@
                                             <div data-name="tfs_z" draggable="true"><span>Tail Free Sampling</span><small></small></div>
                                             <div data-name="min_p" draggable="true"><span>Min P</span><small></small></div>
                                             <div data-name="xtc" draggable="true"><span>Exclude Top Choices</span><small></small></div>
+                                            <div data-name="dry" draggable="true"><span>DRY</span><small></small></div>
                                         </div>
                                         <div id="llamacpp_samplers_default_order" class="menu_button menu_button_icon">
                                             <span data-i18n="Load default order">Load default order</span>
@@ -1771,6 +1786,35 @@
                                             <div data-name="no_repeat_ngram" draggable="true"><span>No Repeat Ngram</span><small></small></div>
                                         </div>
                                         <div id="textgenerationwebui_default_order" class="menu_button menu_button_icon">
+                                            <span data-i18n="Load default order">Load default order</span>
+                                        </div>
+                                    </div>
+                                    <div id="sampler_priority_block_aphrodite" data-tg-type="aphrodite" class="range-block flexFlowColumn wide100p">
+                                        <hr class="wide100p">
+                                        <h4 class="range-block-title justifyCenter">
+                                            <span data-i18n="Sampler Order">Sampler Order</span>
+                                            <div class="margin5 fa-solid fa-circle-info opacity50p" title="Aphrodite only. Determines the order of samplers. Skew is always applied post-softmax, so it's not included here." data-i18n="[title]Aphrodite only. Determines the order of samplers. Skew is always applied post-softmax, so it's not included here."></div>
+                                        </h4>
+                                        <div class="toggle-description widthUnset" data-i18n="Aphrodite only. Determines the order of samplers.">
+                                            Aphrodite only. Determines the order of samplers.
+                                        </div>
+                                        <div id="sampler_priority_container_aphrodite" class="prompt_order">
+                                            <div data-name="dry" draggable="true"><span>DRY</span><small></small></div>
+                                            <div data-name="penalties" draggable="true"><span>Penalties</span><small></small></div>
+                                            <div data-name="no_repeat_ngram" draggable="true"><span>No Repeat Ngram</span><small></small></div>
+                                            <div data-name="temperature" draggable="true"><span>Dynatemp & Temperature</span><small></small></div>
+                                            <div data-name="top_nsigma" draggable="true"><span>Top Nsigma</span><small></small></div>
+                                            <div data-name="top_p_top_k" draggable="true"><span>Top P & Top K</span><small></small></div>
+                                            <div data-name="top_a" draggable="true"><span>Top A</span><small></small></div>
+                                            <div data-name="min_p" draggable="true"><span>Min P</span><small></small></div>
+                                            <div data-name="tfs" draggable="true"><span>Tail-Free Sampling</span><small></small></div>
+                                            <div data-name="eta_cutoff" draggable="true"><span>Eta Cutoff</span><small></small></div>
+                                            <div data-name="epsilon_cutoff" draggable="true"><span>Epsilon Cutoff</span><small></small></div>
+                                            <div data-name="typical_p" draggable="true"><span>Typical P</span><small></small></div>
+                                            <div data-name="quadratic" draggable="true"><span>Cubic and Quadratic Sampling</span><small></small></div>
+                                            <div data-name="xtc" draggable="true"><span>XTC</span><small></small></div>
+                                        </div>
+                                        <div id="aphrodite_default_order" class="menu_button menu_button_icon">
                                             <span data-i18n="Load default order">Load default order</span>
                                         </div>
                                     </div>
@@ -1890,22 +1934,24 @@
                                         <label for="openai_function_calling" class="checkbox_label flexWrap widthFreeExpand">
                                             <input id="openai_function_calling" type="checkbox" />
                                             <span data-i18n="Enable function calling">Enable function calling</span>
-                                            <div class="flexBasis100p toggle-description justifyLeft">
-                                                <span data-i18n="enable_functions_desc_1">Allows using </span><a href="https://platform.openai.com/docs/guides/function-calling" target="_blank" data-i18n="enable_functions_desc_2">function tools</a>.
-                                                <span data-i18n="enable_functions_desc_3">Can be utilized by various extensions to provide additional functionality.</span>
-                                            </div>
                                         </label>
+                                        <div class="flexBasis100p toggle-description justifyLeft">
+                                            <span data-i18n="enable_functions_desc_1">Allows using </span><a href="https://platform.openai.com/docs/guides/function-calling" target="_blank" data-i18n="enable_functions_desc_2">function tools</a>.
+                                            <span data-i18n="enable_functions_desc_3">Can be utilized by various extensions to provide additional functionality.</span>
+                                        </div>
                                     </div>
                                     <div class="range-block" data-source="openai,openrouter,makersuite,claude,custom,01ai">
                                         <label for="openai_image_inlining" class="checkbox_label flexWrap widthFreeExpand">
                                             <input id="openai_image_inlining" type="checkbox" />
                                             <span data-i18n="Send inline images">Send inline images</span>
-                                            <div id="image_inlining_hint" class="flexBasis100p toggle-description justifyLeft">
-                                                <span data-i18n="image_inlining_hint_1">Sends images in prompts if the model supports it (e.g. GPT-4V, Claude 3 or Llava 13B).
-                                                    Use the</span> <code><i class="fa-solid fa-paperclip"></i></code> <span data-i18n="image_inlining_hint_2">action on any message or the</span>
-                                                <code><i class="fa-solid fa-wand-magic-sparkles"></i></code> <span data-i18n="image_inlining_hint_3">menu to attach an image file to the chat.</span>
-                                            </div>
                                         </label>
+                                        <div id="image_inlining_hint" class="flexBasis100p toggle-description justifyLeft">
+                                            <span data-i18n="image_inlining_hint_1">Sends images in prompts if the model supports it (e.g. GPT-4V, Claude 3 or Llava 13B). Use the</span>
+                                            <code><i class="fa-solid fa-paperclip"></i></code>
+                                            <span data-i18n="image_inlining_hint_2">action on any message or the</span>
+                                            <code><i class="fa-solid fa-wand-magic-sparkles"></i></code>
+                                            <span data-i18n="image_inlining_hint_3">menu to attach an image file to the chat.</span>
+                                        </div>
                                         <div class="flex-container flexFlowColumn wide100p textAlignCenter marginTop10" data-source="openai,custom">
                                             <label for="openai_inline_image_quality" data-i18n="Inline Image Quality">
                                                 Inline Image Quality
@@ -1921,13 +1967,27 @@
                                         <label for="use_makersuite_sysprompt" class="checkbox_label widthFreeExpand">
                                             <input id="use_makersuite_sysprompt" type="checkbox" />
                                             <span>
-                                                <span data-i18n="Use system prompt">Use system prompt</span><br>
-                                                <small data-i18n="(Gemini 1.5 Pro/Flash only)">(Gemini 1.5 Pro/Flash only)</small>
+                                                <span data-i18n="Use system prompt">Use system prompt</span>
+                                                <i class="opacity50p fa-solid fa-circle-info" title="Gemini 1.5/2.0 Pro/Flash"></i>
                                             </span>
                                         </label>
                                         <div class="toggle-description justifyLeft marginBot5">
                                             <span data-i18n="Merges_all_system_messages_desc_1">
                                                 Merges all system messages up until the first message with a non-system role, and sends them in a</span> <code>system_instruction</code> <span data-i18n="Merges_all_system_messages_desc_2">field.
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <div class="range-block" data-source="makersuite">
+                                        <label for="openai_show_thoughts" class="checkbox_label widthFreeExpand">
+                                            <input id="openai_show_thoughts" type="checkbox" />
+                                            <span>
+                                                <span data-i18n="Show model thoughts">Show model thoughts</span>
+                                                <i class="opacity50p fa-solid fa-circle-info" title="Gemini 2.0 Thinking"></i>
+                                            </span>
+                                        </label>
+                                        <div class="toggle-description justifyLeft marginBot5">
+                                            <span data-i18n="Display the model's internal thoughts in the response.">
+                                                Display the model's internal thoughts in the response.
                                             </span>
                                         </div>
                                     </div>
@@ -2022,7 +2082,7 @@
                             <option value="textgenerationwebui" data-i18n="Text Completion">Text Completion</option>
                             <option value="openai" data-i18n="Chat Completion">Chat Completion</option>
                             <option value="novel" data-i18n="NovelAI">NovelAI</option>
-                            <option value="koboldhorde" data-i18n="KoboldAI Horde">KoboldAI Horde</option>
+                            <option value="koboldhorde" data-i18n="AI Horde">AI Horde</option>
                             <option value="kobold" data-i18n="KoboldAI">KoboldAI Classic</option>
                         </select>
                     </div>
@@ -2031,8 +2091,8 @@
                             <div id="kobold_horde_block">
                                 <ul>
                                     <li>
-                                        <a target="_blank" href="https://aihorde.net/" data-i18n="KoboldAI Horde Website">
-                                            KoboldAI Horde Website
+                                        <a target="_blank" href="https://aihorde.net/" data-i18n="AI Horde Website">
+                                            AI Horde Website
                                         </a>
                                     </li>
                                     <li>
@@ -2158,10 +2218,10 @@
                             <div>
                                 <h4 data-i18n="API Type">API Type</h4>
                                 <select id="textgen_type">
-                                    <option value="ooba" data-i18n="Default (completions compatible)">Default [OpenAI /completions compatible: oobabooga, LM Studio, etc.]</option>
                                     <option value="aphrodite">Aphrodite</option>
                                     <option value="dreamgen">DreamGen</option>
                                     <option value="featherless">Featherless</option>
+                                    <option value="generic" data-i18n="Generic (OpenAI-compatible) [LM Studio, LiteLLM, etc.]">Generic (OpenAI-compatible) [LM Studio, LiteLLM, etc.]</option>
                                     <option value="huggingface">HuggingFace (Inference Endpoint)</option>
                                     <option value="infermaticai">InfermaticAI</option>
                                     <option value="koboldcpp">KoboldCpp</option>
@@ -2170,6 +2230,7 @@
                                     <option value="ollama">Ollama</option>
                                     <option value="openrouter">OpenRouter</option>
                                     <option value="tabby">TabbyAPI</option>
+                                    <option value="ooba">Text Generation WebUI (oobabooga)</option>
                                     <option value="togetherai">TogetherAI</option>
                                     <option value="vllm">vLLM</option>
                                 </select>
@@ -2219,7 +2280,7 @@
                                     <h4 data-i18n="Model Providers">Model Providers</h4>
                                     <select id="openrouter_providers_text" class="openrouter_providers" multiple>
                                     </select>
-                                    <label class="checkbox_label" for="openrouter_allow_fallbacks_textgenerationwebui" title="Automatically chooses an alternative provider if chosen providers can't serve your request.">
+                                    <label class="checkbox_label" data-i18n="[title]Automatically chooses an alternative provider if chosen providers can't serve your request." for="openrouter_allow_fallbacks_textgenerationwebui" title="Automatically chooses an alternative provider if chosen providers can't serve your request.">
                                         <input id="openrouter_allow_fallbacks_textgenerationwebui" type="checkbox" />
                                         <span data-i18n="Allow fallback providers">Allow fallback providers</span>
                                     </label>
@@ -2291,6 +2352,24 @@
                                         </option>
                                     </select>
                                 </div>
+                            </div>
+                            <div data-tg-type="generic" class="flex-container flexFlowColumn">
+                                <h4 data-i18n="API key (optional)">API key (optional)</h4>
+                                <div class="flex-container">
+                                    <input id="api_key_generic" name="api_key_generic" class="text_pole flex1 wide100p" type="text" autocomplete="off">
+                                    <div title="Clear your API key" data-i18n="[title]Clear your API key" class="menu_button fa-solid fa-circle-xmark clear-api-key" data-key="api_key_generic">
+                                    </div>
+                                </div>
+                                <div data-for="api_key_generic" class="neutral_warning" data-i18n="For privacy reasons, your API key will be hidden after you reload the page.">
+                                    For privacy reasons, your API key will be hidden after you reload the page.
+                                </div>
+                                <div class="flex1">
+                                    <h4 data-i18n="Server url">Server URL</h4>
+                                    <small data-i18n="Example: 127.0.0.1:5000">Example: http://127.0.0.1:5000</small>
+                                    <input id="generic_api_url_text" name="generic_api_url" class="text_pole wide100p" value="" autocomplete="off" data-server-history="generic">
+                                </div>
+                                <datalist id="generic_model_fill"></datalist>
+                                <input id="generic_model_textgenerationwebui" list="generic_model_fill" class="text_pole wide100p" placeholder="Model ID (optional)" data-i18n="[placeholder]Model ID (optional)" type="text">
                             </div>
                             <div data-tg-type="ooba" class="flex-container flexFlowColumn">
                                 <div class="flex-container flexFlowColumn">
@@ -2567,7 +2646,7 @@
                                 </div>
                             </div>
                             <div class="flex-container flexFlowColumn marginTopBot5">
-                                <label data-tg-type="ooba" class="checkbox_label" for="bypass_status_check_textgenerationwebui">
+                                <label data-tg-type="ooba, generic" class="checkbox_label" for="bypass_status_check_textgenerationwebui">
                                     <input type="checkbox" id="bypass_status_check_textgenerationwebui" />
                                     <span data-i18n="Bypass status check">Bypass status check</span>
                                 </label>
@@ -2602,6 +2681,7 @@
                                 <option value="blockentropy">Block Entropy</option>
                                 <option value="claude">Claude</option>
                                 <option value="cohere">Cohere</option>
+                                <option value="deepseek">DeepSeek</option>
                                 <option value="groq">Groq</option>
                                 <option value="makersuite">Google AI Studio</option>
                                 <option value="mistralai">MistralAI</option>
@@ -2824,7 +2904,7 @@
                             <div>
                                 <h4 data-i18n="Window AI Model">Window AI Model</h4>
                                 <select id="model_windowai_select">
-                                    <option value="">Use extension settings</option>
+                                    <option data-i18n="Use extension settings" value="">Use extension settings</option>
                                     <option value="openai/gpt-3.5-turbo">openai/gpt-3.5-turbo</option>
                                     <option value="openai/gpt-3.5-turbo-16k">openai/gpt-3.5-turbo-16k</option>
                                     <option value="openai/gpt-4">openai/gpt-4</option>
@@ -2899,14 +2979,14 @@
                                 <h4 data-i18n="Model Providers">Model Providers</h4>
                                 <select id="openrouter_providers_chat" class="openrouter_providers" multiple>
                                 </select>
-                                <label class="checkbox_label marginTopBot5" for="openrouter_allow_fallbacks" title="Automatically chooses an alternative provider if chosen providers can't serve your request.">
+                                <label class="checkbox_label marginTopBot5" for="openrouter_allow_fallbacks" data-i18n="[title]Automatically chooses an alternative provider if chosen providers can't serve your request." title="Automatically chooses an alternative provider if chosen providers can't serve your request.">
                                     <input id="openrouter_allow_fallbacks" type="checkbox" />
                                     <span data-i18n="Allow fallback providers">Allow fallback providers</span>
                                 </label>
                             </div>
                             <small class="marginTopBot5">
                                 <i class="fa-solid fa-lightbulb"></i>
-                                <span>To use instruct formatting, switch to OpenRouter under Text Completion API.</span>
+                                <span data-i18n="To use instruct formatting, switch to OpenRouter under Text Completion API.">To use instruct formatting, switch to OpenRouter under Text Completion API.</span>
                             </small>
                         </form>
                         <form id="scale_form" data-source="scale" action="javascript:void(null);" method="post" enctype="multipart/form-data">
@@ -2976,32 +3056,31 @@
                                     <optgroup label="Primary">
                                         <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
                                         <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
-                                        <option value="gemini-1.0-pro">Gemini 1.0 Pro</option>
-                                        <option value="gemini-pro">Gemini Pro (1.0)</option>
-                                        <option value="gemini-pro-vision">Gemini Pro Vision (1.0)</option>
+                                        <option value="gemini-1.0-pro">Gemini 1.0 Pro (Deprecated)</option>
+                                        <option value="gemini-pro">Gemini Pro (1.0) (Deprecated)</option>
                                         <option value="gemini-ultra">Gemini Ultra (1.0)</option>
                                         <option value="gemini-1.0-ultra-latest">Gemini 1.0 Ultra</option>
-                                        <option value="text-bison-001">PaLM 2 (Legacy)</option>
-                                        <option value="chat-bison-001">PaLM 2 Chat (Legacy)</option>
                                     </optgroup>
                                     <optgroup label="Subversions">
-                                        <option value="gemini-exp-1121">Gemini Experimental 2024-11-21</option>
+                                        <option value="gemini-2.0-flash-thinking-exp-1219">Gemini 2.0 Flash Thinking Experimental</option>
+                                        <option value="gemini-2.0-flash-exp">Gemini 2.0 Flash Experimental</option>
                                         <option value="gemini-exp-1114">Gemini Experimental 2024-11-14</option>
-                                        <option value="gemini-1.5-pro-exp-0801">Gemini 1.5 Pro Experiment 2024-08-01</option>
-                                        <option value="gemini-1.5-pro-exp-0827">Gemini 1.5 Pro Experiment 2024-08-27</option>
+                                        <option value="gemini-exp-1121">Gemini Experimental 2024-11-21</option>
+                                        <option value="gemini-exp-1206">Gemini Experimental 2024-12-06</option>
+                                        <option value="gemini-1.5-pro-exp-0801">Gemini 1.5 Pro Experimental 2024-08-01</option>
+                                        <option value="gemini-1.5-pro-exp-0827">Gemini 1.5 Pro Experimental 2024-08-27</option>
                                         <option value="gemini-1.5-pro-latest">Gemini 1.5 Pro [latest]</option>
                                         <option value="gemini-1.5-pro-001">Gemini 1.5 Pro [001]</option>
                                         <option value="gemini-1.5-pro-002">Gemini 1.5 Pro [002]</option>
                                         <option value="gemini-1.5-flash-8b">Gemini 1.5 Flash 8B</option>
-                                        <option value="gemini-1.5-flash-exp-0827">Gemini 1.5 Flash Experiment 2024-08-27</option>
-                                        <option value="gemini-1.5-flash-8b-exp-0827">Gemini 1.5 Flash 8B Experiment 2024-08-27</option>
-                                        <option value="gemini-1.5-flash-8b-exp-0924">Gemini 1.5 Flash 8B Experiment 2024-09-24</option>
+                                        <option value="gemini-1.5-flash-exp-0827">Gemini 1.5 Flash Experimental 2024-08-27</option>
+                                        <option value="gemini-1.5-flash-8b-exp-0827">Gemini 1.5 Flash 8B Experimental 2024-08-27</option>
+                                        <option value="gemini-1.5-flash-8b-exp-0924">Gemini 1.5 Flash 8B Experimental 2024-09-24</option>
                                         <option value="gemini-1.5-flash-latest">Gemini 1.5 Flash [latest]</option>
                                         <option value="gemini-1.5-flash-001">Gemini 1.5 Flash [001]</option>
                                         <option value="gemini-1.5-flash-002">Gemini 1.5 Flash [002]</option>
-                                        <option value="gemini-1.0-pro-latest">Gemini 1.0 Pro [latest]</option>
-                                        <option value="gemini-1.0-pro-001">Gemini 1.0 Pro (Tuning) [001]</option>
-                                        <option value="gemini-1.0-pro-vision-latest">Gemini 1.0 Pro Vision [latest]</option>
+                                        <option value="gemini-1.0-pro-latest">Gemini 1.0 Pro [latest] (Deprecated)</option>
+                                        <option value="gemini-1.0-pro-001">Gemini 1.0 Pro (Tuning) [001] (Deprecated)</option>
                                     </optgroup>
                                 </select>
                             </div>
@@ -3070,6 +3149,9 @@
                             </div>
                             <h4 data-i18n="Groq Model">Groq Model</h4>
                             <select id="model_groq_select">
+                                <optgroup label="Llama 3.3">
+                                    <option value="llama-3.3-70b-versatile">llama-3.3-70b-versatile</option>
+                                </optgroup>
                                 <optgroup label="Llama 3.2">
                                     <option value="llama-3.2-1b-preview">llama-3.2-1b-preview</option>
                                     <option value="llama-3.2-3b-preview">llama-3.2-3b-preview</option>
@@ -3110,6 +3192,23 @@
                                 <h4 data-i18n="NanoGPT Model">NanoGPT Model</h4>
                                 <select id="model_nanogpt_select">
                                     <option value="" data-i18n="-- Connect to the API --">-- Connect to the API --</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div id="deepseek_form" data-source="deepseek">
+                            <h4 data-i18n="DeepSeek API Key">DeepSeek API Key</h4>
+                            <div class="flex-container">
+                                <input id="api_key_deepseek" name="api_key_deepseek" class="text_pole flex1" value="" type="text" autocomplete="off">
+                                <div title="Clear your API key" data-i18n="[title]Clear your API key" class="menu_button fa-solid fa-circle-xmark clear-api-key" data-key="api_key_deepseek"></div>
+                            </div>
+                            <div data-for="api_key_deepseek" class="neutral_warning" data-i18n="For privacy reasons, your API key will be hidden after you reload the page.">
+                                For privacy reasons, your API key will be hidden after you reload the page.
+                            </div>
+                            <div>
+                                <h4 data-i18n="DeepSeek Model">DeepSeek Model</h4>
+                                <select id="model_deepseek_select">
+                                    <option value="deepseek-chat">deepseek-chat</option>
+                                    <option value="deepseek-coder">deepseek-coder</option>
                                 </select>
                             </div>
                         </div>
@@ -3166,16 +3265,17 @@
                                 <h4 data-i18n="Cohere Model">Cohere Model</h4>
                                 <select id="model_cohere_select">
                                     <optgroup label="Stable">
-                                        <option value="c4ai-aya-expanse-32b">c4ai-aya-expanse-32b</option>
-                                        <option value="c4ai-aya-expanse-8b">c4ai-aya-expanse-8b</option>
-                                        <option value="c4ai-aya-23-35b">c4ai-aya-23-35b</option>
                                         <option value="c4ai-aya-23-8b">c4ai-aya-23-8b</option>
+                                        <option value="c4ai-aya-23">c4ai-aya-23</option>
+                                        <option value="c4ai-aya-expanse-8b">c4ai-aya-expanse-8b</option>
+                                        <option value="c4ai-aya-expanse-32b">c4ai-aya-expanse-32b</option>
                                         <option value="command-light">command-light</option>
                                         <option value="command">command</option>
                                         <option value="command-r">command-r</option>
                                         <option value="command-r-plus">command-r-plus</option>
                                         <option value="command-r-08-2024">command-r-08-2024</option>
                                         <option value="command-r-plus-08-2024">command-r-plus-08-2024</option>
+                                        <option value="command-r7b-12-2024">command-r7b-12-2024</option>
                                     </optgroup>
                                     <optgroup label="Nightly">
                                         <option value="command-light-nightly">command-light-nightly</option>
@@ -3221,7 +3321,7 @@
                             </div>
                             <h4 data-i18n="Enter a Model ID">Enter a Model ID</h4>
                             <div class="flex-container">
-                                <input list="model_custom_select_fill" id="custom_model_id" class="text_pole wide100p" value="" autocomplete="off" data-i18n="[placeholder]Example: gpt-3.5-turbo" placeholder="Example: gpt-3.5-turbo">
+                                <input list="model_custom_select_fill" id="custom_model_id" class="text_pole wide100p" value="" autocomplete="off" data-i18n="[placeholder]Example: gpt-4o" placeholder="Example: gpt-4o">
                                 <datalist id="model_custom_select_fill" class="text_pole model_custom_select"></datalist>
                             </div>
                             <h4 data-i18n="Available Models">Available Models</h4>
@@ -3231,8 +3331,9 @@
                             <h4 data-i18n="Prompt Post-Processing">Prompt Post-Processing</h4>
                             <select id="custom_prompt_post_processing" class="text_pole" title="Applies additional processing to the prompt before sending it to the API." data-i18n="[title]Applies additional processing to the prompt before sending it to the API.">
                                 <option data-i18n="prompt_post_processing_none" value="">None</option>
-                                <option value="merge">Merge consecutive roles</option>
-                                <option value="strict">Strict (user first, alternating roles)</option>
+                                <option data-i18n="prompt_post_processing_merge" value="merge">Merge consecutive roles</option>
+                                <option data-i18n="prompt_post_processing_semi" value="semi">Semi-strict (alternating roles)</option>
+                                <option data-i18n="prompt_post_processing_strict" value="strict">Strict (user first, alternating roles)</option>
                             </select>
                         </form>
                         <div id="01ai_form" data-source="01ai">
@@ -3682,6 +3783,7 @@
                                     <option value="17">Mistral Nemo</option>
                                     <option value="8">Yi</option>
                                     <option value="11">Claude 1/2</option>
+                                    <option value="18">DeepSeek V3</option>
                                     <option value="6">API (WebUI / koboldcpp)</option>
                                 </select>
                             </div>
@@ -3947,7 +4049,7 @@
                                 <h3 class="margin0">
                                     <span data-i18n="User Settings">User Settings</span>
 
-                                    <a href="https://docs.sillytavern.app/usage/user_settings/" class="notes-link" target="_blank">
+                                    <a href="https://docs.sillytavern.app/usage/user-settings/" class="notes-link" target="_blank">
                                         <span class="fa-solid fa-circle-question note-link-span"></span>
                                     </a>
                                 </h3>
@@ -4183,7 +4285,7 @@
                                 </label>
                                 <label for="show_swipe_num_all_messages" class="checkbox_label" title="Display swipe numbers for all messages, not just the last." data-i18n="[title]Display swipe numbers for all messages, not just the last.">
                                     <input id="show_swipe_num_all_messages" type="checkbox" />
-                                    <small data-i18n="Swipe # for All Messages">Swipe # for All Messages</small><i class="fa-solid fa-mobile-screen-button"></i>
+                                    <small data-i18n="Swipe # for All Messages">Swipe # for All Messages</small>
                                 </label>
                                 <label for="hotswapEnabled" class="checkbox_label" title="In the Character Management panel, show quick selection buttons for favorited characters." data-i18n="[title]In the Character Management panel, show quick selection buttons for favorited characters">
                                     <input id="hotswapEnabled" type="checkbox" />
@@ -4501,7 +4603,7 @@
                                     </div>
                                 </div>
                                 <div nane="AutoContiueBlock" class="inline-drawer wide100p flexFlowColumn">
-                                    <div class="inline-drawer-toggle inline-drawer-header userSettingsInnerExpandable" title="Automatically 'continue' a response if the model stopped before reaching a certain amount of tokens.">
+                                    <div class="inline-drawer-toggle inline-drawer-header userSettingsInnerExpandable" data-i18n="[title]Automatically 'continue' a response if the model stopped before reaching a certain amount of tokens." title="Automatically 'continue' a response if the model stopped before reaching a certain amount of tokens.">
                                         <b><span data-i18n="Auto-Continue">Auto-Continue</span></b>
                                         <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
                                     </div>
@@ -4648,6 +4750,13 @@
                             Background Image
                         </h3>
                         <input id="bg-filter" data-i18n="[placeholder]Filter" placeholder="Filter" class="text_pole flex1" type="search" />
+                        <select id="background_fitting" class="text_pole" data-i18n="[title]Background Fitting" title="Background Fitting">
+                            <option value="classic" data-i18n="Classic">Classic</option>
+                            <option value="cover" data-i18n="Cover">Cover</option>
+                            <option value="contain" data-i18n="Contain">Contain</option>
+                            <option value="stretch" data-i18n="Stretch">Stretch</option>
+                            <option value="center" data-i18n="Center">Center</option>
+                        </select>
                         <div id="auto_background" class="menu_button menu_button_icon" data-i18n="[title]Automatically select a background based on the chat context" title="Automatically select a background based on the chat context.">
                             <i class="fa-solid fa-wand-magic"></i>
                             <span data-i18n="Auto-select">Auto-select</span>
@@ -4712,6 +4821,8 @@
                         <div id="live2d_container" class="extension_container"></div>
                         <div id="vrm_container" class="extension_container"></div>
                         <div id="timelines_container" class="extension_container"></div>
+                        <div id="webllm_container" class="extension_container"></div>
+                        <div id="rss_container" class="extension_container"></div>
                     </div>
                     <div id="extensions_settings2" class="flex1 wide50p">
                         <div id="websearch_container" class="extension_container"></div>
@@ -4726,6 +4837,9 @@
                         <div id="vectors_container" class="extension_container"></div>
                         <div id="randomizer_container" class="extension_container"></div>
                         <div id="chromadb_container" class="extension_container"></div>
+                        <div id="message_limit_container" class="extension_container"></div>
+                        <div id="injects_container" class="extension_container"></div>
+                        <div id="accuweather_container" class="extension_container"></div>
                     </div>
                     <hr class="wide100p margin0">
                     <div class="alignitemscenter flex-container justifyCenter wide100p" style="justify-content: space-between;">
@@ -4812,6 +4926,8 @@
                                 <div id="lock_user_name" class="menu_button fa-solid fa-unlock" title="Click to lock your selected persona to the current chat. Click again to remove the lock." data-i18n="[title]Click to lock your selected persona to the current chat. Click again to remove the lock.">
                                 </div>
                                 <div id="sync_name_button" class="menu_button fa-solid fa-sync" title="Click to set user name for all messages" data-i18n="[title]Click to set user name for all messages">
+                                </div>
+                                <div id="persona_lore_button" class="menu_button fa-solid fa-globe" title="Persona Lore&#10;Alt+Click to open the lorebook" data-i18n="[title]Persona Lore Alt+Click to open the lorebook">
                                 </div>
                             </div>
                             <div>
@@ -4929,7 +5045,7 @@
                                             <input type="hidden" id="fav_checkbox" name="fav" />
                                             <div id="advanced_div" class="menu_button fa-solid fa-book " title="Advanced Definitions" data-i18n="[title]Advanced Definition"></div>
                                             <div id="world_button" class="menu_button fa-solid fa-globe" title="Character Lore&#10;&#10;Click to load&#10;Shift-click to open 'Link to World Info' popup" data-i18n="[title]world_button_title"></div>
-                                            <div class="chat_lorebook_button menu_button fa-solid fa-passport" title="Chat Lore" data-i18n="[title]Chat Lore"></div>
+                                            <div class="chat_lorebook_button menu_button fa-solid fa-passport" title="Chat Lore&#10;Alt+Click to open the lorebook" data-i18n="[title]Chat Lore Alt+Click to open the lorebook"></div>
                                             <div id="export_button" class="menu_button fa-solid fa-file-export " title="Export and Download" data-i18n="[title]Export and Download"></div>
                                             <!-- <div id="set_chat_scenario" class="menu_button fa-solid fa-scroll" title="Set a chat scenario override"></div> -->
                                             <!-- <div id="set_character_world" class="menu_button fa-solid fa-globe" title="Set a character World Info / Lorebook"></div> -->
@@ -4992,7 +5108,8 @@
                         <div id="spoiler_free_desc" class="flex-container flexFlowColumn flex1 flexNoGap">
                             <div id="creators_notes_div" class="title_restorable">
                                 <span data-i18n="Creator's Notes">Creator's Notes</span>
-                                <div id="spoiler_free_desc_button" class="margin0 menu_button fa-solid fa-eye" title="Show / Hide Description and First Message" data-i18n="[title]Show / Hide Description and First Message"></div>
+                                <small id="creators_note_desc_hidden" data-i18n="Character details are hidden.">Character details are hidden.</small>
+                                <div id="spoiler_free_desc_button" class="margin0 menu_button fa-solid fa-eye fa-fw" title="Show / Hide Description and First Message" data-i18n="[title]Show / Hide Description and First Message"></div>
                             </div>
                             <div id="creator_notes_spoiler" class="flex1"></div>
                             <!-- A button to show / hide description_div and description_textarea and first_message_div and firstmessage_textarea-->
@@ -5330,7 +5447,7 @@
         </div>
         <div id="character_popup" class="flex-container flexFlowColumn flexNoGap">
             <div id="character_popup_text">
-                <h3 id="character_popup-button-h3" class="margin0"></h3> <span data-i18n="Advanced Defininitions">- Advanced
+                <h3 id="character_popup-button-h3" class="margin0"></h3> <span data-i18n="Advanced Definitions">- Advanced
                     Definitions</span>
             </div>
             <hr class="margin-bot-10px">
@@ -5539,26 +5656,6 @@
             </div>
         </div>
         <!-- templates for JS to reuse when needed -->
-        <div id="chat_world_template" class="template_element">
-            <div class="chat_world range-block flexFlowColumn flex-container">
-                <div class="range-block-title">
-                    <h4 data-i18n="Chat Lorebook"><!-- This data-i18n attribute is kept for backward compatibility, use the ones below when translating -->
-                        <span data-i18n="Chat Lorebook for">Chat Lorebook for</span> <span class="chat_name"></span>
-                    </h4>
-                </div>
-                <div class="range-block-counter justifyLeft flex-container flexFlowColumn margin-bot-10px">
-                    <span data-i18n="chat_world_template_txt">
-                        A selected World Info will be bound to this chat. When generating an AI reply,
-                        it will be combined with the entries from global and character lorebooks.
-                    </span>
-                </div>
-                <div class="range-block-range wide100p">
-                    <select class="chat_world_info_selector wide100p">
-                        <option value="">--- None ---</option>
-                    </select>
-                </div>
-            </div>
-        </div>
         <div id="character_world_template" class="template_element">
             <div class="character_world range-block flexFlowColumn flex-container">
                 <div class="range-block-title">
@@ -5640,7 +5737,7 @@
                             <span class="drag-handle">&#9776;</span>
                             <div class="gap5px world_entry_thin_controls wide100p alignitemscenter">
                                 <div class="inline-drawer-toggle fa-fw fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
-                                <div class="fa-solid fa-toggle-on killSwitch" name="entryKillSwitch" title="Toggle entry's active state."></div>
+                                <div class="fa-solid fa-toggle-on killSwitch" name="entryKillSwitch" data-i18n="[title]Toggle entry's active state." title="Toggle entry's active state."></div>
                                 <div class="flex-container alignitemscenter wide100p">
                                     <div class="WIEntryTitleAndStatus flex-container flex1 alignitemscenter">
                                         <div class="flex-container flex1">
@@ -5835,7 +5932,7 @@
                                     <div class="flex-container justifySpaceBetween">
                                         <small for="group">
                                             <span data-i18n="Inclusion Group">Inclusion Group</span>
-                                            <a href="https://docs.sillytavern.app/usage/worldinfo/#inclusion-group" class="notes-link" target="_blank" title="Inclusion Groups ensure only one entry from a group is activated at a time, if multiple are triggered.&#13;Supports multiple comma-separated groups.&#13;&#13;Documentation: World Info - Inclusion Group" data-i18n="[title]Inclusion Groups ensure only one entry from a group is activated at a time, if multiple are triggered.Documentation: World Info - Inclusion Group">
+                                            <a href="https://docs.sillytavern.app/usage/core-concepts/worldinfo/#inclusion-group" class="notes-link" target="_blank" title="Inclusion Groups ensure only one entry from a group is activated at a time, if multiple are triggered.&#13;Supports multiple comma-separated groups.&#13;&#13;Documentation: World Info - Inclusion Group" data-i18n="[title]Inclusion Groups ensure only one entry from a group is activated at a time, if multiple are triggered.Documentation: World Info - Inclusion Group">
                                                 <span class="fa-solid fa-circle-question note-link-span"></span>
                                             </a>
                                         </small>
@@ -5873,7 +5970,7 @@
                                         </small>
                                     </div>
                                     <div class="range-block-range">
-                                        <input class="text_pole margin0" name="sticky" type="number" placeholder="Non-sticky" min="0" max="999999">
+                                        <input class="text_pole margin0" name="sticky" type="number" data-i18n="[placeholder]Non-sticky" placeholder="Non-sticky" min="0" max="999999">
                                     </div>
                                 </div>
                                 <div class="flex2 flex-container flexFlowColumn flexNoGap" data-i18n="[title]Entries with a cooldown can't be activated N messages after being triggered." title="Entries with a cooldown can't be activated N messages after being triggered.">
@@ -5886,7 +5983,7 @@
                                         </small>
                                     </div>
                                     <div class="range-block-range">
-                                        <input class="text_pole margin0" name="cooldown" type="number" placeholder="No cooldown" min="0" max="999999">
+                                        <input class="text_pole margin0" name="cooldown" type="number" data-i18n="[placeholder]No cooldown" placeholder="No cooldown" min="0" max="999999">
                                     </div>
                                 </div>
                                 <div class="flex2 flex-container flexFlowColumn flexNoGap" data-i18n="[title]Entries with a delay can't be activated until there are N messages present in the chat." title="Entries with a delay can't be activated until there are N messages present in the chat.">
@@ -5899,7 +5996,7 @@
                                         </small>
                                     </div>
                                     <div class="range-block-range">
-                                        <input class="text_pole margin0" name="delay" type="number" placeholder="No delay" min="0" max="999999">
+                                        <input class="text_pole margin0" name="delay" type="number" data-i18n="[placeholder]No delay" placeholder="No delay" min="0" max="999999">
                                     </div>
                                 </div>
                             </div>
@@ -5976,6 +6073,7 @@
         </div>
         <div id="openai_logit_bias_template" class="template_element">
             <div class="openai_logit_bias_form">
+                <span class="drag-handle">☰</span>
                 <input class="openai_logit_bias_text text_pole" data-i18n="[placeholder]Text or token ids" placeholder="Text or [token ids]" />
                 <input class="openai_logit_bias_value text_pole" type="number" min="-100" value="0" max="100" />
                 <i class="menu_button fa-solid fa-xmark openai_logit_bias_remove"></i>
@@ -5983,6 +6081,7 @@
         </div>
         <div id="logit_bias_template" class="template_element">
             <div class="logit_bias_form">
+                <span class="drag-handle">☰</span>
                 <input class="logit_bias_text text_pole" data-i18n="[placeholder]Type here..." placeholder="type here..." />
                 <input class="logit_bias_value text_pole" type="number" min="-100" value="0" max="100" step="0.01" />
                 <i class="menu_button fa-solid fa-xmark logit_bias_remove"></i>
@@ -6022,7 +6121,9 @@
                                 <label for="completion_prompt_manager_popup_entry_form_role">
                                     <span data-i18n="Role">Role</span>
                                 </label>
-                                <div class="text_muted" data-i18n="To whom this message will be attributed.">To whom this message will be attributed.</div>
+                                <div class="text_muted">
+                                    <span data-i18n="To whom this message will be attributed.">To whom this message will be attributed.</span>
+                                </div>
                                 <select id="completion_prompt_manager_popup_entry_form_role" class="text_pole" name="role">
                                     <option data-i18n="System" value="system">System</option>
                                     <option data-i18n="User" value="user">User</option>

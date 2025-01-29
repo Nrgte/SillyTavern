@@ -21,8 +21,10 @@ import { PAGINATION_TEMPLATE, debounce, delay, download, ensureImageFormatSuppor
 import { debounce_timeout } from './constants.js';
 import { FILTER_TYPES, FilterHelper } from './filters.js';
 import { selected_group } from './group-chats.js';
-import { POPUP_RESULT, POPUP_TYPE, Popup } from './popup.js';
+import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { t } from './i18n.js';
+import { openWorldInfoEditor, world_names } from './world-info.js';
+import { renderTemplateAsync } from './templates.js';
 
 let savePersonasPage = 0;
 const GRID_STORAGE_KEY = 'Personas_GridView';
@@ -375,6 +377,7 @@ export function initPersona(avatarId, personaName, personaDescription) {
         position: persona_description_positions.IN_PROMPT,
         depth: DEFAULT_DEPTH,
         role: DEFAULT_ROLE,
+        lorebook: '',
     };
 
     saveSettingsDebounced();
@@ -418,6 +421,7 @@ export async function convertCharacterToPersona(characterId = null) {
         position: persona_description_positions.IN_PROMPT,
         depth: DEFAULT_DEPTH,
         role: DEFAULT_ROLE,
+        lorebook: '',
     };
 
     // If the user is currently using this persona, update the description
@@ -461,6 +465,7 @@ export function setPersonaDescription() {
         .val(power_user.persona_description_role)
         .find(`option[value="${power_user.persona_description_role}"]`)
         .prop('selected', String(true));
+    $('#persona_lore_button').toggleClass('world_set', !!power_user.persona_description_lorebook);
     countPersonaDescriptionTokens();
 }
 
@@ -490,6 +495,7 @@ async function updatePersonaNameIfExists(avatarId, newName) {
             position: persona_description_positions.IN_PROMPT,
             depth: DEFAULT_DEPTH,
             role: DEFAULT_ROLE,
+            lorebook: '',
         };
         console.log(`Created persona name for ${avatarId} as ${newName}`);
     }
@@ -535,6 +541,7 @@ async function bindUserNameToPersona(e) {
                 position: isCurrentPersona ? power_user.persona_description_position : persona_description_positions.IN_PROMPT,
                 depth: isCurrentPersona ? power_user.persona_description_depth : DEFAULT_DEPTH,
                 role: isCurrentPersona ? power_user.persona_description_role : DEFAULT_ROLE,
+                lorebook: isCurrentPersona ? power_user.persona_description_lorebook : '',
             };
         }
 
@@ -579,12 +586,20 @@ function selectCurrentPersona() {
             power_user.persona_description_position = descriptor.position ?? persona_description_positions.IN_PROMPT;
             power_user.persona_description_depth = descriptor.depth ?? DEFAULT_DEPTH;
             power_user.persona_description_role = descriptor.role ?? DEFAULT_ROLE;
+            power_user.persona_description_lorebook = descriptor.lorebook ?? '';
         } else {
             power_user.persona_description = '';
             power_user.persona_description_position = persona_description_positions.IN_PROMPT;
             power_user.persona_description_depth = DEFAULT_DEPTH;
             power_user.persona_description_role = DEFAULT_ROLE;
-            power_user.persona_descriptions[user_avatar] = { description: '', position: persona_description_positions.IN_PROMPT, depth: DEFAULT_DEPTH, role: DEFAULT_ROLE };
+            power_user.persona_description_lorebook = '';
+            power_user.persona_descriptions[user_avatar] = {
+                description: '',
+                position: persona_description_positions.IN_PROMPT,
+                depth: DEFAULT_DEPTH,
+                role: DEFAULT_ROLE,
+                lorebook: '',
+            };
         }
 
         setPersonaDescription();
@@ -652,6 +667,7 @@ async function lockPersona() {
             position: persona_description_positions.IN_PROMPT,
             depth: DEFAULT_DEPTH,
             role: DEFAULT_ROLE,
+            lorebook: '',
         };
     }
 
@@ -731,6 +747,7 @@ function onPersonaDescriptionInput() {
                 position: Number($('#persona_description_position').find(':selected').val()),
                 depth: Number($('#persona_depth_value').val()),
                 role: Number($('#persona_depth_role').find(':selected').val()),
+                lorebook: '',
             };
             power_user.persona_descriptions[user_avatar] = object;
         }
@@ -766,6 +783,52 @@ function onPersonaDescriptionDepthRoleInput() {
     saveSettingsDebounced();
 }
 
+/**
+ * Opens a popup to set the lorebook for the current persona.
+ * @param {PointerEvent} event Click event
+ */
+async function onPersonaLoreButtonClick(event) {
+    const personaName = power_user.personas[user_avatar];
+    const selectedLorebook = power_user.persona_description_lorebook;
+
+    if (!personaName) {
+        toastr.warning(t`You must bind a name to this persona before you can set a lorebook.`, t`Persona name not set`);
+        return;
+    }
+
+    if (event.altKey && selectedLorebook) {
+        openWorldInfoEditor(selectedLorebook);
+        return;
+    }
+
+    const template = $(await renderTemplateAsync('personaLorebook'));
+
+    const worldSelect = template.find('select');
+    template.find('.persona_name').text(personaName);
+
+    for (const worldName of world_names) {
+        const option = document.createElement('option');
+        option.value = worldName;
+        option.innerText = worldName;
+        option.selected = selectedLorebook === worldName;
+        worldSelect.append(option);
+    }
+
+    worldSelect.on('change', function () {
+        power_user.persona_description_lorebook = String($(this).val());
+
+        if (power_user.personas[user_avatar]) {
+            const object = getOrCreatePersonaDescriptor();
+            object.lorebook = power_user.persona_description_lorebook;
+        }
+
+        $('#persona_lore_button').toggleClass('world_set', !!power_user.persona_description_lorebook);
+        saveSettingsDebounced();
+    });
+
+    await callGenericPopup(template, POPUP_TYPE.TEXT);
+}
+
 function onPersonaDescriptionPositionInput() {
     power_user.persona_description_position = Number(
         $('#persona_description_position').find(':selected').val(),
@@ -789,6 +852,7 @@ function getOrCreatePersonaDescriptor() {
             position: power_user.persona_description_position,
             depth: power_user.persona_description_depth,
             role: power_user.persona_description_role,
+            lorebook: power_user.persona_description_lorebook,
         };
         power_user.persona_descriptions[user_avatar] = object;
     }
@@ -828,7 +892,7 @@ async function setDefaultPersona(e) {
         }
         delete power_user.default_persona;
     } else {
-        const confirm = await Popup.show.confirm(t`Are you sure you want to set "${personaName}" as the default persona?`, t`This name and avatar will be used for all new chats, as well as existing chats where the user persona is not locked.`);
+        const confirm = await Popup.show.confirm(t`Are you sure you want to set \"${personaName}\" as the default persona?`, t`This name and avatar will be used for all new chats, as well as existing chats where the user persona is not locked.`);
 
         if (!confirm) {
             console.debug('User cancelled setting default persona');
@@ -1038,6 +1102,7 @@ async function duplicatePersona(avatarId) {
         position: descriptor?.position ?? persona_description_positions.IN_PROMPT,
         depth: descriptor?.depth ?? DEFAULT_DEPTH,
         role: descriptor?.role ?? DEFAULT_ROLE,
+        lorebook: descriptor?.lorebook ?? '',
     };
 
     await uploadUserAvatar(getUserAvatar(avatarId), newAvatarId);
@@ -1055,6 +1120,7 @@ export function initPersonas() {
     $('#persona_description_position').on('input', onPersonaDescriptionPositionInput);
     $('#persona_depth_value').on('input', onPersonaDescriptionDepthValueInput);
     $('#persona_depth_role').on('input', onPersonaDescriptionDepthRoleInput);
+    $('#persona_lore_button').on('click', onPersonaLoreButtonClick);
     $('#personas_backup').on('click', onBackupPersonas);
     $('#personas_restore').on('click', () => $('#personas_restore_input').trigger('click'));
     $('#personas_restore_input').on('change', onPersonasRestoreInput);

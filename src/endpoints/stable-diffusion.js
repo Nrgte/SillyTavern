@@ -6,6 +6,8 @@ import fetch from 'node-fetch';
 import sanitize from 'sanitize-filename';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
 import FormData from 'form-data';
+import urlJoin from 'url-join';
+import _ from 'lodash';
 
 import { delay, getBasicAuthHeader, tryParse } from '../util.js';
 import { jsonParser } from '../express-common.js';
@@ -104,22 +106,28 @@ router.post('/upscalers', jsonParser, async (request, response) => {
 
 router.post('/vaes', jsonParser, async (request, response) => {
     try {
-        const url = new URL(request.body.url);
-        url.pathname = '/sdapi/v1/sd-vae';
+        const autoUrl = new URL(request.body.url);
+        autoUrl.pathname = '/sdapi/v1/sd-vae';
+        const forgeUrl = new URL(request.body.url);
+        forgeUrl.pathname = '/sdapi/v1/sd-modules';
 
-        const result = await fetch(url, {
+        const requestInit = {
             method: 'GET',
             headers: {
                 'Authorization': getBasicAuthHeader(request.body.auth),
             },
-        });
+        };
+        const results = await Promise.allSettled([
+            fetch(autoUrl, requestInit).then(r => r.ok ? r.json() : Promise.reject(r.statusText)),
+            fetch(forgeUrl, requestInit).then(r => r.ok ? r.json() : Promise.reject(r.statusText)),
+        ]);
 
-        if (!result.ok) {
+        const data = results.find(r => r.status === 'fulfilled')?.value;
+
+        if (!Array.isArray(data)) {
             throw new Error('SD WebUI returned an error.');
         }
 
-        /** @type {any} */
-        const data = await result.json();
         const names = data.map(x => x.model_name);
         return response.send(names);
     } catch (error) {
@@ -288,23 +296,37 @@ router.post('/set-model', jsonParser, async (request, response) => {
 
 router.post('/generate', jsonParser, async (request, response) => {
     try {
-        console.log('SD WebUI request:', request.body);
+        try {
+            const optionsUrl = new URL(request.body.url);
+            optionsUrl.pathname = '/sdapi/v1/options';
+            const optionsResult = await fetch(optionsUrl, { headers: { 'Authorization': getBasicAuthHeader(request.body.auth) } });
+            if (optionsResult.ok) {
+                const optionsData = /** @type {any} */ (await optionsResult.json());
+                const isForge = 'forge_preset' in optionsData;
 
-        const url = new URL(request.body.url);
-        url.pathname = '/sdapi/v1/txt2img';
+                if (!isForge) {
+                    _.unset(request.body, 'override_settings.forge_additional_modules');
+                }
+            }
+        } catch (error) {
+            console.log('SD WebUI failed to get options:', error);
+        }
 
         const controller = new AbortController();
         request.socket.removeAllListeners('close');
         request.socket.on('close', function () {
             if (!response.writableEnded) {
-                const url = new URL(request.body.url);
-                url.pathname = '/sdapi/v1/interrupt';
-                fetch(url, { method: 'POST', headers: { 'Authorization': getBasicAuthHeader(request.body.auth) } });
+                const interruptUrl = new URL(request.body.url);
+                interruptUrl.pathname = '/sdapi/v1/interrupt';
+                fetch(interruptUrl, { method: 'POST', headers: { 'Authorization': getBasicAuthHeader(request.body.auth) } });
             }
             controller.abort();
         });
 
-        const result = await fetch(url, {
+        console.log('SD WebUI request:', request.body);
+        const txt2imgUrl = new URL(request.body.url);
+        txt2imgUrl.pathname = '/sdapi/v1/txt2img';
+        const result = await fetch(txt2imgUrl, {
             method: 'POST',
             body: JSON.stringify(request.body),
             headers: {
@@ -364,8 +386,7 @@ const comfy = express.Router();
 
 comfy.post('/ping', jsonParser, async (request, response) => {
     try {
-        const url = new URL(request.body.url);
-        url.pathname = '/system_stats';
+        const url = new URL(urlJoin(request.body.url, '/system_stats'));
 
         const result = await fetch(url);
         if (!result.ok) {
@@ -381,8 +402,7 @@ comfy.post('/ping', jsonParser, async (request, response) => {
 
 comfy.post('/samplers', jsonParser, async (request, response) => {
     try {
-        const url = new URL(request.body.url);
-        url.pathname = '/object_info';
+        const url = new URL(urlJoin(request.body.url, '/object_info'));
 
         const result = await fetch(url);
         if (!result.ok) {
@@ -400,8 +420,7 @@ comfy.post('/samplers', jsonParser, async (request, response) => {
 
 comfy.post('/models', jsonParser, async (request, response) => {
     try {
-        const url = new URL(request.body.url);
-        url.pathname = '/object_info';
+        const url = new URL(urlJoin(request.body.url, '/object_info'));
 
         const result = await fetch(url);
         if (!result.ok) {
@@ -429,8 +448,7 @@ comfy.post('/models', jsonParser, async (request, response) => {
 
 comfy.post('/schedulers', jsonParser, async (request, response) => {
     try {
-        const url = new URL(request.body.url);
-        url.pathname = '/object_info';
+        const url = new URL(urlJoin(request.body.url, '/object_info'));
 
         const result = await fetch(url);
         if (!result.ok) {
@@ -448,8 +466,7 @@ comfy.post('/schedulers', jsonParser, async (request, response) => {
 
 comfy.post('/vaes', jsonParser, async (request, response) => {
     try {
-        const url = new URL(request.body.url);
-        url.pathname = '/object_info';
+        const url = new URL(urlJoin(request.body.url, '/object_info'));
 
         const result = await fetch(url);
         if (!result.ok) {
@@ -516,15 +533,13 @@ comfy.post('/delete-workflow', jsonParser, async (request, response) => {
 
 comfy.post('/generate', jsonParser, async (request, response) => {
     try {
-        const url = new URL(request.body.url);
-        url.pathname = '/prompt';
+        const url = new URL(urlJoin(request.body.url, '/prompt'));
 
         const controller = new AbortController();
         request.socket.removeAllListeners('close');
         request.socket.on('close', function () {
             if (!response.writableEnded && !item) {
-                const interruptUrl = new URL(request.body.url);
-                interruptUrl.pathname = '/interrupt';
+                const interruptUrl = new URL(urlJoin(request.body.url, '/interrupt'));
                 fetch(interruptUrl, { method: 'POST', headers: { 'Authorization': getBasicAuthHeader(request.body.auth) } });
             }
             controller.abort();
@@ -543,8 +558,7 @@ comfy.post('/generate', jsonParser, async (request, response) => {
         const data = await promptResult.json();
         const id = data.prompt_id;
         let item;
-        const historyUrl = new URL(request.body.url);
-        historyUrl.pathname = '/history';
+        const historyUrl = new URL(urlJoin(request.body.url, '/history'));
         while (true) {
             const result = await fetch(historyUrl);
             if (!result.ok) {
@@ -568,8 +582,7 @@ comfy.post('/generate', jsonParser, async (request, response) => {
             throw new Error(`ComfyUI generation did not succeed.\n\n${errorMessages}`.trim());
         }
         const imgInfo = Object.keys(item.outputs).map(it => item.outputs[it].images).flat()[0];
-        const imgUrl = new URL(request.body.url);
-        imgUrl.pathname = '/view';
+        const imgUrl = new URL(urlJoin(request.body.url, '/view'));
         imgUrl.search = `?filename=${imgInfo.filename}&subfolder=${imgInfo.subfolder}&type=${imgInfo.type}`;
         const imgResponse = await fetch(imgUrl);
         if (!imgResponse.ok) {
@@ -668,8 +681,8 @@ together.post('/generate', jsonParser, async (request, response) => {
         let b64_json = choice.b64_json;
 
         if (!b64_json) {
-            const buffer = await (await fetch(choice.url)).buffer();
-            b64_json = buffer.toString('base64');
+            const buffer = await (await fetch(choice.url)).arrayBuffer();
+            b64_json = Buffer.from(buffer).toString('base64');
         }
 
         return response.send({ format: 'jpg', data: b64_json });
@@ -825,8 +838,8 @@ pollinations.post('/generate', jsonParser, async (request, response) => {
             throw new Error('Pollinations request failed.');
         }
 
-        const buffer = await result.buffer();
-        const base64 = buffer.toString('base64');
+        const buffer = await result.arrayBuffer();
+        const base64 = Buffer.from(buffer).toString('base64');
 
         return response.send({ image: base64 });
     } catch (error) {
@@ -887,8 +900,8 @@ stability.post('/generate', jsonParser, async (request, response) => {
             return response.sendStatus(500);
         }
 
-        const buffer = await result.buffer();
-        return response.send(buffer.toString('base64'));
+        const buffer = await result.arrayBuffer();
+        return response.send(Buffer.from(buffer).toString('base64'));
     } catch (error) {
         console.log(error);
         return response.sendStatus(500);
@@ -1007,9 +1020,9 @@ huggingface.post('/generate', jsonParser, async (request, response) => {
             return response.sendStatus(500);
         }
 
-        const buffer = await result.buffer();
+        const buffer = await result.arrayBuffer();
         return response.send({
-            image: buffer.toString('base64'),
+            image: Buffer.from(buffer).toString('base64'),
         });
     } catch (error) {
         console.log(error);

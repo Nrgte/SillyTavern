@@ -6,7 +6,6 @@ import { jsonParser } from '../../express-common.js';
 import {
     CHAT_COMPLETION_SOURCES,
     GEMINI_SAFETY,
-    BISON_SAFETY,
     OPENROUTER_HEADERS,
 } from '../../constants.js';
 import {
@@ -28,6 +27,7 @@ import {
     mergeMessages,
     cachingAtDepthForOpenRouterClaude,
     cachingAtDepthForClaude,
+    getPromptNames,
 } from '../../prompt-converters.js';
 
 import { readSecret, SECRET_KEYS } from '../secrets.js';
@@ -51,24 +51,44 @@ const API_01AI = 'https://api.01.ai/v1';
 const API_BLOCKENTROPY = 'https://api.blockentropy.ai/v1';
 const API_AI21 = 'https://api.ai21.com/studio/v1';
 const API_NANOGPT = 'https://nano-gpt.com/api/v1';
+const API_DEEPSEEK = 'https://api.deepseek.com/beta';
 
 /**
  * Applies a post-processing step to the generated messages.
  * @param {object[]} messages Messages to post-process
  * @param {string} type Prompt conversion type
- * @param {string} charName Character name
- * @param {string} userName User name
+ * @param {import('../../prompt-converters.js').PromptNames} names Prompt names
  * @returns
  */
-function postProcessPrompt(messages, type, charName, userName) {
+function postProcessPrompt(messages, type, names) {
     switch (type) {
         case 'merge':
         case 'claude':
-            return mergeMessages(messages, charName, userName, false);
+            return mergeMessages(messages, names, false, false);
+        case 'semi':
+            return mergeMessages(messages, names, true, false);
         case 'strict':
-            return mergeMessages(messages, charName, userName, true);
+            return mergeMessages(messages, names, true, true);
+        case 'deepseek':
+            return (x => x.length && (x[x.length - 1].role !== 'assistant' || (x[x.length - 1].prefix = true)) ? x : x)(mergeMessages(messages, names, true, false));
         default:
             return messages;
+    }
+}
+
+/**
+ * Gets OpenRouter transforms based on the request.
+ * @param {import('express').Request} request Express request
+ * @returns {string[] | undefined} OpenRouter transforms
+ */
+function getOpenRouterTransforms(request) {
+    switch (request.body.middleout) {
+        case 'on':
+            return ['middle-out'];
+        case 'off':
+            return [];
+        case 'auto':
+            return undefined;
     }
 }
 
@@ -102,7 +122,7 @@ async function sendClaudeRequest(request, response) {
         const additionalHeaders = {};
         const useTools = request.body.model.startsWith('claude-3') && Array.isArray(request.body.tools) && request.body.tools.length > 0;
         const useSystemPrompt = (request.body.model.startsWith('claude-2') || request.body.model.startsWith('claude-3')) && request.body.claude_use_sysprompt;
-        const convertedPrompt = convertClaudeMessages(request.body.messages, request.body.assistant_prefill, useSystemPrompt, useTools, request.body.char_name, request.body.user_name);
+        const convertedPrompt = convertClaudeMessages(request.body.messages, request.body.assistant_prefill, useSystemPrompt, useTools, getPromptNames(request));
         // Add custom stop sequences
         const stopSequences = [];
         if (Array.isArray(request.body.stop)) {
@@ -262,9 +282,8 @@ async function sendMakerSuiteRequest(request, response) {
     }
 
     const model = String(request.body.model);
-    const isGemini = model.includes('gemini');
-    const isText = model.includes('text');
-    const stream = Boolean(request.body.stream) && isGemini;
+    const stream = Boolean(request.body.stream);
+    const showThoughts = Boolean(request.body.show_thoughts);
 
     const generationConfig = {
         stopSequences: request.body.stop,
@@ -280,54 +299,35 @@ async function sendMakerSuiteRequest(request, response) {
             delete generationConfig.stopSequences;
         }
 
-        const should_use_system_prompt = (model.includes('gemini-1.5-flash') || model.includes('gemini-1.5-pro') || model.includes('gemini-exp-1114') || model.includes('gemini-exp-1121')) && request.body.use_makersuite_sysprompt;
-        const prompt = convertGooglePrompt(request.body.messages, model, should_use_system_prompt, request.body.char_name, request.body.user_name);
+        const should_use_system_prompt = (
+            model.includes('gemini-2.0-flash-thinking-exp') ||
+            model.includes('gemini-2.0-flash-exp') ||
+            model.includes('gemini-1.5-flash') ||
+            model.includes('gemini-1.5-pro') ||
+            model.startsWith('gemini-exp')
+        ) && request.body.use_makersuite_sysprompt;
+
+        const prompt = convertGooglePrompt(request.body.messages, model, should_use_system_prompt, getPromptNames(request));
+        let safetySettings = GEMINI_SAFETY;
+
+        if (model.includes('gemini-2.0-flash-exp')) {
+            safetySettings = GEMINI_SAFETY.map(setting => ({ ...setting, threshold: 'OFF' }));
+        }
+
         let body = {
             contents: prompt.contents,
-            safetySettings: GEMINI_SAFETY,
+            safetySettings: safetySettings,
             generationConfig: generationConfig,
         };
 
         if (should_use_system_prompt) {
-            body.system_instruction = prompt.system_instruction;
+            body.systemInstruction = prompt.system_instruction;
         }
 
         return body;
     }
 
-    function getBisonBody() {
-        const prompt = isText
-            ? ({ text: convertTextCompletionPrompt(request.body.messages) })
-            : ({ messages: convertGooglePrompt(request.body.messages, model).contents });
-
-        /** @type {any} Shut the lint up */
-        const bisonBody = {
-            ...generationConfig,
-            safetySettings: BISON_SAFETY,
-            candidate_count: 1, // lewgacy spelling
-            prompt: prompt,
-        };
-
-        if (!isText) {
-            delete bisonBody.stopSequences;
-            delete bisonBody.maxOutputTokens;
-            delete bisonBody.safetySettings;
-
-            if (Array.isArray(prompt.messages)) {
-                for (const msg of prompt.messages) {
-                    msg.author = msg.role;
-                    msg.content = msg.parts[0].text;
-                    delete msg.parts;
-                    delete msg.role;
-                }
-            }
-        }
-
-        delete bisonBody.candidateCount;
-        return bisonBody;
-    }
-
-    const body = isGemini ? getGeminiBody() : getBisonBody();
+    const body = getGeminiBody();
     console.log('Google AI Studio request:', body);
 
     try {
@@ -337,10 +337,9 @@ async function sendMakerSuiteRequest(request, response) {
             controller.abort();
         });
 
-        const apiVersion = isGemini ? 'v1beta' : 'v1beta2';
-        const responseType = isGemini
-            ? (stream ? 'streamGenerateContent' : 'generateContent')
-            : (isText ? 'generateText' : 'generateMessage');
+        const isThinking = model.includes('thinking');
+        const apiVersion = isThinking ? 'v1alpha' : 'v1beta';
+        const responseType = (stream ? 'streamGenerateContent' : 'generateContent');
 
         const generateResponse = await fetch(`${apiUrl.toString().replace(/\/$/, '')}/${apiVersion}/models/${model}:${responseType}?key=${apiKey}${stream ? '&alt=sse' : ''}`, {
             body: JSON.stringify(body),
@@ -381,14 +380,18 @@ async function sendMakerSuiteRequest(request, response) {
             }
 
             const responseContent = candidates[0].content ?? candidates[0].output;
-            const responseText = typeof responseContent === 'string' ? responseContent : responseContent?.parts?.[0]?.text;
+            console.log('Google AI Studio response:', responseContent);
+
+            if (Array.isArray(responseContent?.parts) && isThinking && !showThoughts) {
+                responseContent.parts = responseContent.parts.filter(part => !part.thought);
+            }
+
+            const responseText = typeof responseContent === 'string' ? responseContent : responseContent?.parts?.map(part => part.text)?.join('\n\n');
             if (!responseText) {
                 let message = 'Google AI Studio Candidate text empty';
                 console.log(message, generateResponseJson);
                 return response.send({ error: { message } });
             }
-
-            console.log('Google AI Studio response:', responseText);
 
             // Wrap it back to OAI format
             const reply = { choices: [{ 'message': { 'content': responseText } }] };
@@ -415,7 +418,7 @@ async function sendAI21Request(request, response) {
     request.socket.on('close', function () {
         controller.abort();
     });
-    const convertedPrompt = convertAI21Messages(request.body.messages, request.body.char_name, request.body.user_name);
+    const convertedPrompt = convertAI21Messages(request.body.messages, getPromptNames(request));
     const body = {
         messages: convertedPrompt,
         model: request.body.model,
@@ -478,7 +481,7 @@ async function sendMistralAIRequest(request, response) {
     }
 
     try {
-        const messages = convertMistralMessages(request.body.messages, request.body.char_name, request.body.user_name);
+        const messages = convertMistralMessages(request.body.messages, getPromptNames(request));
         const controller = new AbortController();
         request.socket.removeAllListeners('close');
         request.socket.on('close', function () {
@@ -559,7 +562,7 @@ async function sendCohereRequest(request, response) {
     }
 
     try {
-        const convertedHistory = convertCohereMessages(request.body.messages, request.body.char_name, request.body.user_name);
+        const convertedHistory = convertCohereMessages(request.body.messages, getPromptNames(request));
         const tools = [];
 
         if (Array.isArray(request.body.tools) && request.body.tools.length > 0) {
@@ -676,13 +679,17 @@ router.post('/status', jsonParser, async function (request, response_getstatus_o
         api_url = API_NANOGPT;
         api_key_openai = readSecret(request.user.directories, SECRET_KEYS.NANOGPT);
         headers = {};
+    } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.DEEPSEEK) {
+        api_url = API_DEEPSEEK.replace('/beta', '');
+        api_key_openai = readSecret(request.user.directories, SECRET_KEYS.DEEPSEEK);
+        headers = {};
     } else {
         console.log('This chat completion source is not supported yet.');
         return response_getstatus_openai.status(400).send({ error: true });
     }
 
     if (!api_key_openai && !request.body.reverse_proxy && request.body.chat_completion_source !== CHAT_COMPLETION_SOURCES.CUSTOM) {
-        console.log('OpenAI API key is missing.');
+        console.log('Chat Completion API key is missing.');
         return response_getstatus_openai.status(400).send({ error: true });
     }
 
@@ -726,14 +733,14 @@ router.post('/status', jsonParser, async function (request, response_getstatus_o
 
                 if (Array.isArray(models)) {
                     const modelIds = models.filter(x => x && typeof x === 'object').map(x => x.id).sort();
-                    console.log('Available OpenAI models:', modelIds);
+                    console.log('Available models:', modelIds);
                 } else {
-                    console.log('OpenAI endpoint did not return a list of models.');
+                    console.log('Chat Completion endpoint did not return a list of models.');
                 }
             }
         }
         else {
-            console.log('OpenAI status check failed. Either Access Token is incorrect or API endpoint is down.');
+            console.log('Chat Completion status check failed. Either Access Token is incorrect or API endpoint is down.');
             response_getstatus_openai.send({ error: true, can_bypass: true, data: { data: [] } });
         }
     } catch (e) {
@@ -865,7 +872,9 @@ router.post('/generate', jsonParser, function (request, response) {
         apiKey = readSecret(request.user.directories, SECRET_KEYS.OPENROUTER);
         // OpenRouter needs to pass the Referer and X-Title: https://openrouter.ai/docs#requests
         headers = { ...OPENROUTER_HEADERS };
-        bodyParams = { 'transforms': ['middle-out'] };
+        bodyParams = {
+            'transforms': getOpenRouterTransforms(request),
+        };
 
         if (request.body.min_p !== undefined) {
             bodyParams['min_p'] = request.body.min_p;
@@ -891,7 +900,7 @@ router.post('/generate', jsonParser, function (request, response) {
         }
 
         let cachingAtDepth = getConfigValue('claude.cachingAtDepth', -1);
-        if (Number.isInteger(cachingAtDepth) && cachingAtDepth >= 0 && request.body.model.startsWith('anthropic/claude-3')) {
+        if (Number.isInteger(cachingAtDepth) && cachingAtDepth >= 0 && request.body.model?.startsWith('anthropic/claude-3')) {
             cachingAtDepthForOpenRouterClaude(request.body.messages, cachingAtDepth);
         }
     } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.CUSTOM) {
@@ -917,15 +926,14 @@ router.post('/generate', jsonParser, function (request, response) {
             request.body.messages = postProcessPrompt(
                 request.body.messages,
                 request.body.custom_prompt_post_processing,
-                request.body.char_name,
-                request.body.user_name);
+                getPromptNames(request));
         }
     } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.PERPLEXITY) {
         apiUrl = API_PERPLEXITY;
         apiKey = readSecret(request.user.directories, SECRET_KEYS.PERPLEXITY);
         headers = {};
         bodyParams = {};
-        request.body.messages = postProcessPrompt(request.body.messages, 'strict', request.body.char_name, request.body.user_name);
+        request.body.messages = postProcessPrompt(request.body.messages, 'strict', getPromptNames(request));
     } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.GROQ) {
         apiUrl = API_GROQ;
         apiKey = readSecret(request.user.directories, SECRET_KEYS.GROQ);
@@ -946,6 +954,18 @@ router.post('/generate', jsonParser, function (request, response) {
         apiKey = readSecret(request.user.directories, SECRET_KEYS.BLOCKENTROPY);
         headers = {};
         bodyParams = {};
+    } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.DEEPSEEK) {
+        apiUrl = API_DEEPSEEK;
+        apiKey = readSecret(request.user.directories, SECRET_KEYS.DEEPSEEK);
+        headers = {};
+        bodyParams = {};
+
+        if (request.body.logprobs > 0) {
+            bodyParams['top_logprobs'] = request.body.logprobs;
+            bodyParams['logprobs'] = true;
+        }
+
+        request.body.messages = postProcessPrompt(request.body.messages, 'deepseek', getPromptNames(request));
     } else {
         console.log('This chat completion source is not supported yet.');
         return response.status(400).send({ error: true });
