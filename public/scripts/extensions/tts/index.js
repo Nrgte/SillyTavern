@@ -30,6 +30,7 @@ import { GoogleTranslateTtsProvider } from './google-translate.js';
 export { talkingAnimation };
 
 const UPDATE_INTERVAL = 1000;
+// const wrapper = new ModuleWorkerWrapper(moduleWorker);
 
 let voiceMapEntries = [];
 let voiceMap = {}; // {charName:voiceid, charName2:voiceid2}
@@ -120,7 +121,7 @@ async function onNarrateOneMessage() {
     }
 
     resetTtsPlayback();
-    ttsJobQueue.push(message);
+    processAndQueueTtsMessage(message);
     moduleWorker();
 }
 
@@ -147,7 +148,7 @@ async function onNarrateText(args, text) {
     }
 
     resetTtsPlayback();
-    ttsJobQueue.push({ mes: text, name: name });
+    processAndQueueTtsMessage({ mes: text, name: name });
     await moduleWorker();
 
     // Return back to the chat voices
@@ -218,6 +219,36 @@ function isTtsProcessing() {
         processing = true;
     }
     return processing;
+}
+
+/**
+ * Splits a message into lines and adds each non-empty line to the TTS job queue.
+ * @param {Object} message - The message object to be processed.
+ * @param {string} message.mes - The text of the message to be split into lines.
+ * @param {string} message.name - The name associated with the message.
+ * @returns {void}
+ */
+function processAndQueueTtsMessage(message) {
+    if (!extension_settings.tts.narrate_by_paragraphs) {
+        ttsJobQueue.push(message);
+        return;
+    }
+
+    const lines = message.mes.split('\n');
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+
+        if (line.length === 0) {
+            continue;
+        }
+
+        ttsJobQueue.push(
+            Object.assign({}, message, {
+                mes: line,
+            }),
+        );
+    }
 }
 
 function debugTtsPlayback() {
@@ -350,7 +381,7 @@ function onAudioControlClicked() {
         talkingAnimation(false);
     } else {
         // Default play behavior if not processing or playing is to play the last message.
-        ttsJobQueue.push(context.chat[context.chat.length - 1]);
+        processAndQueueTtsMessage(context.chat[context.chat.length - 1]);
     }
     updateUiAudioPlayState();
 }
@@ -376,6 +407,7 @@ function completeCurrentAudioJob() {
     currentAudioJob = null;
     talkingAnimation(false); //stop lip animation
     // updateUiPlayState();
+    wrapper.update();
 }
 
 /**
@@ -468,7 +500,7 @@ async function processTtsQueue() {
     }
 
     if (extension_settings.tts.skip_tags) {
-        text = text.replace(/<.*?>.*?<\/.*?>/g, '').trim();
+        text = text.replace(/<.*?>[\s\S]*?<\/.*?>/g, '').trim();
     }
 
     if (!extension_settings.tts.pass_asterisks) {
@@ -571,6 +603,7 @@ function loadSettings() {
     $('#tts_narrate_quoted').prop('checked', extension_settings.tts.narrate_quoted_only);
     $('#tts_auto_generation').prop('checked', extension_settings.tts.auto_generation);
     $('#tts_periodic_auto_generation').prop('checked', extension_settings.tts.periodic_auto_generation);
+    $('#tts_narrate_by_paragraphs').prop('checked', extension_settings.tts.narrate_by_paragraphs);
     $('#tts_narrate_translated_only').prop('checked', extension_settings.tts.narrate_translated_only);
     $('#tts_narrate_user').prop('checked', extension_settings.tts.narrate_user);
     $('#tts_pass_asterisks').prop('checked', extension_settings.tts.pass_asterisks);
@@ -637,6 +670,11 @@ function onAutoGenerationClick() {
 
 function onPeriodicAutoGenerationClick() {
     extension_settings.tts.periodic_auto_generation = !!$('#tts_periodic_auto_generation').prop('checked');
+    saveSettingsDebounced();
+}
+
+function onNarrateByParagraphsClick() {
+    extension_settings.tts.narrate_by_paragraphs = !!$('#tts_narrate_by_paragraphs').prop('checked');
     saveSettingsDebounced();
 }
 
@@ -824,7 +862,12 @@ async function onMessageEvent(messageId, lastCharIndex) {
     lastChatId = context.chatId;
 
     console.debug(`Adding message from ${message.name} for TTS processing: "${message.mes}"`);
-    ttsJobQueue.push(message);
+
+    if (extension_settings.tts.periodic_auto_generation) {
+        ttsJobQueue.push(message);
+    } else {
+        processAndQueueTtsMessage(message);
+    }
 }
 
 async function onMessageDeleted() {
@@ -1245,6 +1288,10 @@ $(document).ready(function () {
         $('#tts_skip_tags').on('click', onSkipTagsClick);
         $('#tts_pass_asterisks').on('click', onPassAsterisksClick);
         $('#tts_auto_generation').on('click', onAutoGenerationClick);
+
+        $('#tts_periodic_auto_generation').on('click', onPeriodicAutoGenerationClick);
+        $('#tts_narrate_by_paragraphs').on('click', onNarrateByParagraphsClick);
+
         $('#tts_narrate_user').on('click', onNarrateUserClick);
 
         $('#playback_rate').on('input', function () {

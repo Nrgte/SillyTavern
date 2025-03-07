@@ -348,6 +348,48 @@ class AllTalkTtsProvider {
         return voices; // Also return this list
     }
 
+    async fetchRvcVoiceObjects() {
+        if (this.settings.server_version == 'v1') {
+            console.log('Skipping RVC voices fetch for V1 server');
+            return [];
+        }
+
+        console.log('Fetching RVC Voices');
+        try {
+            const response = await fetch(`${this.settings.provider_endpoint}/api/rvcvoices`);
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('Error text:', errorText);
+                throw new Error(`HTTP ${response.status}: ${errorText}`);
+            }
+
+            const data = await response.json();
+            if (!data || !data.rvcvoices) {
+                console.error('Invalid data format:', data);
+                throw new Error('Invalid data format received from /api/rvcvoices');
+            }
+
+            const voices = data.rvcvoices.map(filename => {
+                return {
+                    name: filename,
+                    voice_id: filename,
+                };
+            });
+
+            console.log('RVC voices:', voices);
+            this.rvcVoices = voices; // Assign to the class property
+            this.updateRvcVoiceDropdowns(); // Update UI after fetching voices
+            return voices; // Also return this list
+        } catch (error) {
+            console.error('Error fetching RVC voices:', error);
+            this.rvcVoices = [{ name: 'Disabled', voice_id: 'Disabled' }]; // Set default on error
+            throw error;
+        } finally {
+            // Ensure dropdowns are updated even if there was an error
+            this.updateRvcVoiceDropdowns();
+        }
+    }
+
     //##########################################//
     // Get Current AT Server Config & Update ST //
     //##########################################//
@@ -810,9 +852,11 @@ class AllTalkTtsProvider {
                 // toastr.error(response.statusText, 'TTS Generation Failed');
                 throw new Error(`HTTP ${response.status}: ${errorText}`);
             }
+
             const data = await response.json();
             const outputUrl = data.output_file_url;
             return outputUrl; // Return only the output_file_url
+
         } catch (error) {
             console.error('[fetchTtsGeneration] Exception caught:', error);
             throw error; // Rethrow the error for further handling

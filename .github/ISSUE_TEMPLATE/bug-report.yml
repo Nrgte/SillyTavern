@@ -80,6 +80,8 @@ body:
           required: true
         - label: I have checked the [docs](https://docs.sillytavern.app/) ![important](https://img.shields.io/badge/Important!-F6094E)
           required: true
+        - label: I confirm that my issue is not related to third-party content, unofficial extension or patch. If in doubt, check with a new [user account](https://docs.sillytavern.app/administration/multi-user/) and with extensions disabled
+          required: true
 
   - type: markdown
     attributes:

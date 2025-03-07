@@ -46,6 +46,7 @@ access.log
 /vectors/
 /cache/
 public/css/user.css
+public/error/
 /plugins/
 /data
 /Veridia
@@ -54,3 +55,5 @@ public/scripts/extensions/third-party
 /certs
 .aider*
 .env
+/StartDev.bat
+
