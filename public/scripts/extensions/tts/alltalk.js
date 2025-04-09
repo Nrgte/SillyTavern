@@ -198,6 +198,11 @@ class AllTalkTtsProvider {
         $('#at_narrator_enabled').val(this.settings.narrator_enabled);
         $('#at_narrator_text_not_inside').val(this.settings.at_narrator_text_not_inside);
         $('#narrator_voice').val(this.settings.narrator_voice_gen);
+        $('#rvc_character_voice').val(this.settings.rvc_character_voice);
+        $('#rvc_narrator_voice').val(this.settings.rvc_narrator_voice);
+        $('#rvc_character_pitch').val(this.settings.rvc_character_pitch);
+        $('#rvc_narrator_pitch').val(this.settings.rvc_narrator_pitch);
+        $('#server_version').val(this.settings.server_version);
 
         console.debug('AllTalkTTS: Settings loaded');
         await this.initEndpoint();
@@ -537,9 +542,54 @@ class AllTalkTtsProvider {
         // Switch Model Listener
         const modelSelect = document.getElementById('switch_model');
         if (modelSelect) {
-            // Remove the event listener if it was previously added
-            // Add the debounced event listener
-            $(modelSelect).off('change').on('change', debouncedModelSelectChange);
+            const debouncedModelSelectChange = debounce(onModelSelectChange, 1400);
+            modelSelect.addEventListener('change', debouncedModelSelectChange);
+        }
+
+        // AllTalk Server version change listener
+        const serverVersionSelect = document.getElementById('server_version');
+        if (serverVersionSelect) {
+            serverVersionSelect.addEventListener('change', async (event) => {
+                this.settings.server_version = event.target.value;
+                this.onSettingsChange();
+                if (event.target.value === 'v2') {
+                    await this.fetchRvcVoiceObjects();
+                }
+                this.updateRvcVoiceDropdowns();
+            });
+        }
+
+        // RVC Voice and Pitch listeners
+        const rvcCharacterVoiceSelect = document.getElementById('rvc_character_voice');
+        if (rvcCharacterVoiceSelect) {
+            rvcCharacterVoiceSelect.addEventListener('change', (event) => {
+                this.settings.rvccharacter_voice_gen = event.target.value;
+                this.onSettingsChange();
+            });
+        }
+
+        const rvcNarratorVoiceSelect = document.getElementById('rvc_narrator_voice');
+        if (rvcNarratorVoiceSelect) {
+            rvcNarratorVoiceSelect.addEventListener('change', (event) => {
+                this.settings.rvcnarrator_voice_gen = event.target.value;
+                this.onSettingsChange();
+            });
+        }
+
+        const rvcCharacterPitchSelect = document.getElementById('rvc_character_pitch');
+        if (rvcCharacterPitchSelect) {
+            rvcCharacterPitchSelect.addEventListener('change', (event) => {
+                this.settings.rvc_character_pitch = event.target.value;
+                this.onSettingsChange();
+            });
+        }
+
+        const rvcNarratorPitchSelect = document.getElementById('rvc_narrator_pitch');
+        if (rvcNarratorPitchSelect) {
+            rvcNarratorPitchSelect.addEventListener('change', (event) => {
+                this.settings.rvc_narrator_pitch = event.target.value;
+                this.onSettingsChange();
+            });
         }
 
         // DeepSpeed Listener
@@ -808,10 +858,31 @@ class AllTalkTtsProvider {
     }
 
     async getTtsStreamingUrl(inputText, voiceId){
-        console.log("TTS Generation for ",inputText);
+         inputText = this.removeThinkingFromTTS(inputText);
+         console.log("TTS Generation for ",inputText);
          const outputUrl = await this.fetchTtsGeneration(inputText, voiceId);
          return outputUrl;
     }
+
+    removeThinkingFromTTS(inputText) {
+      try {
+        // Construct the regular expression to match the specified tag and its content.
+        // The pattern will match:
+        // <tagName ...> - Opening tag with any attributes
+        // (.*?)       - Any characters in between (non-greedy)
+        // </tagName>  - Closing tag
+        const tagName = "think";
+        const regex = new RegExp(`<${tagName}[^>]*>(.*?)</${tagName}>`, 'gis');
+
+        // Use the replace method with the regex to remove all matches.
+        const output = inputText.replace(regex, '');
+
+        return output;
+      } catch (error) {
+        console.error("An error occurred:", error);
+        return inputText; // Return the original input in case of an error.
+      }
+    }        
 
     //####################//
     //  Generate Standard //

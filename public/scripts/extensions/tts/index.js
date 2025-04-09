@@ -27,14 +27,13 @@ import { SlashCommandEnumValue, enumTypes } from '../../slash-commands/SlashComm
 import { enumIcons } from '../../slash-commands/SlashCommandCommonEnumsProvider.js';
 import { POPUP_TYPE, callGenericPopup } from '../../popup.js';
 import { GoogleTranslateTtsProvider } from './google-translate.js';
-export { talkingAnimation };
+import { KokoroTtsProvider } from './kokoro.js';
 
 const UPDATE_INTERVAL = 1000;
 // const wrapper = new ModuleWorkerWrapper(moduleWorker);
 
 let voiceMapEntries = [];
 let voiceMap = {}; // {charName:voiceid, charName2:voiceid2}
-let talkingHeadState = false;
 let lastChatId = null;
 let lastMessage = null;
 let lastMessageHash = null;
@@ -96,6 +95,7 @@ const ttsProviders = {
     'Google Translate': GoogleTranslateTtsProvider,
     GSVI: GSVITtsProvider,
     'GPT-SoVITS-V2 (Unofficial)': GptSovitsV2Provider,
+    Kokoro: KokoroTtsProvider,
     Novel: NovelTtsProvider,
     OpenAI: OpenAITtsProvider,
     'OpenAI Compatible': OpenAICompatibleTtsProvider,
@@ -163,27 +163,6 @@ async function moduleWorker() {
 
     processTtsQueue();
     processAudioJobQueue();
-    updateUiAudioPlayState();
-}
-
-function talkingAnimation(switchValue) {
-    if (!modules.includes('talkinghead')) {
-        console.debug('Talking Animation module not loaded');
-        return;
-    }
-
-    const apiUrl = getApiUrl();
-    const animationType = switchValue ? 'start' : 'stop';
-
-    if (switchValue !== talkingHeadState) {
-        try {
-            console.log(animationType + ' Talking Animation');
-            doExtrasFetch(`${apiUrl}/api/talkinghead/${animationType}_talking`);
-            talkingHeadState = switchValue;
-        } catch (error) {
-            // Handle the error here or simply ignore it to prevent logging
-        }
-    }
     updateUiAudioPlayState();
 }
 
@@ -378,7 +357,6 @@ function onAudioControlClicked() {
     // Not pausing, doing a full stop to anything TTS is doing. Better UX as pause is not as useful
     if (!audioElement.paused || isTtsProcessing()) {
         resetTtsPlayback();
-        talkingAnimation(false);
     } else {
         // Default play behavior if not processing or playing is to play the last message.
         processAndQueueTtsMessage(context.chat[context.chat.length - 1]);
@@ -405,7 +383,6 @@ function addAudioControl() {
 function completeCurrentAudioJob() {
     audioQueueProcessorReady = true;
     currentAudioJob = null;
-    talkingAnimation(false); //stop lip animation
     // updateUiPlayState();
     wrapper.update();
 }
@@ -436,7 +413,6 @@ async function processAudioJobQueue() {
         audioQueueProcessorReady = false;
         currentAudioJob = audioJobQueue.shift();
         playAudioData(currentAudioJob);
-        talkingAnimation(true);
     } catch (error) {
         toastr.error(error.toString());
         console.error(error);
@@ -745,6 +721,9 @@ async function loadTtsProvider(provider) {
 }
 
 function onTtsProviderChange() {
+    if (typeof ttsProvider?.dispose === 'function') {
+        ttsProvider.dispose();
+    }
     const ttsProviderSelection = $('#tts_provider').val();
     extension_settings.tts.currentProvider = ttsProviderSelection;
     $('#playback_rate_block').toggle(extension_settings.tts.currentProvider !== 'System');
@@ -1323,10 +1302,16 @@ export function initTts(){
     eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
     eventSource.on(event_types.MESSAGE_DELETED, onMessageDeleted);
     eventSource.on(event_types.GROUP_UPDATED, onChatChanged);
-    eventSource.makeLast(event_types.CHARACTER_MESSAGE_RENDERED, onMessageEvent);
-    eventSource.makeLast(event_types.USER_MESSAGE_RENDERED, onMessageEvent);
-    SlashCommandParser.addCommandObject(SlashCommand.fromProps({ name: 'speak',
-        callback: onNarrateText,
+    eventSource.on(event_types.GENERATION_STARTED, onGenerationStarted);
+    eventSource.on(event_types.GENERATION_ENDED, onGenerationEnded);
+    eventSource.makeLast(event_types.CHARACTER_MESSAGE_RENDERED, (messageId) => onMessageEvent(messageId));
+    eventSource.makeLast(event_types.USER_MESSAGE_RENDERED, (messageId) => onMessageEvent(messageId));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'speak',
+        callback: async (args, value) => {
+            await onNarrateText(args, value);
+            return '';
+        },
         aliases: ['narrate', 'tts'],
         namedArgumentList: [
             new SlashCommandNamedArgument(

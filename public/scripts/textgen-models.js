@@ -65,7 +65,10 @@ const OPENROUTER_PROVIDERS = [
     'Nebius',
     'Chutes',
     'Kluster',
+    'Crusoe',
     'Targon',
+    'Ubicloud',
+    'Parasail',
     '01.AI',
     'HuggingFace',
     'Mancer',
@@ -127,11 +130,11 @@ export async function loadTogetherAIModels(data) {
         return;
     }
 
-    data.sort((a, b) => a.name.localeCompare(b.name));
+    data.sort((a, b) => a.id.localeCompare(b.id));
     togetherModels = data;
 
-    if (!data.find(x => x.name === textgen_settings.togetherai_model)) {
-        textgen_settings.togetherai_model = data[0]?.name || '';
+    if (!data.find(x => x.id === textgen_settings.togetherai_model)) {
+        textgen_settings.togetherai_model = data[0]?.id || '';
     }
 
     $('#model_togetherai_select').empty();
@@ -142,9 +145,9 @@ export async function loadTogetherAIModels(data) {
         }
 
         const option = document.createElement('option');
-        option.value = model.name;
+        option.value = model.id;
         option.text = model.display_name;
-        option.selected = model.name === textgen_settings.togetherai_model;
+        option.selected = model.id === textgen_settings.togetherai_model;
         $('#model_togetherai_select').append(option);
     }
 }
@@ -589,7 +592,7 @@ function onTogetherModelSelect() {
     const modelName = String($('#model_togetherai_select').val());
     textgen_settings.togetherai_model = modelName;
     $('#api_button_textgenerationwebui').trigger('click');
-    const model = togetherModels.find(x => x.name === modelName);
+    const model = togetherModels.find(x => x.id === modelName);
     setGenerationParamsFromPreset({ max_length: model.context_length });
 }
 
@@ -659,7 +662,7 @@ function getMancerModelTemplate(option) {
 }
 
 function getTogetherModelTemplate(option) {
-    const model = togetherModels.find(x => x.name === option?.element?.value);
+    const model = togetherModels.find(x => x.id === option?.element?.value);
 
     if (!option.id || !model) {
         return option.text;
@@ -667,7 +670,7 @@ function getTogetherModelTemplate(option) {
 
     return $((`
         <div class="flex-container flexFlowColumn">
-            <div><strong>${DOMPurify.sanitize(model.name)}</strong> | <span>${model.context_length || '???'} tokens</span></div>
+            <div><strong>${DOMPurify.sanitize(model.id)}</strong> | <span>${model.context_length || '???'} tokens</span></div>
             <div><small>${DOMPurify.sanitize(model.description)}</small></div>
         </div>
     `));

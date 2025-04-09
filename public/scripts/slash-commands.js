@@ -38,11 +38,10 @@ import {
     setCharacterId,
     setCharacterName,
     setExtensionPrompt,
-    setUserName,
     showMoreMessages,
     stopGeneration,
     substituteParams,
-    syncCurrentSwipeInfoExtras,
+    syncMesToSwipe,
     system_avatar,
     system_message_types,
     this_chid,
@@ -55,7 +54,7 @@ import { getContext, saveMetadataDebounced } from './extensions.js';
 import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
 import { findGroupMemberId, groups, is_group_generating, openGroupById, resetSelectedGroup, saveGroupChat, selected_group } from './group-chats.js';
 import { chat_completion_sources, oai_settings, promptManager } from './openai.js';
-import { autoSelectPersona, retriggerFirstMessageOnEmptyChat, setPersonaLockState, togglePersonaLock, user_avatar } from './personas.js';
+import { user_avatar } from './personas.js';
 import { addEphemeralStoppingString, chat_styles, flushEphemeralStoppingStrings, power_user } from './power-user.js';
 import { SERVER_INPUTS, textgen_types, textgenerationwebui_settings } from './textgen-settings.js';
 import { decodeTextTokens, getAvailableTokenizers, getFriendlyTokenizerName, getTextTokens, getTokenCountAsync, selectTokenizer } from './tokenizers.js';
@@ -70,7 +69,7 @@ import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { SlashCommandAbortController } from './slash-commands/SlashCommandAbortController.js';
 import { SlashCommandNamedArgumentAssignment } from './slash-commands/SlashCommandNamedArgumentAssignment.js';
 import { SlashCommandEnumValue, enumTypes } from './slash-commands/SlashCommandEnumValue.js';
-import { POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
+import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { commonEnumProviders, enumIcons } from './slash-commands/SlashCommandCommonEnumsProvider.js';
 import { SlashCommandBreakController } from './slash-commands/SlashCommandBreakController.js';
 import { SlashCommandExecutionError } from './slash-commands/SlashCommandExecutionError.js';
@@ -124,46 +123,6 @@ export function initDefaultSlashCommands() {
             ],
         })],
         helpString: 'Get help on macros, chat formatting and commands.',
-    }));
-    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
-        name: 'persona',
-        callback: setNameCallback,
-        aliases: ['name'],
-        namedArgumentList: [
-            new SlashCommandNamedArgument(
-                'mode', 'The mode for persona selection. ("lookup" = search for existing persona, "temp" = create a temporary name, set a temporary name, "all" = allow both in the same command)',
-                [ARGUMENT_TYPE.STRING], false, false, 'all', ['lookup', 'temp', 'all'],
-            ),
-        ],
-        unnamedArgumentList: [
-            SlashCommandArgument.fromProps({
-                description: 'persona name',
-                typeList: [ARGUMENT_TYPE.STRING],
-                isRequired: true,
-                enumProvider: commonEnumProviders.personas,
-            }),
-        ],
-        helpString: 'Selects the given persona with its name and avatar (by name or avatar url). If no matching persona exists, applies a temporary name.',
-    }));
-    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
-        name: 'sync',
-        callback: syncCallback,
-        helpString: 'Syncs the user persona in user-attributed messages in the current chat.',
-    }));
-    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
-        name: 'lock',
-        callback: lockPersonaCallback,
-        aliases: ['bind'],
-        helpString: 'Locks/unlocks a persona (name and avatar) to the current chat',
-        unnamedArgumentList: [
-            SlashCommandArgument.fromProps({
-                description: 'state',
-                typeList: [ARGUMENT_TYPE.STRING],
-                isRequired: true,
-                defaultValue: 'toggle',
-                enumProvider: commonEnumProviders.boolean('onOffToggle'),
-            }),
-        ],
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'bg',
@@ -710,11 +669,21 @@ export function initDefaultSlashCommands() {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'hide',
         callback: hideMessageCallback,
+        namedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'name',
+                description: 'only hide messages from a certain character or persona',
+                typeList: [ARGUMENT_TYPE.STRING],
+                enumProvider: commonEnumProviders.messageNames,
+                isRequired: false,
+                acceptsMultiple: false,
+            }),
+        ],
         unnamedArgumentList: [
             SlashCommandArgument.fromProps({
-                description: 'message index (starts with 0) or range',
+                description: 'message index (starts with 0) or range, defaults to the last message index if not provided',
                 typeList: [ARGUMENT_TYPE.NUMBER, ARGUMENT_TYPE.RANGE],
-                isRequired: true,
+                isRequired: false,
                 enumProvider: commonEnumProviders.messages(),
             }),
         ],
@@ -723,11 +692,21 @@ export function initDefaultSlashCommands() {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'unhide',
         callback: unhideMessageCallback,
+        namedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'name',
+                description: 'only unhide messages from a certain character or persona',
+                typeList: [ARGUMENT_TYPE.STRING],
+                enumProvider: commonEnumProviders.messageNames,
+                isRequired: false,
+                acceptsMultiple: false,
+            }),
+        ],
         unnamedArgumentList: [
             SlashCommandArgument.fromProps({
-                description: 'message index (starts with 0) or range',
+                description: 'message index (starts with 0) or range, defaults to the last message index if not provided',
                 typeList: [ARGUMENT_TYPE.NUMBER, ARGUMENT_TYPE.RANGE],
-                isRequired: true,
+                isRequired: false,
                 enumProvider: commonEnumProviders.messages(),
             }),
         ],
@@ -1330,26 +1309,52 @@ export function initDefaultSlashCommands() {
         callback: inputCallback,
         returns: 'user input',
         namedArgumentList: [
-            new SlashCommandNamedArgument(
-                'default', 'default value of the input field', [ARGUMENT_TYPE.STRING], false, false, '"string"',
-            ),
-            new SlashCommandNamedArgument(
-                'large', 'show large input field', [ARGUMENT_TYPE.BOOLEAN], false, false, 'off', commonEnumProviders.boolean('onOff')(),
-            ),
-            new SlashCommandNamedArgument(
-                'wide', 'show wide input field', [ARGUMENT_TYPE.BOOLEAN], false, false, 'off', commonEnumProviders.boolean('onOff')(),
-            ),
-            new SlashCommandNamedArgument(
-                'okButton', 'text for the ok button', [ARGUMENT_TYPE.STRING], false,
-            ),
-            new SlashCommandNamedArgument(
-                'rows', 'number of rows for the input field', [ARGUMENT_TYPE.NUMBER], false,
-            ),
+            SlashCommandNamedArgument.fromProps({
+                name: 'default',
+                description: 'default value of the input field',
+                typeList: [ARGUMENT_TYPE.STRING],
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'large',
+                description: 'popup window will be shown larger in height, with more space for content (input field needs to be sized via \'rows\' argument)',
+                typeList: [ARGUMENT_TYPE.BOOLEAN],
+                defaultValue: 'off',
+                enumList: commonEnumProviders.boolean('onOff')(),
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'wide',
+                description: 'popup window will be shown wider, with a wider input field',
+                typeList: [ARGUMENT_TYPE.BOOLEAN],
+                defaultValue: 'off',
+                enumList: commonEnumProviders.boolean('onOff')(),
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'okButton',
+                description: 'text for the ok button',
+                typeList: [ARGUMENT_TYPE.STRING],
+                defaultValue: 'Ok',
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'rows',
+                description: 'number of rows for the input field (lines being displayed)',
+                typeList: [ARGUMENT_TYPE.NUMBER],
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'onSuccess',
+                description: 'closure to execute when the ok button is clicked or the input is closed as successful (via Enter, etc)',
+                typeList: [ARGUMENT_TYPE.CLOSURE],
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'onCancel',
+                description: 'closure to execute when the cancel button is clicked or the input is closed as cancelled (via Escape, etc)',
+                typeList: [ARGUMENT_TYPE.CLOSURE],
+            }),
         ],
         unnamedArgumentList: [
-            new SlashCommandArgument(
-                'text to display', [ARGUMENT_TYPE.STRING], false,
-            ),
+            SlashCommandArgument.fromProps({
+                description: 'text to display',
+                typeList: [ARGUMENT_TYPE.STRING],
+            }),
         ],
         helpString: `
         <div>
@@ -2133,8 +2138,8 @@ function injectCallback(args, value) {
         'assistant': extension_prompt_roles.ASSISTANT,
     };
 
-    const id = String(args?.id);
-    const ephemeral = isTrueBoolean(String(args?.ephemeral));
+    const id = String(args?.id ?? '');
+    const ephemeral = isTrueBoolean(String(args?.ephemeral ?? ''));
 
     if (!id) {
         console.warn('WARN: No ID provided for /inject command');
@@ -2589,6 +2594,7 @@ async function delayCallback(_, amount) {
     return '';
 }
 
+
 async function inputCallback(args, prompt) {
     const safeValue = DOMPurify.sanitize(prompt || '');
     const defaultInput = args?.default !== undefined && typeof args?.default === 'string' ? args.default : '';
@@ -2602,6 +2608,26 @@ async function inputCallback(args, prompt) {
     await delay(1);
     const result = await callGenericPopup(safeValue, POPUP_TYPE.INPUT, defaultInput, popupOptions);
     await delay(1);
+
+    // Input will return null on nothing entered, and false on cancel clicked
+    if (result === null || result === false) {
+        // Veryify if a cancel handler exists and it is valid
+        if (args?.onCancel) {
+            if (!(args.onCancel instanceof SlashCommandClosure)) {
+                throw new Error('argument \'onCancel\' must be a closure for command /input');
+            }
+            await args.onCancel.execute();
+        }
+    } else {
+        // Verify if an ok handler exists and it is valid
+        if (args?.onSuccess) {
+            if (!(args.onSuccess instanceof SlashCommandClosure)) {
+                throw new Error('argument \'onSuccess\' must be a closure for command /input');
+            }
+            await args.onSuccess.execute();
+        }
+    }
+
     return String(result || '');
 }
 
@@ -2923,7 +2949,7 @@ async function addSwipeCallback(args, value) {
 
     if (isTrueBoolean(args.switch)) {
         // Make sure ad-hoc changes to extras are saved before swiping away
-        syncCurrentSwipeInfoExtras();
+        syncMesToSwipe();
         lastMessage.swipe_id = newSwipeId;
         lastMessage.mes = lastMessage.swipes[newSwipeId];
         lastMessage.extra = structuredClone(lastMessage.swipe_info?.[newSwipeId]?.extra ?? lastMessage.extra ?? {});
@@ -3030,37 +3056,29 @@ async function askCharacter(args, text) {
     return await slashCommandReturnHelper.doReturn(args.return ?? 'pipe', message, { objectToStringFunc: x => x.mes });
 }
 
-async function hideMessageCallback(_, arg) {
-    if (!arg) {
-        console.warn('WARN: No argument provided for /hide command');
-        return '';
-    }
-
-    const range = stringToRange(arg, 0, chat.length - 1);
+async function hideMessageCallback(args, value) {
+    const range = value ? stringToRange(value, 0, chat.length - 1) : { start: chat.length - 1, end: chat.length - 1 };
 
     if (!range) {
-        console.warn(`WARN: Invalid range provided for /hide command: ${arg}`);
+        console.warn(`WARN: Invalid range provided for /hide command: ${value}`);
         return '';
     }
 
-    await hideChatMessageRange(range.start, range.end, false);
+    const nameFilter = String(args.name ?? '').trim();
+    await hideChatMessageRange(range.start, range.end, false, nameFilter);
     return '';
 }
 
-async function unhideMessageCallback(_, arg) {
-    if (!arg) {
-        console.warn('WARN: No argument provided for /unhide command');
-        return '';
-    }
-
-    const range = stringToRange(arg, 0, chat.length - 1);
+async function unhideMessageCallback(args, value) {
+    const range = value ? stringToRange(value, 0, chat.length - 1) : { start: chat.length - 1, end: chat.length - 1 };
 
     if (!range) {
-        console.warn(`WARN: Invalid range provided for /unhide command: ${arg}`);
+        console.warn(`WARN: Invalid range provided for /unhide command: ${value}`);
         return '';
     }
 
-    await hideChatMessageRange(range.start, range.end, true);
+    const nameFilter = String(args.name ?? '').trim();
+    await hideChatMessageRange(range.start, range.end, true, nameFilter);
     return '';
 }
 
@@ -3071,7 +3089,7 @@ async function unhideMessageCallback(_, arg) {
  * @returns {void}
  */
 function performGroupMemberAction(chid, action) {
-    const memberSelector = `.group_member[chid="${chid}"]`;
+    const memberSelector = `.group_member[data-chid="${chid}"]`;
     // Do not optimize. Paginator gets recreated on every action
     const paginationSelector = '#rm_group_members_pagination';
     const pageSizeSelector = '#rm_group_members_pagination select';
@@ -3367,7 +3385,7 @@ async function goToCharacterCallback(_, name) {
     const character = findChar({ name: name });
     if (character) {
         const chid = getCharIndex(character);
-        await openChat(new String(chid));
+        await openChat(String(chid));
         setActiveCharacter(character.avatar);
         setActiveGroup(null);
         return character.name;
@@ -3441,31 +3459,6 @@ export async function generateSystemMessage(_, prompt) {
     return '';
 }
 
-function syncCallback() {
-    $('#sync_name_button').trigger('click');
-    return '';
-}
-
-async function lockPersonaCallback(_args, value) {
-    if (['toggle', 't', ''].includes(value.trim().toLowerCase())) {
-        await togglePersonaLock();
-        return '';
-    }
-
-    if (isTrueBoolean(value)) {
-        await setPersonaLockState(true);
-        return '';
-    }
-
-    if (isFalseBoolean(value)) {
-        await setPersonaLockState(false);
-        return '';
-
-    }
-
-    return '';
-}
-
 function setStoryModeCallback() {
     $('#chat_display').val(chat_styles.DOCUMENT).trigger('change');
     return '';
@@ -3478,48 +3471,6 @@ function setBubbleModeCallback() {
 
 function setFlatModeCallback() {
     $('#chat_display').val(chat_styles.DEFAULT).trigger('change');
-    return '';
-}
-
-/**
- * Sets a persona name and optionally an avatar.
- * @param {{mode: 'lookup' | 'temp' | 'all'}} namedArgs Named arguments
- * @param {string} name Name to set
- * @returns {string}
- */
-function setNameCallback({ mode = 'all' }, name) {
-    if (!name) {
-        toastr.warning('You must specify a name to change to');
-        return '';
-    }
-
-    if (!['lookup', 'temp', 'all'].includes(mode)) {
-        toastr.warning('Mode must be one of "lookup", "temp" or "all"');
-        return '';
-    }
-
-    name = name.trim();
-
-    // If the name matches a persona avatar, or a name, auto-select it
-    if (['lookup', 'all'].includes(mode)) {
-        let persona = Object.entries(power_user.personas).find(([avatar, _]) => avatar === name)?.[1];
-        if (!persona) persona = Object.entries(power_user.personas).find(([_, personaName]) => personaName.toLowerCase() === name.toLowerCase())?.[1];
-        if (persona) {
-            autoSelectPersona(persona);
-            retriggerFirstMessageOnEmptyChat();
-            return '';
-        } else if (mode === 'lookup') {
-            toastr.warning(`Persona ${name} not found`);
-            return '';
-        }
-    }
-
-    if (['temp', 'all'].includes(mode)) {
-        // Otherwise, set just the name
-        setUserName(name); //this prevented quickReply usage
-        retriggerFirstMessageOnEmptyChat();
-    }
-
     return '';
 }
 
@@ -3685,14 +3636,14 @@ export async function sendMessageAs(args, text) {
     if (!isNaN(insertAt) && insertAt >= 0 && insertAt <= chat.length) {
         chat.splice(insertAt, 0, message);
         await saveChatConditional();
-        await eventSource.emit(event_types.MESSAGE_RECEIVED, insertAt);
+        await eventSource.emit(event_types.MESSAGE_RECEIVED, insertAt, 'command');
         await reloadCurrentChat();
-        await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, insertAt);
-    } else {     
+        await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, insertAt, 'command');
+    } else {
         chat.push(message);
-        await eventSource.emit(event_types.MESSAGE_RECEIVED, (chat.length - 1));
+        await eventSource.emit(event_types.MESSAGE_RECEIVED, (chat.length - 1), 'command');
         addOneMessage(message);
-        await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, (chat.length - 1));
+        await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, (chat.length - 1), 'command');
         await saveChatConditional();
     }
 
