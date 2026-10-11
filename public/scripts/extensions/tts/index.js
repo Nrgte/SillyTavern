@@ -34,6 +34,7 @@ const UPDATE_INTERVAL = 1000;
 
 let voiceMapEntries = [];
 let voiceMap = {}; // {charName:voiceid, charName2:voiceid2}
+let charNameSnapshot = {}; // {avatar:charName, avatar2:charName2}
 let lastChatId = null;
 let lastMessage = null;
 let lastMessageHash = null;
@@ -991,6 +992,222 @@ function sanitizeId(input) {
     return sanitized;
 }
 
+/**
+ * Build a mapping of voice name to the character names that have that voice assigned.
+ * @param {Object} source - Map of character name to voice name
+ * @returns {Object.<string, string[]>} Voice name to list of character names
+ */
+function buildVoiceAssignments(source) {
+    const assignments = {};
+    for (const [charName, voiceName] of Object.entries(source)) {
+        if (!voiceName || voiceName === DISABLED_VOICE_MARKER || voiceName === DEFAULT_VOICE_MARKER) {
+            continue;
+        }
+        if (!assignments[voiceName]) {
+            assignments[voiceName] = [];
+        }
+        if (!assignments[voiceName].includes(charName)) {
+            assignments[voiceName].push(charName);
+        }
+    }
+    return assignments;
+}
+
+/**
+ * Get the display label for a voice option, including the names of characters that use it.
+ * @param {string} voiceName - The voice name
+ * @param {Object.<string, string[]>} assignments - Result of buildVoiceAssignments
+ * @returns {string} Display label for the voice option
+ */
+function getVoiceOptionLabel(voiceName, assignments) {
+    const assignedChars = assignments?.[voiceName];
+    if (assignedChars && assignedChars.length > 0) {
+        return `${voiceName} (${assignedChars.join(', ')})`;
+    }
+    return voiceName;
+}
+
+/**
+ * Get the saved voice map from the current provider's settings, handling both the
+ * legacy string representation and the new object representation.
+ * @returns {Object} Map of character name to voice name
+ */
+function getVoiceMapFromSettings() {
+    if (ttsProviderName && 'voiceMap' in extension_settings.tts[ttsProviderName]) {
+        // Handle previous representation
+        if (typeof extension_settings.tts[ttsProviderName].voiceMap === 'string') {
+            return parseVoiceMap(extension_settings.tts[ttsProviderName].voiceMap);
+        }
+        // Handle new representation
+        if (typeof extension_settings.tts[ttsProviderName].voiceMap === 'object') {
+            return extension_settings.tts[ttsProviderName].voiceMap;
+        }
+    }
+    return {};
+}
+
+/**
+ * Refresh the voice option labels in all character voice map dropdowns so they show
+ * which characters currently have each voice assigned.
+ * Uses the full saved voice map, so characters outside the current chat keep their annotations too.
+ */
+function refreshVoiceMapAnnotations() {
+    const assignments = buildVoiceAssignments(getVoiceMapFromSettings());
+    for (const entry of voiceMapEntries) {
+        if (!entry.selectElement) {
+            continue;
+        }
+        entry.selectElement.find('option').each(function () {
+            const value = $(this).val();
+            if (value === DISABLED_VOICE_MARKER || value === DEFAULT_VOICE_MARKER) {
+                return;
+            }
+            this.textContent = getVoiceOptionLabel(value, assignments);
+        });
+    }
+}
+
+/**
+ * Rebuild the snapshot of character names from the current character list.
+ * The snapshot maps avatar keys to display names and is used to detect
+ * name changes once the character list has already been updated.
+ */
+function refreshCharNameSnapshot() {
+    const context = getContext();
+    const snapshot = {};
+    for (const character of context.characters) {
+        if (character?.avatar && character?.name) {
+            snapshot[character.avatar] = character.name;
+        }
+    }
+    charNameSnapshot = snapshot;
+}
+
+/**
+ * Remap a voice map key from an old character name to a new one.
+ * Updates the persisted provider settings, the in-memory voice map and the
+ * voice map UI, so voice assignments survive character renames.
+ * @param {string} oldName - The previous character display name
+ * @param {string} newName - The new character display name
+ */
+function remapVoiceName(oldName, newName) {
+    if (!oldName || !newName || oldName === newName) {
+        return;
+    }
+    if (oldName === DEFAULT_VOICE_MARKER || oldName === DISABLED_VOICE_MARKER
+        || newName === DEFAULT_VOICE_MARKER || newName === DISABLED_VOICE_MARKER) {
+        return;
+    }
+    if (!ttsProviderName) {
+        return;
+    }
+
+    const providerSettings = extension_settings.tts[ttsProviderName];
+
+    // Normalize the legacy string representation to an object
+    if (typeof providerSettings.voiceMap === 'string') {
+        providerSettings.voiceMap = parseVoiceMap(providerSettings.voiceMap);
+    }
+    if (!providerSettings.voiceMap || typeof providerSettings.voiceMap !== 'object') {
+        providerSettings.voiceMap = {};
+    }
+
+    let changed = false;
+
+    if (Object.prototype.hasOwnProperty.call(providerSettings.voiceMap, oldName)) {
+        const voiceId = providerSettings.voiceMap[oldName];
+        if (!Object.prototype.hasOwnProperty.call(providerSettings.voiceMap, newName)) {
+            providerSettings.voiceMap[newName] = voiceId;
+        }
+        delete providerSettings.voiceMap[oldName];
+        changed = true;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(voiceMap, oldName)) {
+        if (!Object.prototype.hasOwnProperty.call(voiceMap, newName)) {
+            voiceMap[newName] = voiceMap[oldName];
+        }
+        delete voiceMap[oldName];
+        changed = true;
+    }
+
+    for (const entry of voiceMapEntries) {
+        if (entry.name !== oldName) {
+            continue;
+        }
+        entry.name = newName;
+        const oldSanitized = sanitizeId(oldName);
+        const newSanitized = sanitizeId(newName);
+        $(`#tts_voicemap_char_${oldSanitized}`).attr('id', `tts_voicemap_char_${newSanitized}`).text(newName);
+        $(`#tts_voicemap_char_${oldSanitized}_voice`).attr('id', `tts_voicemap_char_${newSanitized}_voice`);
+        changed = true;
+    }
+
+    if (changed) {
+        saveSettingsDebounced();
+        refreshVoiceMapAnnotations();
+    }
+}
+
+/**
+ * Handle characters whose display name was changed in the character edit
+ * popup. The character list is already updated at this point, so the old
+ * name is looked up from the character name snapshot.
+ * @param {object} event - The event payload with detail.character
+ */
+function onCharacterEdited(event) {
+    const character = event?.detail?.character;
+    if (!character?.name || !character?.avatar) {
+        return;
+    }
+
+    const oldName = charNameSnapshot[character.avatar];
+    refreshCharNameSnapshot();
+
+    if (oldName && oldName !== character.name) {
+        remapVoiceName(oldName, character.name);
+    }
+}
+
+/**
+ * Handle characters renamed via the rename button or the /rename command.
+ * The character list still contains the old entry when this event is
+ * emitted (the list is reloaded after the event resolves), so the old name
+ * is captured synchronously and the new name is resolved asynchronously
+ * once the character list has been reloaded.
+ * @param {string} oldAvatar - The previous avatar key
+ * @param {string} newAvatar - The new avatar key
+ */
+function onCharacterRenamed(oldAvatar, newAvatar) {
+    if (!oldAvatar || !newAvatar || oldAvatar === newAvatar) {
+        return;
+    }
+
+    const context = getContext();
+    const oldName = charNameSnapshot[oldAvatar]
+        ?? context.characters.find(character => character.avatar === oldAvatar)?.name;
+
+    (async () => {
+        let newName = null;
+        for (let attempt = 0; attempt < 100; attempt++) {
+            await delay(50);
+            const newCharacter = getContext().characters.find(character => character.avatar === newAvatar);
+            if (newCharacter?.name) {
+                newName = newCharacter.name;
+                break;
+            }
+        }
+        if (!newName) {
+            // Fallback: the server derives the avatar file name from the display name
+            newName = newAvatar.replace(/\.[^/.]+$/, '');
+        }
+        refreshCharNameSnapshot();
+        if (oldName) {
+            remapVoiceName(oldName, newName);
+        }
+    })();
+}
+
 function parseVoiceMap(voiceMapString) {
     let parsedVoiceMap = {};
     for (const [charName, voiceId] of voiceMapString
@@ -1037,7 +1254,7 @@ class VoiceMapEntry {
         this.selectElement = null;
     }
 
-    addUI(voiceIds) {
+    addUI(voiceIds, assignments = {}) {
         let sanitizedName = sanitizeId(this.name);
         let defaultOption = this.name === DEFAULT_VOICE_MARKER ?
             `<option>${DISABLED_VOICE_MARKER}</option>` :
@@ -1055,7 +1272,7 @@ class VoiceMapEntry {
         // Populate voice ID select list
         for (const voiceId of voiceIds) {
             const option = document.createElement('option');
-            option.innerText = voiceId.name;
+            option.innerText = getVoiceOptionLabel(voiceId.name, assignments);
             option.value = voiceId.name;
             $(`#tts_voicemap_char_${sanitizedName}_voice`).append(option);
         }
@@ -1068,6 +1285,7 @@ class VoiceMapEntry {
     onSelectChange(args) {
         this.voiceId = this.selectElement.find(':selected').val();
         updateVoiceMap();
+        refreshVoiceMapAnnotations();
     }
 }
 
@@ -1131,16 +1349,7 @@ async function initVoiceMapInternal(unrestricted) {
     const characters = getCharacters(unrestricted);
 
     // Get saved voicemap from provider settings, handling new and old representations
-    let voiceMapFromSettings = {};
-    if ('voiceMap' in extension_settings.tts[ttsProviderName]) {
-        // Handle previous representation
-        if (typeof extension_settings.tts[ttsProviderName].voiceMap === 'string') {
-            voiceMapFromSettings = parseVoiceMap(extension_settings.tts[ttsProviderName].voiceMap);
-            // Handle new representation
-        } else if (typeof extension_settings.tts[ttsProviderName].voiceMap === 'object') {
-            voiceMapFromSettings = extension_settings.tts[ttsProviderName].voiceMap;
-        }
-    }
+    const voiceMapFromSettings = getVoiceMapFromSettings();
 
     // Get voiceIds from provider
     let voiceIdsFromProvider;
@@ -1150,6 +1359,9 @@ async function initVoiceMapInternal(unrestricted) {
     catch {
         toastr.error('TTS Provider failed to return voice ids.');
     }
+
+    // Map voices to the characters that have them assigned, so voice options can display who uses them
+    const voiceAssignments = buildVoiceAssignments(voiceMapFromSettings);
 
     // Build UI using VoiceMapEntry objects
     for (const character of characters) {
@@ -1166,7 +1378,7 @@ async function initVoiceMapInternal(unrestricted) {
             voiceId = DEFAULT_VOICE_MARKER;
         }
         const voiceMapEntry = new VoiceMapEntry(character, voiceId);
-        voiceMapEntry.addUI(voiceIdsFromProvider);
+        voiceMapEntry.addUI(voiceIdsFromProvider, voiceAssignments);
         voiceMapEntries.push(voiceMapEntry);
     }
     updateVoiceMap();
@@ -1302,6 +1514,9 @@ export function initTts(){
     eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
     eventSource.on(event_types.MESSAGE_DELETED, onMessageDeleted);
     eventSource.on(event_types.GROUP_UPDATED, onChatChanged);
+    eventSource.on(event_types.CHARACTER_EDITED, onCharacterEdited);
+    eventSource.on(event_types.CHARACTER_RENAMED, onCharacterRenamed);
+    refreshCharNameSnapshot();
     eventSource.on(event_types.GENERATION_STARTED, onGenerationStarted);
     eventSource.on(event_types.GENERATION_ENDED, onGenerationEnded);
     eventSource.makeLast(event_types.CHARACTER_MESSAGE_RENDERED, (messageId) => onMessageEvent(messageId));
