@@ -1,21 +1,72 @@
 import fetch from 'node-fetch';
 import { SECRET_KEYS, readSecret } from '../endpoints/secrets.js';
+import { OPENROUTER_HEADERS } from '../constants.js';
 
 const SOURCES = {
     'togetherai': {
         secretKey: SECRET_KEYS.TOGETHERAI,
-        url: 'api.together.xyz',
+        url: 'https://api.together.xyz/v1',
         model: 'togethercomputer/m2-bert-80M-32k-retrieval',
+        headers: {},
+        processBody: () => {},
     },
     'mistral': {
         secretKey: SECRET_KEYS.MISTRALAI,
-        url: 'api.mistral.ai',
+        url: 'https://api.mistral.ai/v1',
         model: 'mistral-embed',
+        headers: {},
+        processBody: () => {},
     },
     'openai': {
         secretKey: SECRET_KEYS.OPENAI,
-        url: 'api.openai.com',
+        url: 'https://api.openai.com/v1',
         model: 'text-embedding-ada-002',
+        headers: {},
+        processBody: () => {},
+    },
+    'electronhub': {
+        secretKey: SECRET_KEYS.ELECTRONHUB,
+        url: 'https://api.electronhub.ai/v1',
+        model: 'text-embedding-3-small',
+        headers: {},
+        processBody: () => {},
+    },
+    'openrouter': {
+        secretKey: SECRET_KEYS.OPENROUTER,
+        url: 'https://openrouter.ai/api/v1',
+        model: 'openai/text-embedding-3-large',
+        headers: { ...OPENROUTER_HEADERS },
+        processBody: () => {},
+    },
+    'chutes': {
+        secretKey: SECRET_KEYS.CHUTES,
+        url: 'https://{{MODEL}}.chutes.ai/v1',
+        model: 'chutes-qwen-qwen3-embedding-8b',
+        headers: {},
+        processBody: (body) => {
+            body.model = null;
+        },
+    },
+    'nanogpt': {
+        secretKey: SECRET_KEYS.NANOGPT,
+        url: 'https://nano-gpt.com/api/v1',
+        model: 'text-embedding-3-small',
+        headers: {},
+        processBody: () => {},
+    },
+    'siliconflow': {
+        secretKey: SECRET_KEYS.SILICONFLOW,
+        url: 'https://api.siliconflow.com/v1',
+        model: 'Qwen/Qwen3-Embedding-0.6B',
+        headers: {},
+        processBody: () => {},
+    },
+    'workers_ai': {
+        secretKey: SECRET_KEYS.WORKERS_AI,
+        url: '', // Constructed at runtime from account ID via urlOverride
+        model: '@cf/baai/bge-m3',
+        headers: {},
+        processBody: () => {},
     },
 };
 
@@ -25,9 +76,10 @@ const SOURCES = {
  * @param {string} source - The source of the vector
  * @param {import('../users.js').UserDirectoryList} directories - The directories object for the user
  * @param {string} model - The model to use for the embedding
+ * @param {string|null} urlOverride - Optional URL override for the API endpoint
  * @returns {Promise<number[][]>} - The array of vectors for the texts
  */
-export async function getOpenAIBatchVector(texts, source, directories, model = '') {
+export async function getOpenAIBatchVector(texts, source, directories, model = '', urlOverride = null) {
     const config = SOURCES[source];
 
     if (!config) {
@@ -42,17 +94,30 @@ export async function getOpenAIBatchVector(texts, source, directories, model = '
         throw new Error('No API key found');
     }
 
-    const url = config.url;
-    const response = await fetch(`https://${url}/v1/embeddings`, {
+    const modelName = model || config.model;
+    const url = urlOverride || config.url?.replace('{{MODEL}}', modelName);
+
+    if (!url) {
+        throw new Error(`No API URL configured for source ${source}`);
+    }
+
+    const body = {
+        input: texts,
+        model: modelName,
+    };
+
+    if (typeof config.processBody === 'function') {
+        config.processBody(body);
+    }
+
+    const response = await fetch(`${url}/embeddings`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${key}`,
+            'Authorization': `Bearer ${key}`,
+            ...config.headers,
         },
-        body: JSON.stringify({
-            input: texts,
-            model: model || config.model,
-        }),
+        body: JSON.stringify(body),
     });
 
     if (!response.ok) {
@@ -82,9 +147,10 @@ export async function getOpenAIBatchVector(texts, source, directories, model = '
  * @param {string} source - The source of the vector
  * @param {import('../users.js').UserDirectoryList} directories - The directories object for the user
  * @param {string} model - The model to use for the embedding
+ * @param {string|null} urlOverride - Optional URL override for the API endpoint
  * @returns {Promise<number[]>} - The vector for the text
  */
-export async function getOpenAIVector(text, source, directories, model = '') {
-    const vectors = await getOpenAIBatchVector([text], source, directories, model);
+export async function getOpenAIVector(text, source, directories, model = '', urlOverride = null) {
+    const vectors = await getOpenAIBatchVector([text], source, directories, model, urlOverride);
     return vectors[0];
 }

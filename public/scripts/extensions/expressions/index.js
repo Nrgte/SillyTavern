@@ -1,10 +1,10 @@
 import { Fuse } from '../../../lib.js';
 
-import { characters, eventSource, event_types, generateRaw, getRequestHeaders, main_api, online_status, saveSettingsDebounced, substituteParams, substituteParamsExtended, system_message_types, this_chid } from '../../../script.js';
+import { characters, eventSource, event_types, generateQuietPrompt, generateRaw, getRequestHeaders, online_status, saveSettingsDebounced, substituteParams, substituteParamsExtended, system_message_types, this_chid } from '../../../script.js';
 import { dragElement, isMobile } from '../../RossAscends-mods.js';
 import { getContext, getApiUrl, modules, extension_settings, ModuleWorkerWrapper, doExtrasFetch, renderExtensionTemplateAsync } from '../../extensions.js';
 import { loadMovingUIState, performFuzzySearch, power_user } from '../../power-user.js';
-import { onlyUnique, debounce, getCharaFilename, trimToEndSentence, trimToStartSentence, waitUntilCondition, findChar } from '../../utils.js';
+import { onlyUnique, debounce, getCharaFilename, trimToEndSentence, trimToStartSentence, waitUntilCondition, findChar, isFalseBoolean, includesIgnoreCaseAndAccents } from '../../utils.js';
 import { hideMutedSprites, selected_group } from '../../group-chats.js';
 import { isJsonSchemaSupported } from '../../textgen-settings.js';
 import { debounce_timeout } from '../../constants.js';
@@ -17,6 +17,9 @@ import { slashCommandReturnHelper } from '../../slash-commands/SlashCommandRetur
 import { generateWebLlmChatPrompt, isWebLlmSupported } from '../shared.js';
 import { Popup, POPUP_RESULT } from '../../popup.js';
 import { t } from '../../i18n.js';
+import { removeReasoningFromString } from '../../reasoning.js';
+import { macros } from '../../macros/macro-system.js';
+import { MacrosParser } from '/scripts/macros.js';
 export { MODULE_NAME };
 
 /**
@@ -82,6 +85,13 @@ const EXPRESSION_API = {
     extras: 1,
     llm: 2,
     webllm: 3,
+    none: 99,
+};
+
+/** @enum {string} */
+const PROMPT_TYPE = {
+    raw: 'raw',
+    full: 'full',
 };
 
 let expressionsList = null;
@@ -95,6 +105,19 @@ let lastServerResponseTime = 0;
 /** @type {{[characterName: string]: string}} */
 export let lastExpression = {};
 
+/**
+ * Gets the current fallback expression, including the labels for when it is not set
+ * @returns {string|null}
+ */
+function getCurrentFallbackExpression() {
+    const expression = extension_settings?.expressions.fallback_expression;
+    const showEmojis = extension_settings?.expressions?.showDefault;
+
+    if (!expression && showEmojis) return OPTION_EMOJI_FALLBACK;
+    if (!expression) return OPTION_NO_FALLBACK;
+
+    return expression;
+}
 /**
  * Returns a placeholder image object for a given expression
  * @param {string} expression - The expression label
@@ -273,7 +296,7 @@ async function getLastMessageSprite(avatar) {
     return null;
 }
 
-async function visualNovelUpdateLayers(container) {
+export async function visualNovelUpdateLayers(container) {
     const context = getContext();
     const group = context.groups.find(x => x.id == context.groupId);
     const recentMessages = context.chat.map(x => x.original_avatar).filter(x => x).reverse().filter(onlyUnique);
@@ -355,8 +378,7 @@ async function visualNovelUpdateLayers(container) {
             if (power_user.reduced_motion) {
                 element.css('left', currentPosition + 'px');
                 requestAnimationFrame(() => resolve());
-            }
-            else {
+            } else {
                 element.animate({ left: currentPosition + 'px' }, 500, () => {
                     resolve();
                 });
@@ -517,8 +539,7 @@ async function moduleWorker({ newChat = false } = {}) {
         }
 
         return;
-    }
-    else {
+    } else {
         // force reload expressions list on connect to API
         if (offlineMode.is(':visible')) {
             expressionsList = null;
@@ -591,11 +612,9 @@ async function moduleWorker({ newChat = false } = {}) {
         }
 
         await sendExpressionCall(spriteFolderName, expression, { force: force, vnMode: vnMode });
-    }
-    catch (error) {
+    } catch (error) {
         console.log(error);
-    }
-    finally {
+    } finally {
         inApiCall = false;
         lastCharacter = context.groupId || context.characterId;
         lastMessage = currentLastMessage.mes;
@@ -623,8 +642,7 @@ function getFolderNameByMessage(message) {
 
     if (context.groupId) {
         avatarPath = message.original_avatar || context.characters.find(x => message.force_avatar && message.force_avatar.includes(encodeURIComponent(x.avatar)))?.avatar;
-    }
-    else if (context.characterId !== undefined) {
+    } else if (context.characterId !== undefined) {
         avatarPath = getCharaFilename();
     }
 
@@ -659,7 +677,14 @@ export async function sendExpressionCall(spriteFolderName, expression, { force =
     }
 }
 
-async function setSpriteFolderCommand(_, folder) {
+/**
+ * Slash command callback for /setspritefolder
+ * @param {object} param Command parameters
+ * @param {string} param.name Character name override
+ * @param {string} folder Folder path, can be full or partial with leading slash
+ * @returns {Promise<string>} Empty string
+ */
+async function setSpriteFolderCommand({ name }, folder) {
     if (!folder) {
         console.log('Clearing sprite set');
         folder = '';
@@ -667,8 +692,12 @@ async function setSpriteFolderCommand(_, folder) {
 
     if (folder.startsWith('/') || folder.startsWith('\\')) {
         const currentLastMessage = getLastCharacterMessage();
+        if (currentLastMessage.name === null && !name) {
+            toastr.error('At least one character message is required to set a sprites subfolder.', 'Provide the name with "name=" argument.');
+            return '';
+        }
         folder = folder.slice(1);
-        folder = `${currentLastMessage.name}/${folder}`;
+        folder = `${name || currentLastMessage.name}/${folder}`;
     }
 
     $('#expression_override').val(folder.trim());
@@ -678,7 +707,7 @@ async function setSpriteFolderCommand(_, folder) {
     return '';
 }
 
-async function classifyCallback(/** @type {{api: string?, prompt: string?}} */ { api = null, prompt = null }, text) {
+async function classifyCallback(/** @type {{api: string?, filter: string?, prompt: string?}} */ { api = null, filter = null, prompt = null }, text) {
     if (!text) {
         toastr.error('No text provided');
         return '';
@@ -689,13 +718,19 @@ async function classifyCallback(/** @type {{api: string?, prompt: string?}} */ {
     }
 
     const expressionApi = EXPRESSION_API[api] || extension_settings.expressions.api;
+    const filterAvailable = !isFalseBoolean(filter);
+
+    if (expressionApi === EXPRESSION_API.none) {
+        toastr.warning('No classifier API selected');
+        return '';
+    }
 
     if (!modules.includes('classify') && expressionApi == EXPRESSION_API.extras) {
         toastr.warning('Text classification is disabled or not available');
         return '';
     }
 
-    const label = await getExpressionLabel(text, expressionApi, { customPrompt: prompt });
+    const label = await getExpressionLabel(text, expressionApi, { filterAvailable: filterAvailable, customPrompt: prompt });
     console.debug(`Classification result for "${text}": ${label}`);
     return label;
 }
@@ -764,6 +799,67 @@ async function setSpriteSlashCommand({ type }, searchTerm) {
     await sendExpressionCall(spriteFolderName, label, { force: true, overrideSpriteFile: spriteFile });
 
     return label;
+}
+
+/**
+ * Get all the currently set expression labels.
+ * @param {Object} args
+ * @param {'true'|'false'|'only'} [args.custom] - Whether to filter out or return only custom expressions
+ * @param {'true'|'false'} [args.filter] - Filter the list to only include expressions that have available sprites for the current character
+ * @param {import('../../slash-commands/SlashCommandReturnHelper.js').SlashCommandReturnType} [args.return] - In which format must the expressions be returned
+ * @param {string} characterName
+ * @returns {Promise<string>}
+ */
+async function getExpressionListSlashCommand(args, characterName) {
+    const { custom, filter = 'true', return: returnType = 'pipe' } = args;
+
+    const expressions = await getExpressionsList({ filterAvailable: !isFalseBoolean(filter) });
+    const customExpressions = extension_settings?.expressions?.custom || [];
+    const expressionsMap = {
+        default: expressions.filter(expression => !customExpressions.includes(expression)),
+        custom: customExpressions,
+        all: expressions,
+    };
+
+    let expressionIndex = 'all';
+
+    if (custom === 'false') expressionIndex = 'default';
+    if (custom === 'only') expressionIndex = 'custom';
+
+    try {
+        return await slashCommandReturnHelper.doReturn(returnType, expressionsMap[expressionIndex], {
+            objectToStringFunc: list => list.join(', '),
+        });
+    } catch (err) {
+        console.error(err);
+        return '';
+    }
+}
+
+/**
+ * @param {string} expressionName - Label of the expression to set as fallback
+ */
+function setFallBackExpressionSlashCommand(args, expressionName) {
+    expressionName = expressionName.trim().toLowerCase();
+
+    if (!expressionName) return getCurrentFallbackExpression();
+
+    const select = /** @type {HTMLSelectElement} */(document.getElementById('expression_fallback'));
+    const fallbackExpressions = Array
+        .from(select?.options || [])
+        .map(option => option.value)
+        .filter(expression => expression?.length > 0);
+
+    const expressionMatch = fallbackExpressions.find(expression => includesIgnoreCaseAndAccents(expression, expressionName));
+
+    if (!expressionMatch) {
+        toastr.warning(t`No expression found for search term ${expressionName}`, t`Set Fallback Expression`);
+        return '';
+    }
+
+    $(select).val(expressionMatch).trigger('change');
+
+    return expressionMatch;
 }
 
 /**
@@ -901,10 +997,6 @@ function sampleClassifyText(text) {
  * @returns {Promise<string>} Prompt for the LLM API.
  */
 async function getLlmPrompt(labels) {
-    if (isJsonSchemaSupported()) {
-        return '';
-    }
-
     const labelsString = labels.map(x => `"${x}"`).join(', ');
     const prompt = substituteParamsExtended(String(extension_settings.expressions.llmPrompt), { labels: labelsString });
     return prompt;
@@ -928,6 +1020,9 @@ function parseLlmResponse(emotionResponse, labels) {
 
         return response;
     } catch {
+        // Clean possible reasoning from response
+        emotionResponse = removeReasoningFromString(emotionResponse);
+
         const fuse = new Fuse(labels, { includeScore: true });
         console.debug('Using fuzzy search in labels:', labels);
         const result = fuse.search(emotionResponse);
@@ -965,6 +1060,7 @@ function getJsonSchema(emotions) {
         required: [
             'emotion',
         ],
+        additionalProperties: false,
     };
 }
 
@@ -988,10 +1084,11 @@ function onTextGenSettingsReady(args) {
  * @param {string} text - The text to classify and retrieve the expression label for.
  * @param {EXPRESSION_API} [expressionsApi=extension_settings.expressions.api] - The expressions API to use for classification.
  * @param {object} [options={}] - Optional arguments.
+ * @param {boolean?} [options.filterAvailable=null] - Whether to filter available expressions. If not specified, uses the extension setting.
  * @param {string?} [options.customPrompt=null] - The custom prompt to use for classification.
  * @returns {Promise<string?>} - The label of the expression.
  */
-export async function getExpressionLabel(text, expressionsApi = extension_settings.expressions.api, { customPrompt = null } = {}) {
+export async function getExpressionLabel(text, expressionsApi = extension_settings.expressions.api, { filterAvailable = null, customPrompt = null } = {}) {
     // Return if text is undefined, saving a costly fetch request
     if ((!modules.includes('classify') && expressionsApi == EXPRESSION_API.extras) || !text) {
         return extension_settings.expressions.fallback_expression;
@@ -1002,6 +1099,11 @@ export async function getExpressionLabel(text, expressionsApi = extension_settin
     }
 
     text = sampleClassifyText(text);
+
+    filterAvailable ??= extension_settings.expressions.filterAvailable;
+    if (filterAvailable && ![EXPRESSION_API.llm, EXPRESSION_API.webllm].includes(expressionsApi)) {
+        console.debug('Filter available is only supported for LLM and WebLLM expressions');
+    }
 
     try {
         switch (expressionsApi) {
@@ -1027,10 +1129,24 @@ export async function getExpressionLabel(text, expressionsApi = extension_settin
                     return extension_settings.expressions.fallback_expression;
                 }
 
-                const expressionsList = await getExpressionsList();
+                const expressionsList = await getExpressionsList({ filterAvailable: filterAvailable });
                 const prompt = substituteParamsExtended(customPrompt, { labels: expressionsList }) || await getLlmPrompt(expressionsList);
                 eventSource.once(event_types.TEXT_COMPLETION_SETTINGS_READY, onTextGenSettingsReady);
-                const emotionResponse = await generateRaw(text, main_api, false, false, prompt);
+
+                let emotionResponse;
+                try {
+                    inApiCall = true;
+                    switch (extension_settings.expressions.promptType) {
+                        case PROMPT_TYPE.raw:
+                            emotionResponse = await generateRaw({ prompt: text, systemPrompt: prompt });
+                            break;
+                        case PROMPT_TYPE.full:
+                            emotionResponse = await generateQuietPrompt({ quietPrompt: prompt });
+                            break;
+                    }
+                } finally {
+                    inApiCall = false;
+                }
                 return parseLlmResponse(emotionResponse, expressionsList);
             }
             // Using WebLLM
@@ -1040,7 +1156,7 @@ export async function getExpressionLabel(text, expressionsApi = extension_settin
                     return extension_settings.expressions.fallback_expression;
                 }
 
-                const expressionsList = await getExpressionsList();
+                const expressionsList = await getExpressionsList({ filterAvailable: filterAvailable });
                 const prompt = substituteParamsExtended(customPrompt, { labels: expressionsList }) || await getLlmPrompt(expressionsList);
                 const messages = [
                     { role: 'user', content: text + '\n\n' + prompt },
@@ -1050,7 +1166,7 @@ export async function getExpressionLabel(text, expressionsApi = extension_settin
                 return parseLlmResponse(emotionResponse, expressionsList);
             }
             // Extras
-            default: {
+            case EXPRESSION_API.extras: {
                 const url = new URL(getApiUrl());
                 url.pathname = '/api/classify';
 
@@ -1068,6 +1184,15 @@ export async function getExpressionLabel(text, expressionsApi = extension_settin
                     return data.classification[0].label;
                 }
             } break;
+            // None
+            case EXPRESSION_API.none: {
+                // Return empty, the fallback expression will be used
+                return '';
+            }
+            default: {
+                toastr.error('Invalid API selected');
+                return '';
+            }
         }
     } catch (error) {
         toastr.error('Could not classify expression. Check the console or your backend for more information.');
@@ -1076,12 +1201,21 @@ export async function getExpressionLabel(text, expressionsApi = extension_settin
     }
 }
 
-function getLastCharacterMessage() {
+/**
+ * @param {Object} [options]
+ * @param {string} [options.characterName] Filters last message to the one of the target character
+ */
+function getLastCharacterMessage({ characterName = '' } = {}) {
     const context = getContext();
     const reversedChat = context.chat.slice().reverse();
+    const ignoreCharName = !characterName;
 
     for (let mes of reversedChat) {
         if (mes.is_user || mes.is_system || mes.extra?.type === system_message_types.NARRATOR) {
+            continue;
+        }
+
+        if (!ignoreCharName && mes.name !== characterName) {
             continue;
         }
 
@@ -1249,8 +1383,7 @@ async function getSpritesList(name) {
         }
 
         return grouped;
-    }
-    catch (err) {
+    } catch (err) {
         console.log(err);
         return [];
     }
@@ -1288,7 +1421,7 @@ async function renderFallbackExpressionPicker() {
     defaultPicker.empty();
 
 
-    addOption(OPTION_NO_FALLBACK, '[ No fallback ]', !extension_settings.expressions.fallback_expression);
+    addOption(OPTION_NO_FALLBACK, '[ No fallback ]', !extension_settings.expressions.fallback_expression && !extension_settings.expressions.showDefault);
     addOption(OPTION_EMOJI_FALLBACK, '[ Default emojis ]', !!extension_settings.expressions.showDefault);
 
     for (const expression of expressions) {
@@ -1320,11 +1453,27 @@ function getCachedExpressions() {
     return [...expressionsList, ...extension_settings.expressions.custom].filter(onlyUnique);
 }
 
-export async function getExpressionsList() {
-    // Return cached list if available
-    if (Array.isArray(expressionsList)) {
-        return getCachedExpressions();
+export async function getExpressionsList({ filterAvailable = false } = {}) {
+    // If there is no cached list, load and cache it
+    if (!Array.isArray(expressionsList)) {
+        expressionsList = await resolveExpressionsList();
     }
+
+    const expressions = getCachedExpressions();
+
+    // Filtering is only available for llm and webllm APIs
+    if (!filterAvailable || ![EXPRESSION_API.llm, EXPRESSION_API.webllm].includes(extension_settings.expressions.api)) {
+        return expressions;
+    }
+
+    // Get expressions with available sprites
+    const currentLastMessage = selected_group ? getLastCharacterMessage() : null;
+    const spriteFolderName = getSpriteFolderName(currentLastMessage, currentLastMessage?.name);
+
+    return expressions.filter(label => {
+        const expression = spriteCache[spriteFolderName]?.find(x => x.label === label);
+        return (expression?.files.length ?? 0) > 0;
+    });
 
     /**
      * Returns the list of expressions from the API or fallback in offline mode.
@@ -1344,7 +1493,6 @@ export async function getExpressionsList() {
                 });
 
                 if (apiResult.ok) {
-
                     const data = await apiResult.json();
                     expressionsList = data.labels;
                     return expressionsList;
@@ -1355,7 +1503,7 @@ export async function getExpressionsList() {
             if (extension_settings.expressions.api == EXPRESSION_API.local) {
                 const apiResult = await fetch('/api/extra/classify/labels', {
                     method: 'POST',
-                    headers: getRequestHeaders(),
+                    headers: getRequestHeaders({ omitContentType: true }),
                 });
 
                 if (apiResult.ok) {
@@ -1372,9 +1520,30 @@ export async function getExpressionsList() {
         expressionsList = DEFAULT_EXPRESSIONS.slice();
         return expressionsList;
     }
+}
 
-    const result = await resolveExpressionsList();
-    return [...result, ...extension_settings.expressions.custom].filter(onlyUnique);
+/**
+ * Gets the last expression used in the chat by the active character.
+ * @param {Object} [options]
+ * @param {string} [options.characterName] Filters last expression to the one of the target character instead
+ * @returns {string}
+ */
+function getLastExpression({ characterName = '' } = {}) {
+    if (typeof characterName !== 'string') throw new Error('Character name must be a string');
+
+    if (!characterName) {
+        characterName = characters[this_chid]?.avatar || '';
+    }
+
+    const char = findChar({ name: characterName, quiet: true });
+
+    const currentLastMessage = getLastCharacterMessage({ characterName });
+    const finalCharacterName = currentLastMessage?.name ?? char?.name ?? characterName;
+
+    const spriteFolderName = getSpriteFolderName(currentLastMessage, finalCharacterName);
+    const sprite = lastExpression[spriteFolderName.split('/')[0]] ?? '';
+
+    return sprite;
 }
 
 /**
@@ -1410,9 +1579,8 @@ function chooseSpriteForExpression(spriteFolderName, expression, { prevExpressio
         const searched = sprite.files.find(x => x.fileName === overrideSpriteFile);
         if (searched) spriteFile = searched;
         else toastr.warning(t`Couldn't find sprite file ${overrideSpriteFile} for expression ${expression}.`, t`Sprite Not Found`);
-    }
-    // Else calculate next expression, if multiple are allowed
-    else if (extension_settings.expressions.allowMultiple && sprite.files.length > 1) {
+    } else if (extension_settings.expressions.allowMultiple && sprite.files.length > 1) {
+        // Else calculate next expression, if multiple are allowed
         let possibleFiles = sprite.files;
         if (extension_settings.expressions.rerollIfSame) {
             possibleFiles = possibleFiles.filter(x => !prevExpressionSrc || x.imageSrc !== prevExpressionSrc);
@@ -1421,7 +1589,6 @@ function chooseSpriteForExpression(spriteFolderName, expression, { prevExpressio
     }
 
     return spriteFile;
-
 }
 
 /**
@@ -1528,8 +1695,7 @@ async function setExpression(spriteFolderName, expression, { force = false, over
         }
 
         console.info('Expression set', { expression: spriteFile.expression, file: spriteFile.fileName });
-    }
-    else {
+    } else {
         img.attr('data-sprite-folder-name', spriteFolderName);
 
         img.off('error');
@@ -1551,8 +1717,10 @@ async function setExpression(spriteFolderName, expression, { force = false, over
  * @param {string} expression - The expression label to use for the default image
  */
 function setDefaultEmojiForImage(img, expression) {
-    if (extension_settings.expressions.custom?.includes(expression)) {
-        console.debug(`Can't set default emoji for a custom expression (${expression}). setting to ${DEFAULT_FALLBACK_EXPRESSION} instead.`);
+    // Classifiers can return a falsy, literal "null"/"undefined", or otherwise unknown label,
+    // and custom expressions have no default assets; only known labels have an image (#5863).
+    if (!DEFAULT_EXPRESSIONS.includes(expression)) {
+        console.debug(`Can't set default emoji for expression (${expression}). setting to ${DEFAULT_FALLBACK_EXPRESSION} instead.`);
         expression = DEFAULT_FALLBACK_EXPRESSION;
     }
 
@@ -1663,6 +1831,7 @@ function onExpressionApiChanged() {
     if (tempApi) {
         extension_settings.expressions.api = Number(tempApi);
         $('.expression_llm_prompt_block').toggle([EXPRESSION_API.llm, EXPRESSION_API.webllm].includes(extension_settings.expressions.api));
+        $('.expression_prompt_type_block').toggle(extension_settings.expressions.api === EXPRESSION_API.llm);
         expressionsList = null;
         spriteCache = {};
         moduleWorker();
@@ -1701,27 +1870,38 @@ async function onExpressionFallbackChanged() {
     saveSettingsDebounced();
 }
 
+/**
+ * Handles the file upload process for a sprite image.
+ * @param {string} url URL to upload the file to
+ * @param {FormData} formData FormData object containing the file and other data to upload
+ * @returns {Promise<any>} - The response data from the server
+ */
 async function handleFileUpload(url, formData) {
     try {
-        const data = await jQuery.ajax({
-            type: 'POST',
-            url: url,
-            data: formData,
-            beforeSend: function () { },
-            cache: false,
-            contentType: false,
-            processData: false,
+        const result = await fetch(url, {
+            method: 'POST',
+            headers: getRequestHeaders({ omitContentType: true }),
+            body: formData,
+            cache: 'no-cache',
         });
 
+        if (!result.ok) {
+            throw new Error(`Upload failed with status ${result.status}`);
+        }
+
+        const data = await result.json();
+
         // Refresh sprites list
-        const name = formData.get('name');
+        const name = formData.get('name').toString();
         delete spriteCache[name];
         await fetchImagesNoCache();
         await validateImages(name);
 
-        return data;
+        return data ?? {};
     } catch (error) {
+        console.error('Error uploading image:', error);
         toastr.error('Failed to upload image');
+        return {};
     }
 }
 
@@ -1767,19 +1947,16 @@ async function onClickExpressionUpload(event) {
             const fileNameWithoutExtension = withoutExtension(file.name);
             const validFileName = validateExpressionSpriteName(expression, fileNameWithoutExtension);
 
-            // If there is no expression yet and it's a valid expression, we just take it
             if (!clickedFileName && validFileName) {
+                // If there is no expression yet and it's a valid expression, we just take it
                 spriteName = fileNameWithoutExtension;
-            }
-            // If the filename matches the one that was clicked, we just take it and replace it
-            else if (clickedFileName === file.name) {
+            } else if (clickedFileName === file.name) {
+                // If the filename matches the one that was clicked, we just take it and replace it
                 spriteName = fileNameWithoutExtension;
-            }
-            // If it's a valid filename and there's no existing file with the same name, we just take it
-            else if (!matchesExisting && validFileName) {
+            } else if (!matchesExisting && validFileName) {
+                // If it's a valid filename and there's no existing file with the same name, we just take it
                 spriteName = fileNameWithoutExtension;
-            }
-            else {
+            } else {
                 /** @type {import('../../popup.js').CustomPopupButton[]} */
                 const customButtons = [];
                 if (clickedFileName) {
@@ -1939,7 +2116,11 @@ async function onClickExpressionUploadPackButton() {
         const uploadToast = toastr.info('Please wait...', 'Upload is processing', { timeOut: 0, extendedTimeOut: 0 });
         const { count } = await handleFileUpload('/api/sprites/upload-zip', formData);
         toastr.clear(uploadToast);
-        toastr.success(`Uploaded ${count} image(s) for ${name}`);
+
+        // Only show success message if at least one image was uploaded
+        if (count) {
+            toastr.success(`Uploaded ${count} image(s) for ${name}`);
+        }
 
         // Reset the input
         e.target.form.reset();
@@ -2036,7 +2217,7 @@ async function fetchImagesNoCache() {
 
 function migrateSettings() {
     if (extension_settings.expressions.api === undefined) {
-        extension_settings.expressions.api = EXPRESSION_API.extras;
+        extension_settings.expressions.api = EXPRESSION_API.none;
         saveSettingsDebounced();
     }
 
@@ -2059,13 +2240,18 @@ function migrateSettings() {
         saveSettingsDebounced();
     }
 
-    if (extension_settings.expressions.showDefault && extension_settings.expressions.fallback_expression !== undefined) {
+    if (extension_settings.expressions.showDefault && extension_settings.expressions.fallback_expression) {
         extension_settings.expressions.showDefault = false;
+        saveSettingsDebounced();
+    }
+
+    if (extension_settings.expressions.promptType === undefined) {
+        extension_settings.expressions.promptType = PROMPT_TYPE.raw;
         saveSettingsDebounced();
     }
 }
 
-(async function () {
+export async function init() {
     function addExpressionImage() {
         const html = `
         <div id="expression-wrapper">
@@ -2102,6 +2288,10 @@ function migrateSettings() {
             extension_settings.expressions.rerollIfSame = !!$(this).prop('checked');
             saveSettingsDebounced();
         });
+        $('#expressions_filter_available').prop('checked', extension_settings.expressions.filterAvailable).on('input', function () {
+            extension_settings.expressions.filterAvailable = !!$(this).prop('checked');
+            saveSettingsDebounced();
+        });
         $('#expression_override_cleanup_button').on('click', onClickExpressionOverrideRemoveAllButton);
         $(document).on('dragstart', '.expression', (e) => {
             e.preventDefault();
@@ -2114,7 +2304,7 @@ function migrateSettings() {
         $('#open_chat_expressions').hide();
 
         await renderAdditionalExpressionSettings();
-        $('#expression_api').val(extension_settings.expressions.api ?? EXPRESSION_API.extras);
+        $('#expression_api').val(extension_settings.expressions.api ?? EXPRESSION_API.none);
         $('.expression_llm_prompt_block').toggle([EXPRESSION_API.llm, EXPRESSION_API.webllm].includes(extension_settings.expressions.api));
         $('#expression_llm_prompt').val(extension_settings.expressions.llmPrompt ?? '');
         $('#expression_llm_prompt').on('input', function () {
@@ -2126,6 +2316,16 @@ function migrateSettings() {
             extension_settings.expressions.llmPrompt = DEFAULT_LLM_PROMPT;
             saveSettingsDebounced();
         });
+        $('#expression_prompt_raw').on('input', function () {
+            extension_settings.expressions.promptType = PROMPT_TYPE.raw;
+            saveSettingsDebounced();
+        });
+        $('#expression_prompt_full').on('input', function () {
+            extension_settings.expressions.promptType = PROMPT_TYPE.full;
+            saveSettingsDebounced();
+        });
+        $(`input[name="expression_prompt_type"][value="${extension_settings.expressions.promptType}"]`).prop('checked', true);
+        $('.expression_prompt_type_block').toggle(extension_settings.expressions.api === EXPRESSION_API.llm);
 
         $('#expression_custom_add').on('click', onClickExpressionAddCustom);
         $('#expression_custom_remove').on('click', onClickExpressionRemoveCustom);
@@ -2154,7 +2354,7 @@ function migrateSettings() {
             imgElement.src = '';
         }
 
-        setExpressionOverrideHtml();
+        setExpressionOverrideHtml(true); // force-clear, as the character might not have an override defined
 
         if (isVisualNovelMode()) {
             $('#visual-novel-wrapper').empty();
@@ -2228,9 +2428,55 @@ function migrateSettings() {
         returns: 'The currently set expression label after setting it.',
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'expression-fallback',
+        callback: setFallBackExpressionSlashCommand,
+        unnamedArgumentList: [
+            SlashCommandArgument.fromProps({
+                description: 'expression label to set',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: false,
+                enumProvider: () => [
+                    new SlashCommandEnumValue(OPTION_NO_FALLBACK, 'Sets the fallback expression to no image'),
+                    new SlashCommandEnumValue(OPTION_EMOJI_FALLBACK, 'Sets the fallback expression to emojis'),
+                    ...localEnumProviders.expressions(),
+                ],
+            }),
+        ],
+        helpString: `
+            <div>
+                Gets the currently selected global fallback expression.<br />
+                If a valid expression label is sent, it will be set as the new fallback.
+            </div>
+            <div>
+                <strong>Example:</strong>
+                <ul>
+                    <li>
+                        <pre><code>/expression-fallback | /echo</code></pre>
+                        <small>Returns the currently selected fallback.</small>
+                    </li>
+                    <li>
+                        <pre><code>/expression-fallback admiration</code></pre>
+                        <small>Sets a new expression as fallback.</small>
+                    </li>
+                </ul>
+            </div>
+        `,
+        returns: 'The currently set expression label after setting it.',
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'expression-folder-override',
         aliases: ['spriteoverride', 'costume'],
         callback: setSpriteFolderCommand,
+        namedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'name',
+                description: 'Character name to set a subfolder for. If not provided, the character who last sent a message will be used.',
+                typeList: [ARGUMENT_TYPE.STRING],
+                enumProvider: commonEnumProviders.characters('character'),
+                isRequired: false,
+                acceptsMultiple: false,
+            }),
+        ],
         unnamedArgumentList: [
             new SlashCommandArgument(
                 'optional folder', [ARGUMENT_TYPE.STRING], false,
@@ -2249,23 +2495,8 @@ function migrateSettings() {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'expression-last',
         aliases: ['lastsprite'],
-        /** @type {(args: object, name: string) => Promise<string>} */
-        callback: async (_, name) => {
-            if (typeof name !== 'string') throw new Error('name must be a string');
-            if (!name) {
-                if (selected_group) {
-                    toastr.error(t`In group chats, you must specify a character name.`, t`No character name specified`);
-                    return '';
-                }
-                name = characters[this_chid]?.avatar;
-            }
-
-            const char = findChar({ name: name });
-            if (!char) toastr.warning(t`Couldn't find character ${name}.`, t`Character not found`);
-
-            const sprite = lastExpression[char?.name ?? name] ?? '';
-            return sprite;
-        },
+        /** @type {(args: object, name: string) => string} */
+        callback: (_, name) => getLastExpression({ characterName: (name || '') }),
         returns: 'the last set expression for the named character.',
         unnamedArgumentList: [
             SlashCommandArgument.fromProps({
@@ -2279,24 +2510,37 @@ function migrateSettings() {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'expression-list',
         aliases: ['expressions'],
-        /** @type {(args: {return: string}) => Promise<string>} */
-        callback: async (args) => {
-            let returnType =
-                /** @type {import('../../slash-commands/SlashCommandReturnHelper.js').SlashCommandReturnType} */
-                (args.return);
-
-            const list = await getExpressionsList();
-
-            return await slashCommandReturnHelper.doReturn(returnType ?? 'pipe', list, { objectToStringFunc: list => list.join(', ') });
-        },
+        callback: getExpressionListSlashCommand,
         namedArgumentList: [
             SlashCommandNamedArgument.fromProps({
                 name: 'return',
                 description: 'The way how you want the return value to be provided',
                 typeList: [ARGUMENT_TYPE.STRING],
                 defaultValue: 'pipe',
-                enumList: slashCommandReturnHelper.enumList({ allowObject: true }),
+                enumList: slashCommandReturnHelper.enumList({ allowObject: true, allowPopup: true }),
                 forceEnum: true,
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'filter',
+                description: 'Filter the list to only include expressions that have available sprites for the current character.',
+                typeList: [ARGUMENT_TYPE.BOOLEAN],
+                enumList: commonEnumProviders.boolean('trueFalse')(),
+                defaultValue: 'true',
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'custom',
+                description: t`Whether to include, filter out or return only custom expressions`,
+                typeList: [
+                    ARGUMENT_TYPE.STRING,
+                    ARGUMENT_TYPE.BOOLEAN,
+                ],
+                isRequired: false,
+                defaultValue: 'true',
+                enumList: [
+                    new SlashCommandEnumValue('true', '(default) Custom expressions will be included in the result'),
+                    new SlashCommandEnumValue('false', 'Custom expressions will not be included in the result'),
+                    new SlashCommandEnumValue('only', 'Only custom expressions will be included in the result'),
+                ],
             }),
         ],
         returns: 'The comma-separated list of available expressions, including custom expressions.',
@@ -2312,6 +2556,13 @@ function migrateSettings() {
                 description: 'The Classifier API to classify with. If not specified, the configured one will be used.',
                 typeList: [ARGUMENT_TYPE.STRING],
                 enumList: Object.keys(EXPRESSION_API).map(api => new SlashCommandEnumValue(api, null, enumTypes.enum)),
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'filter',
+                description: 'Filter the list to only include expressions that have available sprites for the current character.',
+                typeList: [ARGUMENT_TYPE.BOOLEAN],
+                enumList: commonEnumProviders.boolean('trueFalse')(),
+                defaultValue: 'true',
             }),
             SlashCommandNamedArgument.fromProps({
                 name: 'prompt',
@@ -2398,4 +2649,73 @@ function migrateSettings() {
             </div>
         `,
     }));
-})();
+
+    if (power_user.experimental_macro_engine) {
+        macros.register('defaultExpression', {
+            handler: getCurrentFallbackExpression,
+            category: macros.category.MISC,
+            description: 'Returns the global fallback expression.',
+            returns: 'Expression label',
+            exampleUsage: '{{defaultExpression}}',
+        });
+
+        macros.register('lastExpression', {
+            handler: function ({ args: [name = '{{char}}'], resolve }) {
+                try {
+                    return getLastExpression({ characterName: resolve(name || '') });
+                } catch (error) {
+                    console.error(error);
+                    return '';
+                }
+            },
+            unnamedArgs: [{
+                name: 'name',
+                description: 'The name of the target character',
+                defaultValue: '{{char}}',
+                optional: true,
+                type: macros.valueType.STRING,
+            }],
+            delayArgResolution: true,
+            category: macros.category.MISC,
+            description: 'Returns the last expression used by the selected character. The currently active character is used if no character name is provided.',
+            returns: 'Expression label',
+            exampleUsage: [
+                '{{lastExpression}}',
+                '{{lastExpression::John}}',
+                '{{lastExpression::{{char}}}}',
+            ],
+        });
+
+        macros.register('availableExpressions', {
+            handler: function () {
+                return getCachedExpressions().join(', ');
+            },
+            category: macros.category.MISC,
+            description: 'Returns a list with all the available expressions provided by the Classifier API.',
+            returns: 'Expression label list',
+            exampleUsage: '{{availableExpressions}}',
+        });
+    } else {
+        MacrosParser.registerMacro('defaultExpression',
+            getCurrentFallbackExpression,
+            t`Returns the global fallback expression.`,
+        );
+
+        MacrosParser.registerMacro('lastExpression',
+            () => {
+                try {
+                    return getLastExpression();
+                } catch (error) {
+                    console.error(error);
+                    return '';
+                }
+            },
+            t`Returns the last expression used.`,
+        );
+
+        MacrosParser.registerMacro('availableExpressions',
+            () => getCachedExpressions().join(', '),
+            t`Returns a list with all the available expressions provided by the Classifier API.`,
+        );
+    }
+}

@@ -10,19 +10,64 @@
                     Vectorization Source
                 </label>
                 <select id="vectors_source" class="text_pole">
+                    <option value="chutes">Chutes</option>
+                    <option value="workers_ai">Cloudflare Workers AI</option>
                     <option value="cohere">Cohere</option>
+                    <option value="electronhub">Electron Hub</option>
                     <option value="extras">Extras (deprecated)</option>
                     <option value="palm">Google AI Studio</option>
+                    <option value="vertexai">Google Vertex AI</option>
+                    <option value="koboldcpp">KoboldCpp</option>
                     <option value="llamacpp">llama.cpp</option>
                     <option value="transformers" data-i18n="Local (Transformers)">Local (Transformers)</option>
                     <option value="mistral">MistralAI</option>
+                    <option value="nanogpt">NanoGPT</option>
                     <option value="nomicai">NomicAI</option>
                     <option value="ollama">Ollama</option>
                     <option value="openai">OpenAI</option>
+                    <option value="openrouter">OpenRouter</option>
+                    <option value="siliconflow">SiliconFlow</option>
                     <option value="togetherai">TogetherAI</option>
                     <option value="vllm">vLLM</option>
                     <option value="webllm" data-i18n="WebLLM Extension">WebLLM Extension</option>
                 </select>
+            </div>
+            <div class="flex-container flexFlowColumn" id="chutes_vectorsModel">
+                <label for="vectors_chutes_model" data-i18n="Vectorization Model">
+                    Vectorization Model
+                </label>
+                <select id="vectors_chutes_model" class="text_pole"></select>
+                <i data-i18n="Hint: Set your Chutes API key in API Connections.">
+                    Hint: Set your Chutes API key in API Connections.
+                </i>
+            </div>
+            <div class="flex-container flexFlowColumn" id="nanogpt_vectorsModel">
+                <label for="vectors_nanogpt_model" data-i18n="Vectorization Model">
+                    Vectorization Model
+                </label>
+                <select id="vectors_nanogpt_model" class="text_pole"></select>
+                <i data-i18n="Hint: Set your NanoGPT API key in API Connections.">
+                    Hint: Set your NanoGPT API key in API Connections.
+                </i>
+            </div>
+            <div class="flex-container flexFlowColumn" id="electronhub_vectorsModel">
+                <label for="vectors_electronhub_model" data-i18n="Vectorization Model">
+                    Vectorization Model
+                </label>
+                <select id="vectors_electronhub_model" class="text_pole"></select>
+                <i data-i18n="Hint: Set your Electron Hub API key in API Connections.">
+                    Hint: Set your Electron Hub API key in API Connections.
+                </i>
+            </div>
+            <div class="flex-container flexFlowColumn" id="vector_altEndpointUrl">
+                <label class="checkbox_label" for="vector_altEndpointUrl_enabled" title="Enable secondary endpoint URL usage, instead of the main one.">
+                    <input id="vector_altEndpointUrl_enabled" type="checkbox" class="checkbox">
+                    <span data-i18n="Use secondary URL">Use secondary URL</span>
+                </label>
+                <label for="vector_altEndpoint_address" data-i18n="Secondary Embedding endpoint URL">
+                    Secondary Embedding endpoint URL
+                </label>
+                <input id="vector_altEndpoint_address" class="text_pole" type="text" placeholder="e.g. http://localhost:5001" />
             </div>
             <div class="flex-container flexFlowColumn" id="webllm_vectorsModel">
                 <label for="vectors_webllm_model" data-i18n="Vectorization Model">
@@ -55,6 +100,14 @@
                     Hint: Set the URL in the API connection settings.
                 </i>
             </div>
+            <div class="flex-container flexFlowColumn" id="koboldcpp_vectorsModel">
+                <span>
+                    Set the KoboldCpp URL in the Text Completion API connection settings.
+                </span>
+                <span>
+                    Must use version 1.87 or higher and have an embedding model loaded.
+                </span>
+            </div>
             <div class="flex-container flexFlowColumn" id="llamacpp_vectorsModel">
                 <span data-i18n="The server MUST be started with the --embedding flag to use this feature!">
                     The server MUST be started with the <code>--embedding</code> flag to use this feature!
@@ -78,6 +131,7 @@
                     Vectorization Model
                 </label>
                 <select id="vectors_cohere_model" class="text_pole">
+                    <option value="embed-v4.0">embed-v4.0</option>
                     <option value="embed-english-v3.0">embed-english-v3.0</option>
                     <option value="embed-multilingual-v3.0">embed-multilingual-v3.0</option>
                     <option value="embed-english-light-v3.0">embed-english-light-v3.0</option>
@@ -111,15 +165,55 @@
                     Hint: Set the URL in the API connection settings.
                 </i>
             </div>
-
+            <div class="flex-container flexFlowColumn" id="google_vectorsModel">
+                <label for="vectors_google_model" data-i18n="Vectorization Model">
+                    Vectorization Model
+                </label>
+                <select id="vectors_google_model" class="text_pole">
+                    <option value="gemini-embedding-001">gemini-embedding-001</option>
+                    <option value="gemini-embedding-2-preview">gemini-embedding-2-preview</option>
+                    <option value="gemini-embedding-exp-03-07">gemini-embedding-exp-03-07</option>
+                    <option value="text-embedding-004">text-embedding-004</option>
+                    <option value="text-embedding-005">text-embedding-005</option>
+                    <option value="embedding-001">embedding-001</option>
+                </select>
+            </div>
             <div class="flex-container alignItemsCenter" id="nomicai_apiKey">
                 <label for="api_key_nomicai" class="flex1">
                     <span data-i18n="NomicAI API Key">NomicAI API Key</span>
                 </label>
-                <div id="api_key_nomicai" class="menu_button menu_button_icon">
+                <div id="api_key_nomicai" class="menu_button menu_button_icon manage-api-keys" data-key="api_key_nomicai">
                     <i class="fa-solid fa-key"></i>
                     <span data-i18n="Click to set">Click to set</span>
                 </div>
+            </div>
+            <div class="flex-container flexFlowColumn" id="openrouter_vectorsModel">
+                <label for="vectors_openrouter_model" data-i18n="Vectorization Model">
+                    Vectorization Model
+                </label>
+                <select id="vectors_openrouter_model" class="text_pole"></select>
+                <i data-i18n="Hint: Set your OpenRouter API key in API Connections.">
+                    Hint: Set your OpenRouter API key in API Connections.
+                </i>
+            </div>
+            <div class="flex-container flexFlowColumn" id="siliconflow_vectorsModel">
+                <label for="vectors_siliconflow_model" data-i18n="Vectorization Model">
+                    Vectorization Model
+                </label>
+                <select id="vectors_siliconflow_model" class="text_pole"></select>
+                <i data-i18n="Hint: Set your SiliconFlow API key in API Connections.">
+                    Hint: Set your SiliconFlow API key in API Connections.
+                </i>
+            </div>
+
+            <div class="flex-container flexFlowColumn" id="workers_ai_vectorsModel">
+                <label for="vectors_workers_ai_model" data-i18n="Vectorization Model">
+                    Vectorization Model
+                </label>
+                <select id="vectors_workers_ai_model" class="text_pole"></select>
+                <i data-i18n="Hint: Set your Workers AI API key and Account ID in API Connections.">
+                    Hint: Set your Workers AI API key and Account ID in API Connections.
+                </i>
             </div>
 
             <div class="flex-container marginTopBot5">
@@ -292,7 +386,7 @@
                         <label for="vectors_file_depth_db" title="How many messages before the current end of the chat." data-i18n="[title]How many messages before the current end of the chat.">
                             <input type="radio" name="vectors_file_position_db" value="1" />
                             <span data-i18n="In-chat @ Depth">In-chat @ Depth</span>
-                            <input id="vectors_file_depth_db" class="text_pole widthUnset" type="number" min="0" max="999" />
+                            <input id="vectors_file_depth_db" class="text_pole widthUnset" type="number" min="0" max="9999" />
                             <span>as</span>
                             <select id="vectors_file_depth_role_db"  class="text_pole widthNatural">
                                 <option value="0" data-i18n="System">System</option>
@@ -325,6 +419,10 @@
             <hr>
 
             <div id="vectors_chats_settings">
+                <label class="checkbox_label expander" for="vectors_keep_hidden" title="Keep hidden (system) messages in the vector index and include them in query results.">
+                    <input id="vectors_keep_hidden" type="checkbox" class="checkbox">
+                    <span data-i18n="Include hidden messages">Include hidden messages</span>
+                </label>
                 <div id="vectors_advanced_settings">
                     <label for="vectors_template" data-i18n="Injection Template">
                         Injection Template
@@ -344,7 +442,7 @@
                         <label for="vectors_depth" title="How many messages before the current end of the chat." data-i18n="[title]How many messages before the current end of the chat.">
                             <input type="radio" name="vectors_position" value="1" />
                             <span data-i18n="In-chat @ Depth">In-chat @ Depth </span>
-                            <input id="vectors_depth" class="text_pole widthUnset" type="number" min="0" max="999" />
+                            <input id="vectors_depth" class="text_pole widthUnset" type="number" min="0" max="9999" />
                         </label>
                     </div>
                     <div class="flex-container">
@@ -395,6 +493,16 @@
                         <label for="vectors_summary_prompt" title="Summary Prompt:">Summary Prompt:</label>
                         <small data-i18n="Only used when Main API or WebLLM Extension is selected.">Only used when Main API or WebLLM Extension is selected.</small>
                         <textarea id="vectors_summary_prompt" class="text_pole textarea_compact" rows="6" placeholder="This prompt will be sent to AI to request the summary generation."></textarea>
+
+                        <label for="vectors_summary_retries" title="Number of attempts per message before aborting vectorization.">
+                            <span data-i18n="Summarization retries per message">Summarization retries per message</span>
+                        </label>
+                        <input id="vectors_summary_retries" type="number" class="text_pole widthUnset" min="1" max="10" step="1" />
+
+                        <label for="vectors_summary_threshold" title="Messages shorter than this (in characters) are embedded as-is without summarization. Set to 0 to always summarize.">
+                            <span data-i18n="Summarization min length (chars)">Summarization min length (chars)</span>
+                        </label>
+                        <input id="vectors_summary_threshold" type="number" class="text_pole widthUnset" min="0" step="1" />
                     </div>
                 </div>
                 <small data-i18n="Old messages are vectorized gradually as you chat. To process all previous messages, click the button below.">

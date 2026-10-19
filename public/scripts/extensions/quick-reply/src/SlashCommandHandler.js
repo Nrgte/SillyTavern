@@ -8,26 +8,21 @@ import { SlashCommandEnumValue, enumTypes } from '../../../slash-commands/SlashC
 import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.js';
 import { SlashCommandScope } from '../../../slash-commands/SlashCommandScope.js';
 import { isTrueBoolean } from '../../../utils.js';
-// eslint-disable-next-line no-unused-vars
 import { QuickReplyApi } from '../api/QuickReplyApi.js';
 import { QuickReply } from './QuickReply.js';
 import { QuickReplySet } from './QuickReplySet.js';
 
 export class SlashCommandHandler {
-    /**@type {QuickReplyApi}*/ api;
+    /** @type {QuickReplyApi} */ api;
 
 
-
-
-    constructor(/**@type {QuickReplyApi}*/api) {
+    constructor(/** @type {QuickReplyApi} */api) {
         this.api = api;
     }
 
 
-
-
     init() {
-        function getExecutionIcons(/**@type {QuickReply} */ qr) {
+        function getExecutionIcons(/** @type {QuickReply} */ qr) {
             let icons = '';
             if (qr.preventAutoExecute) icons += '🚫';
             if (qr.isHidden) icons += '👁️';
@@ -37,6 +32,7 @@ export class SlashCommandHandler {
             if (qr.executeOnChatChange) icons += '💬';
             if (qr.executeOnNewChat) icons += '🆕';
             if (qr.executeOnGroupMemberDraft) icons += enumIcons.group;
+            if (qr.executeBeforeGeneration) icons += '✈️';
             return icons;
         }
 
@@ -56,7 +52,7 @@ export class SlashCommandHandler {
             qrIds: (executor) => QuickReplySet.get(String(executor.namedArgumentList.find(x => x.name == 'set')?.value))?.qrList.map(qr => {
                 const icons = getExecutionIcons(qr);
                 const message = `${qr.automationId ? `[${qr.automationId}]` : ''}${icons ? `[auto: ${icons}]` : ''} ${qr.title || qr.message}`.trim();
-                return new SlashCommandEnumValue(qr.label, message, enumTypes.enum, enumIcons.qr, null, ()=>qr.id.toString(), true);
+                return new SlashCommandEnumValue(qr.label, message, enumTypes.enum, enumIcons.qr, null, () => qr.id.toString(), true);
             }) ?? [],
 
             /** All QRs as a set.name string, to be able to execute, for example via the /run command */
@@ -77,7 +73,7 @@ export class SlashCommandHandler {
             },
         };
 
-        window['qrEnumProviderExecutables'] = localEnumProviders.qrExecutables;
+        globalThis.qrEnumProviderExecutables = localEnumProviders.qrExecutables;
 
         SlashCommandParser.addCommandObject(SlashCommand.fromProps({ name: 'qr',
             callback: (_, value) => this.executeQuickReplyByIndex(Number(value)),
@@ -268,6 +264,7 @@ export class SlashCommandHandler {
             new SlashCommandNamedArgument('load', 'auto execute on chat load, e.g., load=true', [ARGUMENT_TYPE.BOOLEAN], false, false, 'false'),
             new SlashCommandNamedArgument('new', 'auto execute on new chat, e.g., new=true', [ARGUMENT_TYPE.BOOLEAN], false, false, 'false'),
             new SlashCommandNamedArgument('group', 'auto execute on group member selection, e.g., group=true', [ARGUMENT_TYPE.BOOLEAN], false, false, 'false'),
+            new SlashCommandNamedArgument('generation', 'auto execute before message generation, e.g., generation=true', [ARGUMENT_TYPE.BOOLEAN], false, false, 'false'),
             new SlashCommandNamedArgument('title', 'title / tooltip to be shown on button, e.g., title="My Fancy Button"', [ARGUMENT_TYPE.STRING], false),
         ];
         const qrUpdateArgs = [
@@ -351,7 +348,7 @@ export class SlashCommandHandler {
                 return '';
             },
             returns: 'updated quick reply',
-            namedArgumentList: [...qrUpdateArgs, ...qrArgs.map(it=>{
+            namedArgumentList: [...qrUpdateArgs, ...qrArgs.map(it => {
                 if (it.name == 'label') {
                     const clone = SlashCommandNamedArgument.fromProps(it);
                     clone.isRequired = false;
@@ -690,16 +687,16 @@ export class SlashCommandHandler {
                 if (!args.from) throw new Error('/import requires from= to be set.');
                 if (!value) throw new Error('/import requires the unnamed argument to be set.');
                 let qr = [...this.api.listGlobalSets(), ...this.api.listChatSets()]
-                    .map(it=>this.api.getSetByName(it)?.qrList ?? [])
+                    .map(it => this.api.getSetByName(it)?.qrList ?? [])
                     .flat()
-                    .find(it=>it.label == args.from)
+                    .find(it => it.label == args.from)
                 ;
                 if (!qr) {
                     let [setName, ...qrNameParts] = args.from.split('.');
                     let qrName = qrNameParts.join('.');
                     let qrs = QuickReplySet.get(setName);
                     if (qrs) {
-                        qr = qrs.qrList.find(it=>it.label == qrName);
+                        qr = qrs.qrList.find(it => it.label == qrName);
                     }
                 }
                 if (qr) {
@@ -708,23 +705,23 @@ export class SlashCommandHandler {
                     if (args._debugController) {
                         closure.source = args.from;
                     }
-                    const testCandidates = (executor)=>{
+                    const testCandidates = (executor) => {
                         return (
-                            executor.namedArgumentList.find(arg=>arg.name == 'key')
+                            executor.namedArgumentList.find(arg => arg.name == 'key')
                             && executor.unnamedArgumentList.length > 0
                             && executor.unnamedArgumentList[0].value instanceof SlashCommandClosure
                         ) || (
-                            !executor.namedArgumentList.find(arg=>arg.name == 'key')
+                            !executor.namedArgumentList.find(arg => arg.name == 'key')
                             && executor.unnamedArgumentList.length > 1
                             && executor.unnamedArgumentList[1].value instanceof SlashCommandClosure
                         );
                     };
                     const candidates = closure.executorList
-                        .filter(executor=>['let', 'var'].includes(executor.command.name))
+                        .filter(executor => ['let', 'var'].includes(executor.command.name))
                         .filter(testCandidates)
-                        .map(executor=>({
-                            key: executor.namedArgumentList.find(arg=>arg.name == 'key')?.value ?? executor.unnamedArgumentList[0].value,
-                            value: executor.unnamedArgumentList[executor.namedArgumentList.find(arg=>arg.name == 'key') ? 0 : 1].value,
+                        .map(executor => ({
+                            key: executor.namedArgumentList.find(arg => arg.name == 'key')?.value ?? executor.unnamedArgumentList[0].value,
+                            value: executor.unnamedArgumentList[executor.namedArgumentList.find(arg => arg.name == 'key') ? 0 : 1].value,
                         }))
                     ;
                     for (let i = 0; i < value.length; i++) {
@@ -734,7 +731,7 @@ export class SlashCommandHandler {
                             dstName = value[i + 2];
                             i += 2;
                         }
-                        const pick = candidates.find(it=>it.key == srcName);
+                        const pick = candidates.find(it => it.key == srcName);
                         if (!pick) throw new Error(`No scoped closure named "${srcName}" found in "${args.from}"`);
                         if (args._scope.existsVariableInScope(dstName)) {
                             args._scope.setVariable(dstName, pick.value);
@@ -782,8 +779,6 @@ export class SlashCommandHandler {
     }
 
 
-
-
     getSetByName(name) {
         const set = this.api.getSetByName(name);
         if (!set) {
@@ -799,8 +794,6 @@ export class SlashCommandHandler {
         }
         return qr;
     }
-
-
 
 
     async executeQuickReplyByIndex(idx) {
@@ -875,6 +868,7 @@ export class SlashCommandHandler {
                     executeOnChatChange: isTrueBoolean(args.load),
                     executeOnNewChat: isTrueBoolean(args.new),
                     executeOnGroupMemberDraft: isTrueBoolean(args.group),
+                    executeBeforeGeneration: isTrueBoolean(args.generation),
                     automationId: args.automationId ?? '',
                 },
             );
@@ -911,6 +905,7 @@ export class SlashCommandHandler {
                     executeOnChatChange: args.load === undefined ? undefined : isTrueBoolean(args.load),
                     executeOnGroupMemberDraft: args.group === undefined ? undefined : isTrueBoolean(args.group),
                     executeOnNewChat: args.new === undefined ? undefined : isTrueBoolean(args.new),
+                    executeBeforeGeneration: args.generation === undefined ? undefined : isTrueBoolean(args.generation),
                     automationId: args.automationId ?? '',
                 },
             );

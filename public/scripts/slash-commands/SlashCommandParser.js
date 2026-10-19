@@ -1,6 +1,6 @@
 import { hljs } from '../../lib.js';
 import { power_user } from '../power-user.js';
-import { isTrueBoolean, uuidv4 } from '../utils.js';
+import { isFalseBoolean, isTrueBoolean, uuidv4 } from '../utils.js';
 import { SlashCommand } from './SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument } from './SlashCommandArgument.js';
 import { SlashCommandClosure } from './SlashCommandClosure.js';
@@ -8,36 +8,40 @@ import { SlashCommandExecutor } from './SlashCommandExecutor.js';
 import { SlashCommandParserError } from './SlashCommandParserError.js';
 import { AutoCompleteNameResult } from '../autocomplete/AutoCompleteNameResult.js';
 import { SlashCommandQuickReplyAutoCompleteOption } from './SlashCommandQuickReplyAutoCompleteOption.js';
-// eslint-disable-next-line no-unused-vars
 import { SlashCommandScope } from './SlashCommandScope.js';
 import { SlashCommandVariableAutoCompleteOption } from './SlashCommandVariableAutoCompleteOption.js';
 import { SlashCommandNamedArgumentAssignment } from './SlashCommandNamedArgumentAssignment.js';
-// eslint-disable-next-line no-unused-vars
 import { SlashCommandAbortController } from './SlashCommandAbortController.js';
 import { SlashCommandAutoCompleteNameResult } from './SlashCommandAutoCompleteNameResult.js';
 import { SlashCommandUnnamedArgumentAssignment } from './SlashCommandUnnamedArgumentAssignment.js';
 import { SlashCommandEnumValue } from './SlashCommandEnumValue.js';
-import { MacroAutoCompleteOption } from '../autocomplete/MacroAutoCompleteOption.js';
+import {
+    findUnclosedScopes,
+    buildMacroAutoCompleteResult,
+} from '../autocomplete/MacroAutoCompleteHelper.js';
 import { SlashCommandBreakPoint } from './SlashCommandBreakPoint.js';
 import { SlashCommandDebugController } from './SlashCommandDebugController.js';
 import { commonEnumProviders } from './SlashCommandCommonEnumsProvider.js';
 import { SlashCommandBreak } from './SlashCommandBreak.js';
-import { MacrosParser } from '../macros.js';
-import { t } from '../i18n.js';
+import { parseMacroContext } from '../autocomplete/EnhancedMacroAutoCompleteOption.js';
 
 /** @typedef {import('./SlashCommand.js').NamedArgumentsCapture} NamedArgumentsCapture */
 /** @typedef {import('./SlashCommand.js').NamedArguments} NamedArguments */
+/** @typedef {import('../autocomplete/EnhancedMacroAutoCompleteOption.js').MacroAutoCompleteContext} MacroAutoCompleteContext */
+/** @typedef {import('../autocomplete/EnhancedMacroAutoCompleteOption.js').EnhancedMacroAutoCompleteOptions} EnhancedMacroAutoCompleteOptions */
 
-/**@readonly*/
-/**@enum {Number}*/
+/**
+ * @enum {Number}
+ * @readonly
+ * @typedef {{[id:PARSER_FLAG]:boolean}} ParserFlags
+ */
 export const PARSER_FLAG = {
     'STRICT_ESCAPING': 1,
     'REPLACE_GETVAR': 2,
 };
 
 export class SlashCommandParser {
-    // @ts-ignore
-    /**@type {Object.<string, SlashCommand>}*/ static commands = {};
+    /** @type {Object.<string, SlashCommand>} */ static commands = {};
 
     /**
      * @deprecated Use SlashCommandParser.addCommandObject() instead.
@@ -61,7 +65,7 @@ export class SlashCommandParser {
     static addCommandObject(command) {
         const reserved = ['/', '#', ':', 'parser-flag', 'breakpoint'];
         for (const start of reserved) {
-            if (command.name.toLowerCase().startsWith(start) || (command.aliases ?? []).find(a=>a.toLowerCase().startsWith(start))) {
+            if (command.name.toLowerCase().startsWith(start) || (command.aliases ?? []).find(a => a.toLowerCase().startsWith(start))) {
                 throw new Error(`Illegal Name. Slash command name cannot begin with "${start}".`);
             }
         }
@@ -76,15 +80,15 @@ export class SlashCommandParser {
             console.trace('WARN: Duplicate slash command registered!', [command.name, ...command.aliases]);
         }
 
-        const stack = new Error().stack.split('\n').map(it=>it.trim());
-        command.isExtension = stack.find(it=>it.includes('/scripts/extensions/')) != null;
-        command.isThirdParty = stack.find(it=>it.includes('/scripts/extensions/third-party/')) != null;
+        const stack = new Error().stack.split('\n').map(it => it.trim());
+        command.isExtension = stack.find(it => it.includes('/scripts/extensions/')) != null;
+        command.isThirdParty = stack.find(it => it.includes('/scripts/extensions/third-party/')) != null;
         if (command.isThirdParty) {
-            command.source = stack.find(it=>it.includes('/scripts/extensions/third-party/')).replace(/^.*?\/scripts\/extensions\/third-party\/([^/]+)\/.*$/, '$1');
+            command.source = stack.find(it => it.includes('/scripts/extensions/third-party/')).replace(/^.*?\/scripts\/extensions\/third-party\/([^/]+)\/.*$/, '$1');
         } else if (command.isExtension) {
-            command.source = stack.find(it=>it.includes('/scripts/extensions/')).replace(/^.*?\/scripts\/extensions\/([^/]+)\/.*$/, '$1');
+            command.source = stack.find(it => it.includes('/scripts/extensions/')).replace(/^.*?\/scripts\/extensions\/([^/]+)\/.*$/, '$1');
         } else {
-            const idx = stack.findLastIndex(it=>it.includes('at SlashCommandParser.')) + 1;
+            const idx = stack.findLastIndex(it => it.includes('at SlashCommandParser.')) + 1;
             command.source = stack[idx].replace(/^.*?\/((?:scripts\/)?(?:[^/]+)\.js).*$/, '$1');
         }
 
@@ -101,26 +105,25 @@ export class SlashCommandParser {
     get commands() {
         return SlashCommandParser.commands;
     }
-    // @ts-ignore
-    /**@type {Object.<string, string>}*/ helpStrings = {};
-    /**@type {boolean}*/ verifyCommandNames = true;
-    /**@type {string}*/ text;
-    /**@type {number}*/ index;
-    /**@type {SlashCommandAbortController}*/ abortController;
-    /**@type {SlashCommandDebugController}*/ debugController;
-    /**@type {SlashCommandScope}*/ scope;
-    /**@type {SlashCommandClosure}*/ closure;
+    /** @type {Object.<string, string>} */ helpStrings = {};
+    /** @type {boolean} */ verifyCommandNames = true;
+    /** @type {string} */ text;
+    /** @type {number} */ index;
+    /** @type {SlashCommandAbortController} */ abortController;
+    /** @type {SlashCommandDebugController} */ debugController;
+    /** @type {SlashCommandScope} */ scope;
+    /** @type {SlashCommandClosure} */ closure;
 
-    /**@type {Object.<PARSER_FLAG,boolean>}*/ flags = {};
+    /** @type {Object.<PARSER_FLAG,boolean>} */ flags = {};
 
-    /**@type {boolean}*/ jumpedEscapeSequence = false;
+    /** @type {boolean} */ jumpedEscapeSequence = false;
 
-    /**@type {{start:number, end:number}[]}*/ closureIndex;
-    /**@type {{start:number, end:number, name:string}[]}*/ macroIndex;
-    /**@type {SlashCommandExecutor[]}*/ commandIndex;
-    /**@type {SlashCommandScope[]}*/ scopeIndex;
+    /** @type {{start:number, end:number}[]} */ closureIndex;
+    /** @type {{start:number, end:number, name:string}[]} */ macroIndex;
+    /** @type {SlashCommandExecutor[]} */ commandIndex;
+    /** @type {SlashCommandScope[]} */ scopeIndex;
 
-    /**@type {string}*/ parserContext;
+    /** @type {string} */ parserContext;
 
     get userIndex() { return this.index; }
 
@@ -150,7 +153,7 @@ export class SlashCommandParser {
                         description: 'The parser flag to modify.',
                         typeList: [ARGUMENT_TYPE.STRING],
                         isRequired: true,
-                        enumList: Object.keys(PARSER_FLAG).map(flag=>new SlashCommandEnumValue(flag, help[PARSER_FLAG[flag]])),
+                        enumList: Object.keys(PARSER_FLAG).map(flag => new SlashCommandEnumValue(flag, help[PARSER_FLAG[flag]])),
                     }),
                     SlashCommandArgument.fromProps({
                         description: 'The state of the parser flag to set.',
@@ -227,7 +230,7 @@ export class SlashCommandParser {
 
         function getQuotedRunRegex() {
             try {
-                return new RegExp('(".+?(?<!\\\\)")|(\\S+?)(\\||$|\\s)');
+                return new RegExp('(".+?(?<!\\\\)")|((?:[^\\s\\|"]|"[^"]*")*)(\\||$|\\s)');
             } catch {
                 // fallback for browsers that don't support lookbehind
                 return /(".+?")|(\S+?)(\||$|\s)/;
@@ -436,7 +439,7 @@ export class SlashCommandParser {
             PIPEBREAK,
             PIPE,
         );
-        hljs.registerLanguage('stscript', ()=>({
+        hljs.registerLanguage('stscript', () => ({
             case_insensitive: false,
             keywords: [],
             contains: [
@@ -477,60 +480,68 @@ export class SlashCommandParser {
             }
         }
         const executor = this.commandIndex
-            .filter(it=>it.start <= index && (it.end >= index || it.end == null))
+            .filter(it => it.start <= index && (it.end >= index || it.end == null))
             .slice(-1)[0]
             ?? null
         ;
 
         if (executor) {
             const childClosure = this.closureIndex
-                .find(it=>it.start <= index && (it.end >= index || it.end == null) && it.start > executor.start)
+                .find(it => it.start <= index && (it.end >= index || it.end == null) && it.start > executor.start)
                 ?? null
             ;
             if (childClosure !== null) return null;
-            const macro = this.macroIndex.findLast(it=>it.start <= index && it.end >= index);
-            if (macro) {
-                const frag = document.createRange().createContextualFragment(await (await fetch('/scripts/templates/macros.html')).text());
-                const options = [...frag.querySelectorAll('ul:nth-of-type(2n+1) > li')].map(li=>new MacroAutoCompleteOption(
-                    li.querySelector('tt').textContent.slice(2, -2).replace(/^([^\s:]+[\s:]+).*$/, '$1'),
-                    li.querySelector('tt').textContent,
-                    (li.querySelector('tt').remove(),li.innerHTML),
-                ));
-                for (const macro of MacrosParser) {
-                    if (options.find(it => it.name === macro.key)) continue;
-                    options.push(new MacroAutoCompleteOption(macro.key, `{{${macro.key}}}`, macro.description || t`No description provided`));
-                }
-                const result = new AutoCompleteNameResult(
-                    macro.name,
-                    macro.start + 2,
-                    options,
-                    false,
-                    ()=>`No matching macros for "{{${result.name}}}"`,
-                    ()=>'No macros found.',
-                );
-                return result;
+            // Check if cursor is inside a macro
+            const macroEntry = this.macroIndex.findLast(it => it.start <= index && it.end >= index);
+            if (macroEntry) {
+                // Build macro info object for shared function
+                const macroContent = text.slice(macroEntry.start + 2, macroEntry.end - (text.slice(macroEntry.end - 2, macroEntry.end) === '}}' ? 2 : 0));
+                const macro = {
+                    start: macroEntry.start,
+                    end: macroEntry.end,
+                    content: macroContent,
+                };
+
+                // Use the shared macro autocomplete builder
+                const result = await buildMacroAutoCompleteResult(text, index, { macro });
+                if (result) return result;
+            }
+
+            // Check if cursor is in scoped content of an unclosed macro (not inside a macro)
+            const textUpToCursor = text.slice(0, index);
+            const unclosedScopes = findUnclosedScopes(textUpToCursor);
+            if (unclosedScopes.length > 0) {
+                // Use the shared macro autocomplete builder for scoped content
+                const result = await buildMacroAutoCompleteResult(text, index, {
+                    macro: null,
+                    textUpToCursor,
+                    unclosedScopes,
+                });
+                if (result) return result;
             }
             if (executor.name == ':') {
                 const options = this.scopeIndex[this.commandIndex.indexOf(executor)]
                     ?.allVariableNames
-                    ?.map(it=>new SlashCommandVariableAutoCompleteOption(it))
+                    ?.map(it => new SlashCommandVariableAutoCompleteOption(it))
                     ?? []
                 ;
                 try {
-                    const qrApi = (await import('../extensions/quick-reply/index.js')).quickReplyApi;
-                    options.push(...qrApi.listSets()
-                        .map(set=>qrApi.listQuickReplies(set).map(qr=>`${set}.${qr}`))
-                        .flat()
-                        .map(qr=>new SlashCommandQuickReplyAutoCompleteOption(qr)),
-                    );
+                    if ('quickReplyApi' in globalThis) {
+                        const qrApi = globalThis.quickReplyApi;
+                        options.push(...qrApi.listSets()
+                            .map(set => qrApi.listQuickReplies(set).map(qr => `${set}.${qr}`))
+                            .flat()
+                            .map(qr => new SlashCommandQuickReplyAutoCompleteOption(qr)),
+                        );
+                    }
                 } catch { /* empty */ }
                 const result = new AutoCompleteNameResult(
                     executor.unnamedArgumentList[0]?.value.toString(),
                     executor.start,
                     options,
                     true,
-                    ()=>`No matching variables in scope and no matching Quick Replies for "${result.name}"`,
-                    ()=>'No variables in scope and no Quick Replies found.',
+                    () => `No matching variables in scope and no matching Quick Replies for "${result.name}"`,
+                    () => 'No variables in scope and no Quick Replies found.',
                 );
                 return result;
             }
@@ -634,15 +645,20 @@ export class SlashCommandParser {
     }
 
     replaceGetvar(value) {
+        // Not needed with the new parser.
+        if (power_user.experimental_macro_engine) {
+            return value;
+        }
         return value.replace(/{{(get(?:global)?var)::([^}]+)}}/gi, (match, cmd, name, idx) => {
             name = name.trim();
+            cmd = cmd.toLowerCase();
             const startIdx = this.index - value.length + idx;
             const endIdx = this.index - value.length + idx + match.length;
             // store pipe
             const pipeName = `_PARSER_PIPE_${uuidv4()}`;
             const storePipe = new SlashCommandExecutor(startIdx); {
                 storePipe.end = endIdx;
-                storePipe.command = this.commands['let'];
+                storePipe.command = this.commands.let;
                 storePipe.name = 'let';
                 const nameAss = new SlashCommandUnnamedArgumentAssignment();
                 nameAss.value = pipeName;
@@ -665,7 +681,7 @@ export class SlashCommandParser {
             const varName = `_PARSER_VAR_${uuidv4()}`;
             const setvar = new SlashCommandExecutor(startIdx); {
                 setvar.end = endIdx;
-                setvar.command = this.commands['let'];
+                setvar.command = this.commands.let;
                 setvar.name = 'let';
                 const nameAss = new SlashCommandUnnamedArgumentAssignment();
                 nameAss.value = varName;
@@ -677,7 +693,7 @@ export class SlashCommandParser {
             // return pipe
             const returnPipe = new SlashCommandExecutor(startIdx); {
                 returnPipe.end = endIdx;
-                returnPipe.command = this.commands['return'];
+                returnPipe.command = this.commands.return;
                 returnPipe.name = 'return';
                 const varAss = new SlashCommandUnnamedArgumentAssignment();
                 varAss.value = `{{var::${pipeName}}}`;
@@ -725,7 +741,7 @@ export class SlashCommandParser {
         return this.testSymbol(':}');
     }
     parseClosure(isRoot = false) {
-        const closureIndexEntry = { start:this.index + 1, end:null };
+        const closureIndexEntry = { start: this.index + 1, end: null };
         this.closureIndex.push(closureIndexEntry);
         let injectPipe = true;
         if (!isRoot) this.take(2); // discard opening {:
@@ -802,7 +818,7 @@ export class SlashCommandParser {
     parseBreakPoint() {
         const cmd = new SlashCommandBreakPoint();
         cmd.name = 'breakpoint';
-        cmd.command = this.commands['breakpoint'];
+        cmd.command = this.commands.breakpoint;
         cmd.start = this.index + 1;
         this.take('/breakpoint'.length);
         cmd.end = this.index;
@@ -817,7 +833,7 @@ export class SlashCommandParser {
     parseBreak() {
         const cmd = new SlashCommandBreak();
         cmd.name = 'break';
-        cmd.command = this.commands['break'];
+        cmd.command = this.commands.break;
         cmd.start = this.index + 1;
         this.take('/break'.length);
         this.discardWhitespace();
@@ -920,7 +936,7 @@ export class SlashCommandParser {
         const cmd = new SlashCommandExecutor(start);
         cmd.name = ':';
         cmd.unnamedArgumentList = [];
-        cmd.command = this.commands['run'];
+        cmd.command = this.commands.run;
         this.commandIndex.push(cmd);
         this.scopeIndex.push(this.scope.getCopy());
         this.take(2); //discard "/:"
@@ -951,7 +967,33 @@ export class SlashCommandParser {
         return this.testSymbol('/');
     }
     testCommandEnd() {
-        return this.testClosureEnd() || this.testSymbol('|');
+        if (this.testClosureEnd()) return true;
+        // Only treat | as command end if we're not inside macro braces {{}}
+        if (this.testSymbol('|') && !this.isInsideMacroBraces()) return true;
+        return false;
+    }
+
+    /**
+     * Checks if the current position is inside unclosed macro braces {{...}}.
+     * This prevents pipes inside macros from being treated as command separators.
+     * @returns {boolean} True if inside unclosed macro braces.
+     */
+    isInsideMacroBraces() {
+        const textBehind = this.behind;
+        let depth = 0;
+
+        // Scan through the text to track macro brace depth
+        for (let i = 0; i < textBehind.length; i++) {
+            if (textBehind[i] === '{' && textBehind[i + 1] === '{') {
+                depth++;
+                i++; // Skip the second {
+            } else if (textBehind[i] === '}' && textBehind[i + 1] === '}') {
+                depth = Math.max(0, depth - 1);
+                i++; // Skip the second }
+            }
+        }
+
+        return depth > 0;
     }
     parseCommand() {
         const start = this.index + 1;
@@ -976,17 +1018,19 @@ export class SlashCommandParser {
         cmd.startUnnamedArgs = this.index - (/\s(\s*)$/s.exec(this.behind)?.[1]?.length ?? 0);
         cmd.endUnnamedArgs = this.index;
         if (this.testUnnamedArgument()) {
-            cmd.unnamedArgumentList = this.parseUnnamedArgument(cmd.command?.unnamedArgumentList?.length && cmd?.command?.splitUnnamedArgument, cmd?.command?.splitUnnamedArgumentCount);
+            const rawQuotesArg = cmd?.namedArgumentList?.find(a => a.name === 'raw');
+            const rawQuotes = cmd?.command?.rawQuotes && rawQuotesArg ? !isFalseBoolean(rawQuotesArg?.value?.toString()) : cmd?.command?.rawQuotes;
+            cmd.unnamedArgumentList = this.parseUnnamedArgument(cmd.command?.unnamedArgumentList?.length && cmd?.command?.splitUnnamedArgument, cmd?.command?.splitUnnamedArgumentCount, rawQuotes);
             cmd.endUnnamedArgs = this.index;
             if (cmd.name == 'let') {
-                const keyArg = cmd.namedArgumentList.find(it=>it.name == 'key');
+                const keyArg = cmd.namedArgumentList.find(it => it.name == 'key');
                 if (keyArg) {
                     this.scope.variableNames.push(keyArg.value.toString());
                 } else if (typeof cmd.unnamedArgumentList[0]?.value == 'string') {
                     this.scope.variableNames.push(cmd.unnamedArgumentList[0].value);
                 }
             } else if (cmd.name == 'import') {
-                const value = /**@type {string[]}*/(cmd.unnamedArgumentList.map(it=>it.value));
+                const value = /**@type {string[]}*/(cmd.unnamedArgumentList.map(it => it.value));
                 for (let i = 0; i < value.length; i++) {
                     const srcName = value[i];
                     let dstName = srcName;
@@ -1036,7 +1080,7 @@ export class SlashCommandParser {
     testUnnamedArgumentEnd() {
         return this.testCommandEnd();
     }
-    parseUnnamedArgument(split, splitCount = null) {
+    parseUnnamedArgument(split, splitCount = null, rawQuotes = false) {
         const wasSplit = split;
         /**@type {SlashCommandClosure|String}*/
         let value = this.jumpedEscapeSequence ? this.take() : ''; // take the first, already tested, char if it is an escaped one
@@ -1046,7 +1090,7 @@ export class SlashCommandParser {
         /**@type {SlashCommandUnnamedArgumentAssignment}*/
         let assignment = new SlashCommandUnnamedArgumentAssignment();
         assignment.start = this.index;
-        if (!split && this.testQuotedValue()) {
+        if (!split && !rawQuotes && this.testQuotedValue()) {
             // if the next bit is a quoted value, take the whole value and gather contents as a list
             assignment.value = this.parseQuotedValue();
             assignment.end = this.index;
@@ -1247,18 +1291,66 @@ export class SlashCommandParser {
     }
 
     indexMacros(offset, text) {
-        const re = /{{(?:((?:(?!}})[^\s:])+[\s:]*)((?:(?!}}).)*)(}}|}$|$))?/s;
-        let remaining = text;
-        let localOffset = 0;
-        while (remaining.length > 0 && re.test(remaining)) {
-            const match = re.exec(remaining);
-            this.macroIndex.push({
-                start: offset + localOffset + match.index,
-                end: offset + localOffset + match.index + (match[0]?.length ?? 0),
-                name: match[1] ?? '',
-            });
-            localOffset += match.index + (match[0]?.length ?? 0);
-            remaining = remaining.slice(match.index + (match[0]?.length ?? 0));
+        // Index all macros including nested ones
+        // We need to track brace depth to properly handle nested macros like {{reverse::Hey {{user}}}}
+        let i = 0;
+        while (i < text.length - 1) {
+            // Look for macro start {{
+            if (text[i] === '{' && text[i + 1] === '{') {
+                const macroStart = i;
+                i += 2; // Skip {{
+
+                // Find where this macro ends, tracking nested braces
+                let depth = 1;
+                let macroEnd = text.length; // Default to end if unclosed
+
+                while (i < text.length - 1 && depth > 0) {
+                    if (text[i] === '{' && text[i + 1] === '{') {
+                        // Nested macro start - recursively index it
+                        // The nested macro will be indexed in subsequent iterations
+                        depth++;
+                        i += 2;
+                    } else if (text[i] === '}' && text[i + 1] === '}') {
+                        depth--;
+                        if (depth === 0) {
+                            macroEnd = i + 2; // Include the closing }}
+                        }
+                        i += 2;
+                    } else {
+                        i++;
+                    }
+                }
+
+                // Extract macro content (between {{ and }} or end)
+                const contentEnd = macroEnd === text.length ? macroEnd : macroEnd - 2;
+                const macroContent = text.slice(macroStart + 2, contentEnd);
+
+                // Use parseMacroContext to extract the identifier
+                const context = parseMacroContext(macroContent, macroContent.length);
+
+                this.macroIndex.push({
+                    start: offset + macroStart,
+                    end: offset + macroEnd,
+                    name: context.identifier,
+                });
+
+                // Continue from where we left off (don't skip ahead)
+                // This ensures nested macros get their own index entries
+                i = macroStart + 2; // Move past the opening {{ to look for nested macros
+                // Skip to find nested {{ inside this macro's content
+                while (i < contentEnd) {
+                    if (text[i] === '{' && i + 1 < text.length && text[i + 1] === '{') {
+                        break; // Found nested macro, outer loop will handle it
+                    }
+                    i++;
+                }
+                if (i >= contentEnd) {
+                    // No nested macro found, skip to end of this macro
+                    i = macroEnd;
+                }
+            } else {
+                i++;
+            }
         }
     }
 }

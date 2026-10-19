@@ -11,7 +11,8 @@ import { getNomicAIBatchVector, getNomicAIVector } from '../vectors/nomicai-vect
 import { getOpenAIVector, getOpenAIBatchVector } from '../vectors/openai-vectors.js';
 import { getTransformersVector, getTransformersBatchVector } from '../vectors/embedding.js';
 import { getExtrasVector, getExtrasBatchVector } from '../vectors/extras-vectors.js';
-import { getMakerSuiteVector, getMakerSuiteBatchVector } from '../vectors/makersuite-vectors.js';
+import { getMakerSuiteVector, getMakerSuiteBatchVector } from '../vectors/google-vectors.js';
+import { getVertexVector, getVertexBatchVector } from '../vectors/google-vectors.js';
 import { getCohereVector, getCohereBatchVector } from '../vectors/cohere-vectors.js';
 import { getLlamaCppVector, getLlamaCppBatchVector } from '../vectors/llamacpp-vectors.js';
 import { getVllmVector, getVllmBatchVector } from '../vectors/vllm-vectors.js';
@@ -31,6 +32,14 @@ const SOURCES = [
     'llamacpp',
     'vllm',
     'webllm',
+    'koboldcpp',
+    'vertexai',
+    'electronhub',
+    'openrouter',
+    'chutes',
+    'nanogpt',
+    'siliconflow',
+    'workers_ai',
 ];
 
 /**
@@ -50,12 +59,18 @@ async function getVector(source, sourceSettings, text, isQuery, directories) {
         case 'mistral':
         case 'openai':
             return getOpenAIVector(text, source, directories, sourceSettings.model);
+        case 'electronhub':
+            return getOpenAIVector(text, source, directories, sourceSettings.model);
+        case 'openrouter':
+            return getOpenAIVector(text, source, directories, sourceSettings.model);
         case 'transformers':
             return getTransformersVector(text);
         case 'extras':
             return getExtrasVector(text, sourceSettings.extrasUrl, sourceSettings.extrasKey);
         case 'palm':
-            return getMakerSuiteVector(text, directories);
+            return getMakerSuiteVector(text, sourceSettings.model, sourceSettings.request);
+        case 'vertexai':
+            return getVertexVector(text, sourceSettings.model, sourceSettings.request);
         case 'cohere':
             return getCohereVector(text, isQuery, directories, sourceSettings.model);
         case 'llamacpp':
@@ -66,6 +81,16 @@ async function getVector(source, sourceSettings, text, isQuery, directories) {
             return getOllamaVector(text, sourceSettings.apiUrl, sourceSettings.model, sourceSettings.keep, directories);
         case 'webllm':
             return sourceSettings.embeddings[text];
+        case 'koboldcpp':
+            return sourceSettings.embeddings[text];
+        case 'chutes':
+            return getOpenAIVector(text, source, directories, sourceSettings.model);
+        case 'nanogpt':
+            return getOpenAIVector(text, source, directories, sourceSettings.model);
+        case 'siliconflow':
+            return getOpenAIVector(text, source, directories, sourceSettings.model, sourceSettings.urlOverride);
+        case 'workers_ai':
+            return getOpenAIVector(text, source, directories, sourceSettings.model, sourceSettings.urlOverride);
     }
 
     throw new Error(`Unknown vector source ${source}`);
@@ -95,6 +120,12 @@ async function getBatchVector(source, sourceSettings, texts, isQuery, directorie
             case 'openai':
                 results.push(...await getOpenAIBatchVector(batch, source, directories, sourceSettings.model));
                 break;
+            case 'electronhub':
+                results.push(...await getOpenAIBatchVector(batch, source, directories, sourceSettings.model));
+                break;
+            case 'openrouter':
+                results.push(...await getOpenAIBatchVector(batch, source, directories, sourceSettings.model));
+                break;
             case 'transformers':
                 results.push(...await getTransformersBatchVector(batch));
                 break;
@@ -102,7 +133,10 @@ async function getBatchVector(source, sourceSettings, texts, isQuery, directorie
                 results.push(...await getExtrasBatchVector(batch, sourceSettings.extrasUrl, sourceSettings.extrasKey));
                 break;
             case 'palm':
-                results.push(...await getMakerSuiteBatchVector(batch, directories));
+                results.push(...await getMakerSuiteBatchVector(batch, sourceSettings.model, sourceSettings.request));
+                break;
+            case 'vertexai':
+                results.push(...await getVertexBatchVector(batch, sourceSettings.model, sourceSettings.request));
                 break;
             case 'cohere':
                 results.push(...await getCohereBatchVector(batch, isQuery, directories, sourceSettings.model));
@@ -118,6 +152,21 @@ async function getBatchVector(source, sourceSettings, texts, isQuery, directorie
                 break;
             case 'webllm':
                 results.push(...texts.map(x => sourceSettings.embeddings[x]));
+                break;
+            case 'koboldcpp':
+                results.push(...texts.map(x => sourceSettings.embeddings[x]));
+                break;
+            case 'chutes':
+                results.push(...await getOpenAIBatchVector(batch, source, directories, sourceSettings.model));
+                break;
+            case 'nanogpt':
+                results.push(...await getOpenAIBatchVector(batch, source, directories, sourceSettings.model));
+                break;
+            case 'siliconflow':
+                results.push(...await getOpenAIBatchVector(batch, source, directories, sourceSettings.model, sourceSettings.urlOverride));
+                break;
+            case 'workers_ai':
+                results.push(...await getOpenAIBatchVector(batch, source, directories, sourceSettings.model, sourceSettings.urlOverride));
                 break;
             default:
                 throw new Error(`Unknown vector source ${source}`);
@@ -142,6 +191,14 @@ function getSourceSettings(source, request) {
         case 'openai':
             return {
                 model: String(request.body.model),
+            };
+        case 'electronhub':
+            return {
+                model: String(request.body.model || 'text-embedding-3-small'),
+            };
+        case 'openrouter':
+            return {
+                model: String(request.body.model) || 'openai/text-embedding-3-large',
             };
         case 'cohere':
             return {
@@ -172,9 +229,10 @@ function getSourceSettings(source, request) {
                 model: getConfigValue('extensions.models.embedding', ''),
             };
         case 'palm':
+        case 'vertexai':
             return {
-                // TODO: Add support for multiple models
-                model: 'text-embedding-004',
+                model: String(request.body.model || 'text-embedding-005'),
+                request: request, // Pass the request object to get API key and URL
             };
         case 'mistral':
             return {
@@ -189,6 +247,34 @@ function getSourceSettings(source, request) {
                 model: String(request.body.model),
                 embeddings: request.body.embeddings ?? {},
             };
+        case 'koboldcpp':
+            return {
+                model: String(request.body.model),
+                embeddings: request.body.embeddings ?? {},
+            };
+        case 'chutes':
+            return {
+                model: String(request.body.model || 'chutes-qwen-qwen3-embedding-8b'),
+            };
+        case 'nanogpt':
+            return {
+                model: String(request.body.model || 'text-embedding-3-small'),
+            };
+        case 'siliconflow':
+            return {
+                model: String(request.body.model || 'Qwen/Qwen3-Embedding-0.6B'),
+                urlOverride: request.body.siliconflow_endpoint === 'cn'
+                    ? 'https://api.siliconflow.cn/v1' : null,
+            };
+        case 'workers_ai': {
+            const accountId = String(request.body.workers_ai_account_id || '').trim();
+            return {
+                model: String(request.body.model || '@cf/baai/bge-m3'),
+                urlOverride: accountId
+                    ? `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/v1`
+                    : null,
+            };
+        }
         default:
             return {};
     }

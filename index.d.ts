@@ -40,7 +40,11 @@ declare global {
             /**
              * Authenticated user handle.
              */
-            handle: string;
+            handle: string | null;
+            /**
+             * Account version tag: shake256 derivative of password hash and salt.
+             */
+            version: string | null;
             /**
              * Last time the session was extended.
              */
@@ -66,4 +70,9 @@ declare global {
      * Parsed command line arguments.
      */
     var COMMAND_LINE_ARGS: CommandLineArguments;
+
+    /**
+     * Forces a global mode if set to `true` before parsing the CLI arguments.
+     */
+    var FORCE_GLOBAL_MODE: boolean;
 }

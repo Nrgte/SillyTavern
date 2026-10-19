@@ -88,7 +88,7 @@ class CosyVoiceProvider {
         }
 
         // Set initial values from the settings
-        $('#tts_endpoint').val(this.settings.provider_endpoint);
+        $('#tts_endpoint').val(this.settings.provider_endpoint).on('change', this.onSettingsChange.bind(this));
 
 
         await this.checkReady();
@@ -102,7 +102,7 @@ class CosyVoiceProvider {
     }
 
     async onRefreshClick() {
-        return;
+        return await this.checkReady();
     }
 
     //#################//
@@ -110,13 +110,9 @@ class CosyVoiceProvider {
     //#################//
 
     async getVoice(voiceName) {
-
-
-
         if (this.voices.length == 0) {
             this.voices = await this.fetchTtsVoiceObjects();
         }
-
 
 
         const match = this.voices.filter(
@@ -128,7 +124,6 @@ class CosyVoiceProvider {
         }
         return match;
     }
-
 
 
     async generateTts(text, voiceId) {
@@ -175,7 +170,7 @@ class CosyVoiceProvider {
         };
 
         if (streaming) {
-            params['streaming'] = 1;
+            params.streaming = 1;
         }
 
         const url = `${this.settings.provider_endpoint}/`;
@@ -196,7 +191,6 @@ class CosyVoiceProvider {
         }
         return response;
     }
-
 
 
     // Interface not used

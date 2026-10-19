@@ -1,8 +1,8 @@
 import { substituteParams } from '../../script.js';
+import { power_user } from '../power-user.js';
 import { delay, escapeRegex, uuidv4 } from '../utils.js';
 import { SlashCommand } from './SlashCommand.js';
 import { SlashCommandAbortController } from './SlashCommandAbortController.js';
-import { SlashCommandNamedArgument } from './SlashCommandArgument.js';
 import { SlashCommandBreak } from './SlashCommandBreak.js';
 import { SlashCommandBreakController } from './SlashCommandBreakController.js';
 import { SlashCommandBreakPoint } from './SlashCommandBreakPoint.js';
@@ -14,21 +14,19 @@ import { SlashCommandNamedArgumentAssignment } from './SlashCommandNamedArgument
 import { SlashCommandScope } from './SlashCommandScope.js';
 
 export class SlashCommandClosure {
-    /**@type {SlashCommandScope}*/ scope;
-    /**@type {boolean}*/ executeNow = false;
-    // @ts-ignore
-    /**@type {SlashCommandNamedArgumentAssignment[]}*/ argumentList = [];
-    // @ts-ignore
-    /**@type {SlashCommandNamedArgumentAssignment[]}*/ providedArgumentList = [];
-    /**@type {SlashCommandExecutor[]}*/ executorList = [];
-    /**@type {SlashCommandAbortController}*/ abortController;
-    /**@type {SlashCommandBreakController}*/ breakController;
-    /**@type {SlashCommandDebugController}*/ debugController;
-    /**@type {(done:number, total:number)=>void}*/ onProgress;
-    /**@type {string}*/ rawText;
-    /**@type {string}*/ fullText;
-    /**@type {string}*/ parserContext;
-    /**@type {string}*/ #source = uuidv4();
+    /** @type {SlashCommandScope} */ scope;
+    /** @type {boolean} */ executeNow = false;
+    /** @type {SlashCommandNamedArgumentAssignment[]} */ argumentList = [];
+    /** @type {SlashCommandNamedArgumentAssignment[]} */ providedArgumentList = [];
+    /** @type {SlashCommandExecutor[]} */ executorList = [];
+    /** @type {SlashCommandAbortController} */ abortController;
+    /** @type {SlashCommandBreakController} */ breakController;
+    /** @type {SlashCommandDebugController} */ debugController;
+    /** @type {(done:number, total:number)=>void} */ onProgress;
+    /** @type {string} */ rawText;
+    /** @type {string} */ fullText;
+    /** @type {string} */ parserContext;
+    /** @type {string} */ #source = uuidv4();
     get source() { return this.#source; }
     set source(value) {
         this.#source = value;
@@ -39,7 +37,7 @@ export class SlashCommandClosure {
 
     /**@type {number}*/
     get commandCount() {
-        return this.executorList.map(executor=>executor.commandCount).reduce((sum,cur)=>sum + cur, 0);
+        return this.executorList.map(executor => executor.commandCount).reduce((sum, cur) => sum + cur, 0);
     }
 
     constructor(parent) {
@@ -48,6 +46,104 @@ export class SlashCommandClosure {
 
     toString() {
         return `[Closure]${this.executeNow ? '()' : ''}`;
+    }
+
+    /**
+     * Performs parameter substitution using the macro engine.
+     * @param {string} text Text to substitute
+     * @param {SlashCommandScope} scope Script scope
+     * @param {{key:string, value:string|SlashCommandClosure}[]} macroList Custom scope macros
+     * @returns {string|SlashCommandClosure|(string|SlashCommandClosure)[]} Substituted text or list of strings/closures
+     */
+    substituteWithMacroEngine(text, scope, macroList) {
+        /** @type {Record<string, import('./../macros/engine/MacroEnv.types.js').DynamicMacroValue>} */
+        const dynamicMacros = {
+            'pipe': () => scope.pipe,
+            'var': {
+                strictArgs: false,
+                list: { min: 1, max: 2 },
+                handler: (context) => {
+                    try {
+                        // NB: Legacy replacer halted the script execution on unknown variables
+                        return scope.getVariable(context.list[0], context.list[1]);
+                    } catch (error) {
+                        console.warn('{{var}} dynamic macro execution error:', error);
+                        return '';
+                    }
+                },
+            },
+        };
+
+        // Special marker to denote closures in the substituted text
+        const CLOSURE_BOUNDARY = '\uFFF0~CLOSURE~\uFFF0';
+        /** @type {Map<string, SlashCommandClosure>} */
+        const closures = new Map();
+        /** @type {Record<string, { args: string[], value: string|SlashCommandClosure }[]>} */
+        const customMacros = {};
+
+        for (const macro of macroList) {
+            const [name, ...rest] = macro.key.split('::');
+            if (!Object.hasOwn(customMacros, name)) {
+                customMacros[name] = [];
+            }
+            customMacros[name].push({ args: rest, value: macro.value });
+        }
+
+        for (const [macroName, macroArguments] of Object.entries(customMacros)) {
+            dynamicMacros[macroName] = {
+                strictArgs: false,
+                list: { min: 0, max: Number.MAX_SAFE_INTEGER },
+                handler: (context) => {
+                    // Sort to prefer exact matches over wildcard matches
+                    const sortedMacroArgs = macroArguments.toSorted((a, b) => {
+                        const aHasWildcard = a.args.includes('*');
+                        const bHasWildcard = b.args.includes('*');
+                        if (aHasWildcard && !bHasWildcard) return 1;
+                        if (!aHasWildcard && bHasWildcard) return -1;
+                        return 0;
+                    });
+
+                    const findMacroMatch = (/** @type {{args: string[]}} */ i) => {
+                        // Exact match
+                        if (i.args.length === context.list.length && i.args.every((arg, index) => arg === context.list[index])) {
+                            return true;
+                        }
+                        // Wildcard match - if any definition arg is '*', it matches any value at that position
+                        if (i.args.length === context.list.length) {
+                            return i.args.every((arg, index) => arg === '*' || arg === context.list[index]);
+                        }
+                        return false;
+                    };
+
+                    const replacer = sortedMacroArgs.find(findMacroMatch)?.value;
+                    if (replacer instanceof SlashCommandClosure) {
+                        replacer.abortController = this.abortController;
+                        replacer.breakController = this.breakController;
+                        replacer.scope.parent = this.scope;
+                        if (this.debugController && !replacer.debugController) {
+                            replacer.debugController = this.debugController;
+                        }
+
+                        const closureKey = uuidv4();
+                        closures.set(closureKey, replacer);
+                        return `${CLOSURE_BOUNDARY}${closureKey}${CLOSURE_BOUNDARY}`;
+                    }
+
+                    return String(replacer ?? '');
+                },
+            };
+        }
+
+        const substitutedText = substituteParams(text, { dynamicMacros });
+
+        // If any closures were inserted, split the text accordingly
+        if (closures.size > 0) {
+            const parts = substitutedText.split(CLOSURE_BOUNDARY).map(part => closures.has(part) ? closures.get(part) : part).filter(Boolean);
+            return parts.length === 1 ? parts[0] : parts;
+        }
+
+        // No closures, return substituted text as-is
+        return substitutedText;
     }
 
     /**
@@ -60,7 +156,7 @@ export class SlashCommandClosure {
         let isList = false;
         let listValues = [];
         scope = scope ?? this.scope;
-        const escapeMacro = (it, isAnchored = false)=>{
+        const escapeMacro = (it, isAnchored = false) => {
             const regexText = escapeRegex(it.key.replace(/\*/g, '~~~WILDCARD~~~'))
                 .replaceAll('~~~WILDCARD~~~', '(?:(?:(?!(?:::|}})).)*)')
             ;
@@ -69,13 +165,16 @@ export class SlashCommandClosure {
             }
             return regexText;
         };
-        const macroList = scope.macroList.toSorted((a,b)=>{
+        const macroList = scope.macroList.toSorted((a, b) => {
             if (a.key.includes('*') && !b.key.includes('*')) return 1;
             if (!a.key.includes('*') && b.key.includes('*')) return -1;
             if (a.key.includes('*') && b.key.includes('*')) return b.key.indexOf('*') - a.key.indexOf('*');
             return 0;
         });
-        const macros = macroList.map(it=>escapeMacro(it)).join('|');
+        if (power_user.experimental_macro_engine) {
+            return this.substituteWithMacroEngine(text, scope, macroList);
+        }
+        const macros = macroList.map(it => escapeMacro(it)).join('|');
         const re = new RegExp(`(?<pipe>{{pipe}})|(?:{{var::(?<var>[^\\s]+?)(?:::(?<varIndex>(?!}}).+))?}})|(?:{{(?<macro>${macros})}})`);
         let done = '';
         let remaining = text;
@@ -83,7 +182,7 @@ export class SlashCommandClosure {
             const match = re.exec(remaining);
             const before = substituteParams(remaining.slice(0, match.index));
             const after = remaining.slice(match.index + match[0].length);
-            const replacer = match.groups.pipe ? scope.pipe : match.groups.var ? scope.getVariable(match.groups.var, match.groups.index) : macroList.find(it=>it.key == match.groups.macro || new RegExp(escapeMacro(it, true)).test(match.groups.macro))?.value;
+            const replacer = match.groups.pipe ? scope.pipe : match.groups.var ? scope.getVariable(match.groups.var, match.groups.index) : macroList.find(it => it.key == match.groups.macro || new RegExp(escapeMacro(it, true)).test(match.groups.macro))?.value;
             if (replacer instanceof SlashCommandClosure) {
                 replacer.abortController = this.abortController;
                 replacer.breakController = this.breakController;
@@ -154,7 +253,7 @@ export class SlashCommandClosure {
         return step.value;
     }
 
-    async * executeDirect() {
+    async* executeDirect() {
         this.debugController?.down(this);
         // closure arguments
         for (const arg of this.argumentList) {
@@ -226,10 +325,10 @@ export class SlashCommandClosure {
                     // breakpoint has to yield before arguments are resolved if one of the
                     // arguments is an immediate closure, otherwise you cannot step into the
                     // immediate closure
-                    const hasImmediateClosureInNamedArgs = /**@type {SlashCommandExecutor}*/(step.value)?.namedArgumentList?.find(it=>it.value instanceof SlashCommandClosure && it.value.executeNow);
-                    const hasImmediateClosureInUnnamedArgs = /**@type {SlashCommandExecutor}*/(step.value)?.unnamedArgumentList?.find(it=>it.value instanceof SlashCommandClosure && it.value.executeNow);
+                    const hasImmediateClosureInNamedArgs = /**@type {SlashCommandExecutor}*/(step.value)?.namedArgumentList?.find(it => it.value instanceof SlashCommandClosure && it.value.executeNow);
+                    const hasImmediateClosureInUnnamedArgs = /**@type {SlashCommandExecutor}*/(step.value)?.unnamedArgumentList?.find(it => it.value instanceof SlashCommandClosure && it.value.executeNow);
                     if (hasImmediateClosureInNamedArgs || hasImmediateClosureInUnnamedArgs) {
-                        this.debugController.isStepping = yield { closure:this, executor:step.value };
+                        this.debugController.isStepping = yield { closure: this, executor: step.value };
                     } else {
                         this.debugController.isStepping = true;
                         this.debugController.stepStack[this.debugController.stepStack.length - 1] = true;
@@ -239,10 +338,10 @@ export class SlashCommandClosure {
                 this.debugController.isSteppingInto = false;
                 // if stepping, have to yield before arguments are resolved if one of the arguments
                 // is an immediate closure, otherwise you cannot step into the immediate closure
-                const hasImmediateClosureInNamedArgs = /**@type {SlashCommandExecutor}*/(step.value)?.namedArgumentList?.find(it=>it.value instanceof SlashCommandClosure && it.value.executeNow);
-                const hasImmediateClosureInUnnamedArgs = /**@type {SlashCommandExecutor}*/(step.value)?.unnamedArgumentList?.find(it=>it.value instanceof SlashCommandClosure && it.value.executeNow);
+                const hasImmediateClosureInNamedArgs = /**@type {SlashCommandExecutor}*/(step.value)?.namedArgumentList?.find(it => it.value instanceof SlashCommandClosure && it.value.executeNow);
+                const hasImmediateClosureInUnnamedArgs = /**@type {SlashCommandExecutor}*/(step.value)?.unnamedArgumentList?.find(it => it.value instanceof SlashCommandClosure && it.value.executeNow);
                 if (hasImmediateClosureInNamedArgs || hasImmediateClosureInUnnamedArgs) {
-                    this.debugController.isStepping = yield { closure:this, executor:step.value };
+                    this.debugController.isStepping = yield { closure: this, executor: step.value };
                 }
             }
             // resolve args
@@ -255,7 +354,7 @@ export class SlashCommandClosure {
                 }
             } else if (!step.done && this.debugController?.testStepping(this)) {
                 this.debugController.isSteppingInto = false;
-                this.debugController.isStepping = yield { closure:this, executor:step.value };
+                this.debugController.isStepping = yield { closure: this, executor: step.value };
             }
             // execute executor
             step = await stepper.next();
@@ -278,7 +377,7 @@ export class SlashCommandClosure {
      *  - after arguments are resolved
      *  - after execution
      */
-    async * executeStep() {
+    async* executeStep() {
         let done = 0;
         let isFirst = true;
         for (const executor of this.executorList) {
@@ -330,7 +429,7 @@ export class SlashCommandClosure {
                 // then yield for "before exec"
                 yield executor;
                 // followed by command execution
-                executor.onProgress = (subDone, subTotal)=>this.onProgress?.(done + subDone, this.commandCount);
+                executor.onProgress = (subDone, subTotal) => this.onProgress?.(done + subDone, this.commandCount);
                 const isStepping = this.debugController?.testStepping(this);
                 if (this.debugController) {
                     this.debugController.isStepping = false || this.debugController.isSteppingInto;
@@ -487,7 +586,7 @@ export class SlashCommandClosure {
             if (!executor.command.splitUnnamedArgument) {
                 if (value.length == 1) {
                     value = value[0];
-                } else if (!value.find(it=>it instanceof SlashCommandClosure)) {
+                } else if (!value.find(it => it instanceof SlashCommandClosure)) {
                     value = value.join('');
                 }
             }
@@ -499,7 +598,7 @@ export class SlashCommandClosure {
                 ?.replace(/\\\}/g, '}')
             ;
         } else if (Array.isArray(value)) {
-            value = value.map(v=>{
+            value = value.map(v => {
                 if (typeof v == 'string') {
                     return v
                         ?.replace(/\\\{/g, '{')

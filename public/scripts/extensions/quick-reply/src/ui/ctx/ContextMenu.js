@@ -1,5 +1,4 @@
 import { QuickReply } from '../../QuickReply.js';
-// eslint-disable-next-line no-unused-vars
 import { QuickReplySet } from '../../QuickReplySet.js';
 import { MenuHeader } from './MenuHeader.js';
 import { MenuItem } from './MenuItem.js';
@@ -10,8 +9,6 @@ export class ContextMenu {
 
     /**@type {HTMLElement}*/ root;
     /**@type {HTMLElement}*/ menu;
-
-
 
 
     constructor(/**@type {QuickReply}*/qr) {
@@ -103,8 +100,6 @@ export class ContextMenu {
         }
         return this.root;
     }
-
-
 
 
     show({ clientX, clientY }) {

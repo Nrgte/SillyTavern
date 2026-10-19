@@ -18,6 +18,7 @@ export const USER_DIRECTORY_TEMPLATE = Object.freeze({
     thumbnails: 'thumbnails',
     thumbnailsBg: 'thumbnails/bg',
     thumbnailsAvatar: 'thumbnails/avatar',
+    thumbnailsPersona: 'thumbnails/persona',
     worlds: 'worlds',
     user: 'user',
     avatars: 'User Avatars',
@@ -43,6 +44,7 @@ export const USER_DIRECTORY_TEMPLATE = Object.freeze({
     vectors: 'vectors',
     backups: 'backups',
     sysprompt: 'sysprompt',
+    reasoning: 'reasoning',
 });
 
 /**
@@ -155,27 +157,60 @@ export const GEMINI_SAFETY = [
     },
     {
         category: 'HARM_CATEGORY_CIVIC_INTEGRITY',
-        threshold: 'BLOCK_NONE',
+        threshold: 'OFF',
+    },
+];
+
+export const VERTEX_SAFETY = [
+    {
+        category: 'HARM_CATEGORY_IMAGE_HATE',
+        threshold: 'OFF',
+    },
+    {
+        category: 'HARM_CATEGORY_IMAGE_DANGEROUS_CONTENT',
+        threshold: 'OFF',
+    },
+    {
+        category: 'HARM_CATEGORY_IMAGE_HARASSMENT',
+        threshold: 'OFF',
+    },
+    {
+        category: 'HARM_CATEGORY_IMAGE_SEXUALLY_EXPLICIT',
+        threshold: 'OFF',
+    },
+    {
+        category: 'HARM_CATEGORY_JAILBREAK',
+        threshold: 'OFF',
     },
 ];
 
 export const CHAT_COMPLETION_SOURCES = {
     OPENAI: 'openai',
-    WINDOWAI: 'windowai',
     CLAUDE: 'claude',
-    SCALE: 'scale',
     OPENROUTER: 'openrouter',
     AI21: 'ai21',
     MAKERSUITE: 'makersuite',
+    VERTEXAI: 'vertexai',
     MISTRALAI: 'mistralai',
     CUSTOM: 'custom',
     COHERE: 'cohere',
     PERPLEXITY: 'perplexity',
     GROQ: 'groq',
-    ZEROONEAI: '01ai',
-    BLOCKENTROPY: 'blockentropy',
+    CHUTES: 'chutes',
+    ELECTRONHUB: 'electronhub',
     NANOGPT: 'nanogpt',
     DEEPSEEK: 'deepseek',
+    AIMLAPI: 'aimlapi',
+    XAI: 'xai',
+    POLLINATIONS: 'pollinations',
+    MOONSHOT: 'moonshot',
+    FIREWORKS: 'fireworks',
+    COMETAPI: 'cometapi',
+    AZURE_OPENAI: 'azure_openai',
+    ZAI: 'zai',
+    SILICONFLOW: 'siliconflow',
+    MINIMAX: 'minimax',
+    WORKERS_AI: 'workers_ai',
 };
 
 /**
@@ -267,23 +302,6 @@ export const FEATHERLESS_KEYS = [
     'guided_whitespace_pattern',
 ];
 
-// https://dreamgen.com/docs/api#openai-text
-export const DREAMGEN_KEYS = [
-    'model',
-    'prompt',
-    'max_tokens',
-    'temperature',
-    'top_p',
-    'top_k',
-    'min_p',
-    'repetition_penalty',
-    'frequency_penalty',
-    'presence_penalty',
-    'stop',
-    'stream',
-    'minimum_message_content_tokens',
-];
-
 // https://docs.together.ai/reference/completions
 export const TOGETHERAI_KEYS = [
     'model',
@@ -300,7 +318,7 @@ export const TOGETHERAI_KEYS = [
     'stop',
 ];
 
-// https://github.com/jmorganca/ollama/blob/main/docs/api.md#request-with-options
+// https://github.com/ollama/ollama/blob/main/docs/api.md#request-8
 export const OLLAMA_KEYS = [
     'num_predict',
     'num_ctx',
@@ -316,9 +334,6 @@ export const OLLAMA_KEYS = [
     'typical_p',
     'seed',
     'repeat_last_n',
-    'mirostat',
-    'mirostat_tau',
-    'mirostat_eta',
     'min_p',
 ];
 
@@ -342,8 +357,14 @@ export const OPENAI_KEYS = [
 
 export const AVATAR_WIDTH = 512;
 export const AVATAR_HEIGHT = 768;
+export const DEFAULT_AVATAR_PATH = './public/img/ai4.png';
 
 export const OPENROUTER_HEADERS = {
+    'HTTP-Referer': 'https://sillytavern.app',
+    'X-Title': 'SillyTavern',
+};
+
+export const AIMLAPI_HEADERS = {
     'HTTP-Referer': 'https://sillytavern.app',
     'X-Title': 'SillyTavern',
 };
@@ -416,9 +437,146 @@ export const VLLM_KEYS = [
     'guided_whitespace_pattern',
 ];
 
+export const AZURE_OPENAI_KEYS = [
+    'messages',
+    'temperature',
+    'frequency_penalty',
+    'presence_penalty',
+    'top_p',
+    'max_tokens',
+    'max_completion_tokens',
+    'stream',
+    'logit_bias',
+    'stop',
+    'n',
+    'logprobs',
+    'seed',
+    'tools',
+    'tool_choice',
+    'reasoning_effort',
+];
+
+export const OPENAI_VERBOSITY_MODELS = /^(?:gpt-5|gpt-6-astra)/;
+
+export const OPENAI_REASONING_EFFORT_MODELS = [
+    'o1',
+    'o3-mini',
+    'o3-mini-2025-01-31',
+    'o4-mini',
+    'o4-mini-2025-04-16',
+    'o3',
+    'o3-2025-04-16',
+    'gpt-5',
+    'gpt-5-2025-08-07',
+    'gpt-5-mini',
+    'gpt-5-mini-2025-08-07',
+    'gpt-5-nano',
+    'gpt-5-nano-2025-08-07',
+    'gpt-5.1',
+    'gpt-5.1-2025-11-13',
+    'gpt-5.1-chat-latest',
+    'gpt-5.2',
+    'gpt-5.2-2025-12-11',
+    'gpt-5.2-chat-latest',
+    'gpt-5.3-chat-latest',
+    'gpt-5.4',
+    'gpt-5.4-2026-03-05',
+    'gpt-5.4-mini',
+    'gpt-5.4-mini-2026-03-17',
+    'gpt-5.4-nano',
+    'gpt-5.4-nano-2026-03-17',
+    'gpt-5.5',
+    'gpt-5.5-2026-04-23',
+    'gpt-5.6',
+    'gpt-5.6-sol',
+    'gpt-5.6-terra',
+    'gpt-5.6-luna',
+    'gpt-6-astra',
+];
+
+export const OPENAI_REASONING_EFFORT_MAP = {
+    min: 'minimal',
+};
+
+/**
+ * Models that only accept a single fixed reasoning effort value.
+ * @type {Record<string, string>}
+ */
+export const OPENAI_FIXED_REASONING_EFFORT = {
+    'gpt-5.3-chat-latest': 'medium',
+};
+
+export const NANOGPT_REASONING_EFFORT_MAP = {
+    min: 'none',
+    low: 'minimal',
+    medium: 'low',
+    high: 'medium',
+    max: 'high',
+};
+
 export const LOG_LEVELS = {
     DEBUG: 0,
     INFO: 1,
     WARN: 2,
     ERROR: 3,
+};
+
+/**
+ * An array of supported media file extensions.
+ * This is used to validate file uploads and ensure that only supported media types are processed.
+ */
+export const MEDIA_EXTENSIONS = [
+    'bmp',
+    'png',
+    'jpg',
+    'webp',
+    'jpeg',
+    'jfif',
+    'gif',
+    'mp4',
+    'avi',
+    'mov',
+    'wmv',
+    'flv',
+    'webm',
+    '3gp',
+    'mkv',
+    'mpg',
+    'mp3',
+    'wav',
+    'ogg',
+    'flac',
+    'aac',
+    'm4a',
+    'aiff',
+];
+
+/**
+ * Bitwise flag-style media request types.
+ */
+export const MEDIA_REQUEST_TYPE = {
+    IMAGE: 0b001,
+    VIDEO: 0b010,
+    AUDIO: 0b100,
+};
+
+
+export const ZAI_ENDPOINT = {
+    COMMON: 'common',
+    CODING: 'coding',
+};
+
+export const POLLINATIONS_ENDPOINT = {
+    AUTHENTICATED: 'authenticated',
+    ANONYMOUS: 'anonymous',
+};
+
+export const SILICONFLOW_ENDPOINT = {
+    GLOBAL: 'global',
+    CN: 'cn',
+};
+
+export const MINIMAX_ENDPOINT = {
+    GLOBAL: 'global',
+    CN: 'cn',
 };

@@ -1,26 +1,19 @@
-// eslint-disable-next-line no-unused-vars
 import { QuickReply } from '../src/QuickReply.js';
 import { QuickReplyContextLink } from '../src/QuickReplyContextLink.js';
 import { QuickReplySet } from '../src/QuickReplySet.js';
-// eslint-disable-next-line no-unused-vars
 import { QuickReplySettings } from '../src/QuickReplySettings.js';
-// eslint-disable-next-line no-unused-vars
 import { SettingsUi } from '../src/ui/SettingsUi.js';
 import { onlyUnique } from '../../../utils.js';
 
 export class QuickReplyApi {
-    /**@type {QuickReplySettings}*/ settings;
-    /**@type {SettingsUi}*/ settingsUi;
+    /** @type {QuickReplySettings} */ settings;
+    /** @type {SettingsUi} */ settingsUi;
 
 
-
-
-    constructor(/**@type {QuickReplySettings}*/settings, /**@type {SettingsUi}*/settingsUi) {
+    constructor(/** @type {QuickReplySettings} */settings, /** @type {SettingsUi} */settingsUi) {
         this.settings = settings;
         this.settingsUi = settingsUi;
     }
-
-
 
 
     /**
@@ -28,7 +21,7 @@ export class QuickReplyApi {
      * @returns {QuickReplySet}
      */
     getSetByQr(qr) {
-        return QuickReplySet.list.find(it=>it.qrList.includes(qr));
+        return QuickReplySet.list.find(it => it.qrList.includes(qr));
     }
 
     /**
@@ -51,11 +44,9 @@ export class QuickReplyApi {
     getQrByLabel(setName, label) {
         const set = this.getSetByName(setName);
         if (!set) return;
-        if (Number.isInteger(label)) return set.qrList.find(it=>it.id == label);
-        return set.qrList.find(it=>it.label == label);
+        if (Number.isInteger(label)) return set.qrList.find(it => it.id == label);
+        return set.qrList.find(it => it.label == label);
     }
-
-
 
 
     /**
@@ -66,7 +57,7 @@ export class QuickReplyApi {
      */
     async executeQuickReplyByIndex(idx) {
         const qr = [...this.settings.config.setList, ...(this.settings.chatConfig?.setList ?? [])]
-            .map(it=>it.set.qrList)
+            .map(it => it.set.qrList)
             .flat()[idx]
         ;
         if (qr) {
@@ -205,6 +196,7 @@ export class QuickReplyApi {
      * @param {boolean} [props.executeOnChatChange] whether to execute the quick reply when a new chat is loaded
      * @param {boolean} [props.executeOnGroupMemberDraft] whether to execute the quick reply when a group member is selected
      * @param {boolean} [props.executeOnNewChat] whether to execute the quick reply when a new chat is created
+     * @param {boolean} [props.executeBeforeGeneration] whether to execute the quick reply before message generation
      * @param {string} [props.automationId] when not empty, the quick reply will be executed when the WI with the given automation ID is activated
      * @returns {QuickReply} the new quick reply
      */
@@ -220,6 +212,7 @@ export class QuickReplyApi {
         executeOnChatChange,
         executeOnGroupMemberDraft,
         executeOnNewChat,
+        executeBeforeGeneration,
         automationId,
     } = {}) {
         const set = this.getSetByName(setName);
@@ -239,6 +232,7 @@ export class QuickReplyApi {
         qr.executeOnChatChange = executeOnChatChange ?? false;
         qr.executeOnGroupMemberDraft = executeOnGroupMemberDraft ?? false;
         qr.executeOnNewChat = executeOnNewChat ?? false;
+        qr.executeBeforeGeneration = executeBeforeGeneration ?? false;
         qr.automationId = automationId ?? '';
         qr.onUpdate();
         return qr;
@@ -262,6 +256,7 @@ export class QuickReplyApi {
      * @param {boolean} [props.executeOnChatChange] whether to execute the quick reply when a new chat is loaded
      * @param {boolean} [props.executeOnGroupMemberDraft] whether to execute the quick reply when a group member is selected
      * @param {boolean} [props.executeOnNewChat] whether to execute the quick reply when a new chat is created
+     * @param {boolean} [props.executeBeforeGeneration] whether to execute the quick reply before message generation
      * @param {string} [props.automationId] when not empty, the quick reply will be executed when the WI with the given automation ID is activated
      * @returns {QuickReply} the altered quick reply
      */
@@ -278,6 +273,7 @@ export class QuickReplyApi {
         executeOnChatChange,
         executeOnGroupMemberDraft,
         executeOnNewChat,
+        executeBeforeGeneration,
         automationId,
     } = {}) {
         const qr = this.getQrByLabel(setName, label);
@@ -296,6 +292,7 @@ export class QuickReplyApi {
         qr.executeOnChatChange = executeOnChatChange ?? qr.executeOnChatChange;
         qr.executeOnGroupMemberDraft = executeOnGroupMemberDraft ?? qr.executeOnGroupMemberDraft;
         qr.executeOnNewChat = executeOnNewChat ?? qr.executeOnNewChat;
+        qr.executeBeforeGeneration = executeBeforeGeneration ?? qr.executeBeforeGeneration;
         qr.automationId = automationId ?? qr.automationId;
         qr.onUpdate();
         return qr;
@@ -397,7 +394,7 @@ export class QuickReplyApi {
         if (oldSet) {
             QuickReplySet.list.splice(QuickReplySet.list.indexOf(oldSet), 1, set);
         } else {
-            const idx = QuickReplySet.list.findIndex(it=>it.name.localeCompare(name) == 1);
+            const idx = QuickReplySet.list.findIndex(it => it.name.localeCompare(name) == 1);
             if (idx > -1) {
                 QuickReplySet.list.splice(idx, 0, set);
             } else {
@@ -457,7 +454,7 @@ export class QuickReplyApi {
      * @returns array with the names of all quick reply sets
      */
     listSets() {
-        return QuickReplySet.list.map(it=>it.name);
+        return QuickReplySet.list.map(it => it.name);
     }
     /**
      * Gets a list of all globally active quick reply sets.
@@ -465,7 +462,7 @@ export class QuickReplyApi {
      * @returns array with the names of all quick reply sets
      */
     listGlobalSets() {
-        return this.settings.config.setList.map(it=>it.set.name);
+        return this.settings.config.setList.map(it => it.set.name);
     }
     /**
      * Gets a list of all quick reply sets activated by the current chat.
@@ -473,7 +470,7 @@ export class QuickReplyApi {
      * @returns array with the names of all quick reply sets
      */
     listChatSets() {
-        return this.settings.chatConfig?.setList?.flatMap(it=>it.set.name) ?? [];
+        return this.settings.chatConfig?.setList?.flatMap(it => it.set.name) ?? [];
     }
 
     /**
@@ -487,7 +484,7 @@ export class QuickReplyApi {
         if (!set) {
             throw new Error(`No quick reply set with name "${name}" found.`);
         }
-        return set.qrList.map(it=>it.label);
+        return set.qrList.map(it => it.label);
     }
 
     /**

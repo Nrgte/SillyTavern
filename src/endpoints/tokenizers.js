@@ -1,18 +1,20 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Buffer } from 'node:buffer';
+import zlib from 'node:zlib';
+import { promisify } from 'node:util';
 
 import express from 'express';
+import fetch from 'node-fetch';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
 import { Tokenizer } from '@agnai/web-tokenizers';
 import { SentencePieceProcessor } from '@agnai/sentencepiece-js';
 import tiktoken from 'tiktoken';
 
-import { convertClaudePrompt } from '../prompt-converters.js';
 import { TEXTGEN_TYPES } from '../constants.js';
 import { setAdditionalHeaders } from '../additional-headers.js';
-import { getConfigValue, isValidUrl } from '../util.js';
+import { getConfigValue, isValidUrl, trimV1 } from '../util.js';
 
 /**
  * @typedef { (req: import('express').Request, res: import('express').Response) => Promise<any> } TokenizationHandler
@@ -54,13 +56,24 @@ export const TEXT_COMPLETION_MODELS = [
     'code-search-ada-code-001',
 ];
 
-const CHARS_PER_TOKEN = 3.35;
+const BYTES_PER_TOKEN = 3.35;
 const IS_DOWNLOAD_ALLOWED = getConfigValue('enableDownloadableTokenizers', true, 'boolean');
+const gunzip = promisify(zlib.gunzip);
+
+/**
+ * Guesstimates the token count for a string.
+ * @param {string} str String to tokenize.
+ * @returns {number} Token count.
+ */
+function guesstimate(str) {
+    const byteLength = Buffer.byteLength(str, 'utf8');
+    return Math.ceil(byteLength / BYTES_PER_TOKEN);
+}
 
 /**
  * Gets a path to the tokenizer model. Downloads the model if it's a URL.
  * @param {string} model Model URL or path
- * @param {string|undefined} fallbackModel Fallback model path\
+ * @param {string|undefined} fallbackModel Fallback model path
  * @returns {Promise<string>} Path to the tokenizer model
  */
 async function getPathToTokenizer(model, fallbackModel) {
@@ -86,8 +99,24 @@ async function getPathToTokenizer(model, fallbackModel) {
             fs.mkdirSync(CACHE_PATH, { recursive: true });
         }
 
+        // If an uncompressed version exists, return it
+        const isCompressed = path.extname(fileName) === '.gz';
+        const uncompressedName = path.basename(fileName, '.gz');
+        const uncompressedPath = path.join(CACHE_PATH, uncompressedName);
+        if (isCompressed && fs.existsSync(uncompressedPath)) {
+            return uncompressedPath;
+        }
+
         const cachedFile = path.join(CACHE_PATH, fileName);
         if (fs.existsSync(cachedFile)) {
+            // If the file was downloaded manually
+            if (isCompressed) {
+                const compressedBuffer = await fs.promises.readFile(cachedFile);
+                const decompressedBuffer = await gunzip(compressedBuffer);
+                writeFileAtomicSync(uncompressedPath, decompressedBuffer);
+                await fs.promises.unlink(cachedFile);
+                return uncompressedPath;
+            }
             return cachedFile;
         }
 
@@ -102,6 +131,12 @@ async function getPathToTokenizer(model, fallbackModel) {
         }
 
         const arrayBuffer = await response.arrayBuffer();
+        if (isCompressed) {
+            const decompressedBuffer = await gunzip(arrayBuffer);
+            writeFileAtomicSync(uncompressedPath, decompressedBuffer);
+            return uncompressedPath;
+        }
+
         writeFileAtomicSync(cachedFile, Buffer.from(arrayBuffer));
         return cachedFile;
     } catch (error) {
@@ -202,8 +237,8 @@ class WebTokenizer {
 
         try {
             const pathToModel = await getPathToTokenizer(this.#model, this.#fallbackModel);
-            const arrayBuffer = fs.readFileSync(pathToModel).buffer;
-            this.#instance = await Tokenizer.fromJSON(arrayBuffer);
+            const fileBuffer = await fs.promises.readFile(pathToModel);
+            this.#instance = await Tokenizer.fromJSON(fileBuffer);
             console.info('Instantiated the tokenizer for', path.parse(pathToModel).name);
             return this.#instance;
         } catch (error) {
@@ -222,11 +257,11 @@ const spp_gemma = new SentencePieceTokenizer('src/tokenizers/gemma.model');
 const spp_jamba = new SentencePieceTokenizer('src/tokenizers/jamba.model');
 const claude_tokenizer = new WebTokenizer('src/tokenizers/claude.json');
 const llama3_tokenizer = new WebTokenizer('src/tokenizers/llama3.json');
-const commandRTokenizer = new WebTokenizer('https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/command-r.json', 'src/tokenizers/llama3.json');
-const commandATokenizer = new WebTokenizer('https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/command-a.json', 'src/tokenizers/llama3.json');
-const qwen2Tokenizer = new WebTokenizer('https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/qwen2.json', 'src/tokenizers/llama3.json');
-const nemoTokenizer = new WebTokenizer('https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/nemo.json', 'src/tokenizers/llama3.json');
-const deepseekTokenizer = new WebTokenizer('https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/deepseek.json', 'src/tokenizers/llama3.json');
+const commandRTokenizer = new WebTokenizer('https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/command-r.json.gz', 'src/tokenizers/llama3.json');
+const commandATokenizer = new WebTokenizer('https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/command-a.json.gz', 'src/tokenizers/llama3.json');
+const qwen2Tokenizer = new WebTokenizer('https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/qwen2.json.gz', 'src/tokenizers/llama3.json');
+const nemoTokenizer = new WebTokenizer('https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/nemo.json.gz', 'src/tokenizers/llama3.json');
+const deepseekTokenizer = new WebTokenizer('https://github.com/SillyTavern/SillyTavern-Tokenizers/raw/main/deepseek.json.gz', 'src/tokenizers/llama3.json');
 
 export const sentencepieceTokenizers = [
     'llama',
@@ -335,7 +370,7 @@ async function countSentencepieceTokens(tokenizer, text) {
     if (!instance) {
         return {
             ids: [],
-            count: Math.ceil(text.length / CHARS_PER_TOKEN),
+            count: guesstimate(text),
         };
     }
 
@@ -407,11 +442,15 @@ export function getTokenizerModel(requestModel) {
         return 'o1';
     }
 
+    if (requestModel.includes('gpt-5') || requestModel.includes('gpt-6-astra') || requestModel.includes('o3') || requestModel.includes('o4-mini')) {
+        return 'o1';
+    }
+
     if (requestModel.includes('gpt-4o') || requestModel.includes('chatgpt-4o-latest')) {
         return 'gpt-4o';
     }
 
-    if (requestModel.includes('gpt-4.5-preview')) {
+    if (requestModel.includes('gpt-4.1') || requestModel.includes('gpt-4.5')) {
         return 'gpt-4o';
     }
 
@@ -459,7 +498,7 @@ export function getTokenizerModel(requestModel) {
         return 'deepseek';
     }
 
-    if (requestModel.includes('gemma') || requestModel.includes('gemini')) {
+    if (requestModel.includes('gemma') || requestModel.includes('gemini') || requestModel.includes('learnlm')) {
         return 'gemma';
     }
 
@@ -505,15 +544,14 @@ export function getTiktokenTokenizer(model) {
  * @returns {number} Number of tokens
  */
 export function countWebTokenizerTokens(tokenizer, messages) {
-    // Should be fine if we use the old conversion method instead of the messages API one i think?
-    const convertedPrompt = convertClaudePrompt(messages, false, '', false, false, '', false);
+    const jsonBody = messages.flatMap(x => Object.values(x)).join('\n\n');
 
     // Fallback to strlen estimation
     if (!tokenizer) {
-        return Math.ceil(convertedPrompt.length / CHARS_PER_TOKEN);
+        return guesstimate(jsonBody);
     }
 
-    const count = tokenizer.encode(convertedPrompt).length;
+    const count = tokenizer.encode(jsonBody).length;
     return count;
 }
 
@@ -991,7 +1029,7 @@ router.post('/openai/count', async function (req, res) {
     } catch (error) {
         console.error('An error counting tokens, using fallback estimation method', error);
         const jsonBody = JSON.stringify(req.body);
-        const num_tokens = Math.ceil(jsonBody.length / CHARS_PER_TOKEN);
+        const num_tokens = guesstimate(jsonBody);
         res.send({ 'token_count': num_tokens });
     }
 });
@@ -1020,9 +1058,10 @@ router.post('/remote/kobold/count', async function (request, response) {
             return response.send({ error: true });
         }
 
+        /** @type {any} */
         const data = await result.json();
-        const count = data['value'];
-        const ids = data['ids'] ?? [];
+        const count = data.value;
+        const ids = data.ids ?? [];
         return response.send({ count, ids });
     } catch (error) {
         console.error(error);
@@ -1036,8 +1075,7 @@ router.post('/remote/textgenerationwebui/encode', async function (request, respo
     }
     const text = String(request.body.text) || '';
     const baseUrl = String(request.body.url);
-    const vllmModel = String(request.body.vllm_model) || '';
-    const aphroditeModel = String(request.body.aphrodite_model) || '';
+    const model = String(request.body.model) || '';
 
     try {
         const args = {
@@ -1048,33 +1086,35 @@ router.post('/remote/textgenerationwebui/encode', async function (request, respo
         setAdditionalHeaders(request, args, baseUrl);
 
         // Convert to string + remove trailing slash + /v1 suffix
-        let url = String(baseUrl).replace(/\/$/, '').replace(/\/v1$/, '');
+        let url = trimV1(baseUrl);
 
         switch (request.body.api_type) {
             case TEXTGEN_TYPES.TABBY:
                 url += '/v1/token/encode';
-                args.body = JSON.stringify({ 'text': text });
+                args.body = JSON.stringify({ 'text': text, 'add_bos_token': false, 'encode_special_tokens': false });
                 break;
             case TEXTGEN_TYPES.KOBOLDCPP:
                 url += '/api/extra/tokencount';
-                args.body = JSON.stringify({ 'prompt': text });
+                args.body = JSON.stringify({ 'prompt': text, 'special': false });
                 break;
             case TEXTGEN_TYPES.LLAMACPP:
                 url += '/tokenize';
-                args.body = JSON.stringify({ 'content': text });
+                args.body = JSON.stringify({ 'model': model, 'content': text });
                 break;
             case TEXTGEN_TYPES.VLLM:
                 url += '/tokenize';
-                args.body = JSON.stringify({ 'model': vllmModel, 'prompt': text });
+                args.body = JSON.stringify({ 'model': model, 'prompt': text });
                 break;
             case TEXTGEN_TYPES.APHRODITE:
                 url += '/v1/tokenize';
-                args.body = JSON.stringify({ 'model': aphroditeModel, 'prompt': text });
+                args.body = JSON.stringify({ 'model': model, 'prompt': text });
                 break;
-            default:
+            case TEXTGEN_TYPES.OOBA:
                 url += '/v1/internal/encode';
                 args.body = JSON.stringify({ 'text': text });
                 break;
+            default:
+                return response.sendStatus(400);
         }
 
         const result = await fetch(url, args);
@@ -1084,8 +1124,9 @@ router.post('/remote/textgenerationwebui/encode', async function (request, respo
             return response.send({ error: true });
         }
 
+        /** @type {any} */
         const data = await result.json();
-        const count =  (data?.length ?? data?.count ?? data?.value ?? data?.tokens?.length);
+        const count = (data?.length ?? data?.count ?? data?.value ?? data?.tokens?.length);
         const ids = (data?.tokens ?? data?.ids ?? []);
 
         return response.send({ count, ids });

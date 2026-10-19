@@ -1,19 +1,33 @@
-import { SlashCommand } from '../slash-commands/SlashCommand.js';
 import { AutoCompleteFuzzyScore } from './AutoCompleteFuzzyScore.js';
 
 
-
 export class AutoCompleteOption {
-    /**@type {string}*/ name;
-    /**@type {string}*/ typeIcon;
-    /**@type {string}*/ type;
-    /**@type {number}*/ nameOffset = 0;
-    /**@type {AutoCompleteFuzzyScore}*/ score;
-    /**@type {string}*/ replacer;
-    /**@type {HTMLElement}*/ dom;
-    /**@type {(input:string)=>boolean}*/ matchProvider;
-    /**@type {(input:string)=>string}*/ valueProvider;
-    /**@type {boolean}*/ makeSelectable = false;
+    /** @type {string} */ name;
+    /** @type {string} */ typeIcon;
+    /** @type {string} */ type;
+    /** @type {number} */ nameOffset = 0;
+    /** @type {AutoCompleteFuzzyScore} */ score;
+    /** @type {string} */ replacer;
+    /** @type {HTMLElement} */ dom;
+    /** @type {(input:string)=>boolean} */ matchProvider;
+    /** @type {(input:string)=>string} */ valueProvider;
+    /** @type {boolean} */ makeSelectable = false;
+    /** @type {boolean} */ forceFullNameMatch = false;
+
+    /**
+     * Offset to adjust the replacement start position.
+     * Negative values start replacement earlier (e.g., -2 to include 2 chars before normal start).
+     * Used by closing tag autocomplete to replace leading whitespace.
+     * @type {number}
+     */
+    replacementStartOffset = 0;
+
+    /**
+     * Priority for sorting. Lower values = higher priority (sorted first).
+     * Default is 100 (normal priority). Use lower values for items that should appear at the top.
+     * @type {number}
+     */
+    sortPriority = 100;
 
 
     /**
@@ -57,7 +71,7 @@ export class AutoCompleteOption {
                     name.classList.add('name');
                     name.classList.add('monospace');
                     name.textContent = noSlash ? '' : '/';
-                    key.split('').forEach(char=>{
+                    key.split('').forEach(char => {
                         const span = document.createElement('span'); {
                             span.textContent = char;
                             name.append(span);

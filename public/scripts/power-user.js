@@ -25,6 +25,12 @@ import {
     setActiveCharacter,
     entitiesFilter,
     doNewChat,
+    online_status,
+    messageFormatting,
+    extension_prompt_types,
+    extension_prompt_roles,
+    deleteMessage,
+    settingsReady,
 } from '../script.js';
 import { isMobile, initMovingUI, favsToHotswap } from './RossAscends-mods.js';
 import {
@@ -36,42 +42,47 @@ import {
     loadInstructMode,
     names_behavior_types,
     selectInstructPreset,
+    updateBindModelTemplatesState,
 } from './instruct-mode.js';
 
-import { getTagsList, tag_import_setting, tag_map, tags } from './tags.js';
+import { getTagsList, tag_import_setting, tag_map, tag_sort_mode, tags } from './tags.js';
 import { tokenizers } from './tokenizers.js';
 import { BIAS_CACHE } from './logit-bias.js';
 import { renderTemplateAsync } from './templates.js';
 
-import { countOccurrences, debounce, delay, download, getFileText, getStringHash, isOdd, isTrueBoolean, onlyUnique, resetScrollHeight, shuffle, sortMoments, stringToRange, timestampToMoment } from './utils.js';
+import { countOccurrences, debounce, delay, download, getFileText, getSanitizedFilename, getStringHash, isOdd, isTrueBoolean, onlyUnique, resetScrollHeight, shuffle, sortMoments, stringToRange, timestampToMoment } from './utils.js';
 import { FILTER_TYPES } from './filters.js';
 import { PARSER_FLAG, SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from './slash-commands/SlashCommandArgument.js';
-import { AUTOCOMPLETE_SELECT_KEY, AUTOCOMPLETE_WIDTH } from './autocomplete/AutoComplete.js';
+import { AUTOCOMPLETE_SELECT_KEY, AUTOCOMPLETE_STATE, AUTOCOMPLETE_WIDTH } from './autocomplete/AutoComplete.js';
 import { SlashCommandEnumValue, enumTypes } from './slash-commands/SlashCommandEnumValue.js';
 import { commonEnumProviders, enumIcons } from './slash-commands/SlashCommandCommonEnumsProvider.js';
-import { POPUP_TYPE, callGenericPopup } from './popup.js';
+import { POPUP_TYPE, callGenericPopup, fixToastrForDialogs } from './popup.js';
 import { loadSystemPrompts } from './sysprompt.js';
 import { fuzzySearchCategories } from './filters.js';
 import { accountStorage } from './util/AccountStorage.js';
+import { extractDominantColor, generateThemePalette, deriveBackgroundName } from './util/ThemeGenerator.js';
+import { DEFAULT_REASONING_TEMPLATE, loadReasoningTemplates } from './reasoning.js';
+import { bindModelTemplates } from './chat-templates.js';
+import { IMAGE_OVERSWIPE, MEDIA_DISPLAY } from './constants.js';
+import { t } from './i18n.js';
+import { getBackgroundPath, isCustomBackgroundUrl } from './backgrounds.js';
+import { persona_description_positions as _persona_description_positions } from './personas.js';
 
-export {
-    loadPowerUserSettings,
-    loadMovingUIState,
-    collapseNewlines,
-    playMessageSound,
-    fixMarkdown,
-    power_user,
-    send_on_enter_options,
-    getContextSettings,
-    applyPowerUserSettings,
-};
+export const toastPositionClasses = [
+    'toast-top-left',
+    'toast-top-center',
+    'toast-top-right',
+    'toast-bottom-left',
+    'toast-bottom-center',
+    'toast-bottom-right',
+];
 
 export const MAX_CONTEXT_DEFAULT = 8192;
 export const MAX_RESPONSE_DEFAULT = 2048;
-const MAX_CONTEXT_UNLOCKED = 200 * 1024;
-const MAX_RESPONSE_UNLOCKED = 32 * 1024;
+const MAX_CONTEXT_UNLOCKED = 512 * 1024;
+const MAX_RESPONSE_UNLOCKED = 64 * 1024;
 const unlockedMaxContextStep = 512;
 const maxContextMin = 512;
 const maxContextStep = 64;
@@ -79,11 +90,13 @@ const maxContextStep = 64;
 const defaultStoryString = '{{#if system}}{{system}}\n{{/if}}{{#if description}}{{description}}\n{{/if}}{{#if personality}}{{char}}\'s personality: {{personality}}\n{{/if}}{{#if scenario}}Scenario: {{scenario}}\n{{/if}}{{#if persona}}{{persona}}\n{{/if}}';
 const defaultExampleSeparator = '***';
 const defaultChatStart = '***';
+const defaultToastPosition = 'toast-top-center';
 
 const avatar_styles = {
     ROUND: 0,
     RECTANGULAR: 1,
     SQUARE: 2,
+    ROUNDED: 3,
 };
 
 export const chat_styles = {
@@ -92,25 +105,15 @@ export const chat_styles = {
     DOCUMENT: 2,
 };
 
-const send_on_enter_options = {
+export const send_on_enter_options = {
     DISABLED: -1,
     AUTO: 0,
     ENABLED: 1,
 };
 
-export const persona_description_positions = {
-    IN_PROMPT: 0,
-    /**
-     * @deprecated Use persona_description_positions.IN_PROMPT instead.
-     */
-    AFTER_CHAR: 1,
-    TOP_AN: 2,
-    BOTTOM_AN: 3,
-    AT_DEPTH: 4,
-    NONE: 9,
-};
+export const persona_description_positions = _persona_description_positions;
 
-let power_user = {
+export const power_user = {
     charListGrid: false,
     tokenizer: tokenizers.BEST_MATCH,
     token_padding: 64,
@@ -130,11 +133,14 @@ let power_user = {
     chat_truncation: 100,
     streaming_fps: 30,
     smooth_streaming: false,
+    smooth_streaming_no_think: false,
     smooth_streaming_speed: 50,
+    stream_fade_in: false,
 
     fast_ui_mode: true,
     avatar_style: avatar_styles.ROUND,
     chat_display: chat_styles.DEFAULT,
+    toastr_position: defaultToastPosition,
     chat_width: 50,
     never_resize_avatars: false,
     show_card_avatar_urls: false,
@@ -205,6 +211,7 @@ let power_user = {
     enable_auto_select_input: false,
     enable_md_hotkeys: false,
     tag_import_setting: tag_import_setting.ASK,
+    tag_sort_mode: tag_sort_mode.MANUAL,
     disable_group_trimming: false,
     single_line: false,
 
@@ -218,21 +225,23 @@ let power_user = {
         system_sequence: '',
         system_suffix: '',
         last_system_sequence: '',
+        first_input_sequence: '',
         first_output_sequence: '',
+        last_input_sequence: '',
         last_output_sequence: '',
-        system_sequence_prefix: '',
-        system_sequence_suffix: '',
+        story_string_prefix: '',
+        story_string_suffix: '',
         stop_sequence: '',
         wrap: true,
         macro: true,
         names_behavior: names_behavior_types.FORCE,
         activation_regex: '',
-        derived: false,
         bind_to_context: false,
         user_alignment_message: '',
         system_same_as_user: false,
         /** @deprecated Use output_suffix instead */
         separator_sequence: '',
+        sequences_as_stop_strings: true,
     },
 
     context: {
@@ -241,27 +250,36 @@ let power_user = {
         chat_start: defaultChatStart,
         example_separator: defaultExampleSeparator,
         use_stop_strings: true,
-        allow_jailbreak: false,
         names_as_stop_strings: true,
+        story_string_position: extension_prompt_types.IN_PROMPT,
+        story_string_role: extension_prompt_roles.SYSTEM,
+        story_string_depth: 1,
     },
 
+    instruct_derived: false,
     context_derived: false,
     context_size_derived: false,
+    /** User-defined model identifier / chat template hash to instruct/context template mappings */
+    model_templates_mappings: {},
+    /** The chat template hash of the currently loaded model, if any; used when deriving mappings */
+    chat_template_hash: '',
 
     sysprompt: {
         enabled: true,
         name: 'Neutral - Chat',
         content: 'Write {{char}}\'s next reply in a fictional chat between {{char}} and {{user}}.',
+        post_history: '',
     },
 
     reasoning: {
+        name: DEFAULT_REASONING_TEMPLATE,
         auto_parse: false,
         add_to_prompts: false,
         auto_expand: false,
         show_hidden: false,
-        prefix: '<think>\n',
-        suffix: '\n</think>',
-        separator: '\n\n',
+        prefix: '<think>',
+        suffix: '</think>',
+        separator: '\n',
         max_additions: 1,
     },
 
@@ -281,6 +299,7 @@ let power_user = {
     custom_stopping_strings_macro: true,
     fuzzy_search: false,
     encode_tags: false,
+    experimental_macro_engine: true,
     servers: [],
     bogus_folders: false,
     zoomed_avatar_magnification: false,
@@ -289,6 +308,7 @@ let power_user = {
     stscript: {
         matching: 'fuzzy',
         autocomplete: {
+            state: AUTOCOMPLETE_STATE.ALWAYS,
             autoHide: false,
             style: 'theme',
             font: {
@@ -299,6 +319,8 @@ let power_user = {
                 right: AUTOCOMPLETE_WIDTH.CHAT,
             },
             select: AUTOCOMPLETE_SELECT_KEY.TAB + AUTOCOMPLETE_SELECT_KEY.ENTER,
+            /** Whether to show macro autocomplete in all macro-enabled fields (not just expanded editors) */
+            showInAllMacroFields: false,
         },
         parser: {
             /**@type {Object.<PARSER_FLAG,boolean>} */
@@ -314,10 +336,15 @@ let power_user = {
     forbid_external_media: true,
     external_media_allowed_overrides: [],
     external_media_forbidden_overrides: [],
+    pin_styles: true,
+    click_to_edit: false,
+    media_display: MEDIA_DISPLAY.LIST,
+    image_overswipe: IMAGE_OVERSWIPE.GENERATE,
 };
 
 let themes = [];
 let movingUIPresets = [];
+/** @type {ContextSettings[]} */
 export let context_presets = [];
 
 const storage_keys = {
@@ -330,8 +357,10 @@ const contextControls = [
     { id: 'context_example_separator', property: 'example_separator', isCheckbox: false, isGlobalSetting: false },
     { id: 'context_chat_start', property: 'chat_start', isCheckbox: false, isGlobalSetting: false },
     { id: 'context_use_stop_strings', property: 'use_stop_strings', isCheckbox: true, isGlobalSetting: false, defaultValue: false },
-    { id: 'context_allow_jailbreak', property: 'allow_jailbreak', isCheckbox: true, isGlobalSetting: false, defaultValue: false },
     { id: 'context_names_as_stop_strings', property: 'names_as_stop_strings', isCheckbox: true, isGlobalSetting: false, defaultValue: true },
+    { id: 'context_story_string_position', property: 'story_string_position', isCheckbox: false, isGlobalSetting: false, defaultValue: extension_prompt_types.IN_PROMPT, trigger: true },
+    { id: 'context_story_string_depth', property: 'story_string_depth', isCheckbox: false, isGlobalSetting: false, defaultValue: 1 },
+    { id: 'context_story_string_role', property: 'story_string_role', isCheckbox: false, isGlobalSetting: false, defaultValue: extension_prompt_roles.SYSTEM },
 
     // Existing power user settings
     { id: 'always-force-name2-checkbox', property: 'always_force_name2', isCheckbox: true, isGlobalSetting: true, defaultValue: true },
@@ -344,12 +373,19 @@ const debug_functions = [];
 
 const setHotswapsDebounced = debounce(favsToHotswap);
 
-function playMessageSound() {
-    if (!power_user.play_message_sound) {
+/**
+ * Plays the message sound if enabled in power user settings.
+ * Passes through the `force` parameter to override settings.
+ * @param {object} [param] Arguments object.
+ * @param {boolean} [param.force] Whether to force play the sound.
+ * @returns {void}
+ */
+export function playMessageSound({ force } = {}) {
+    if (!power_user.play_message_sound && !force) {
         return;
     }
 
-    if (power_user.play_sound_unfocused && browser_has_focus) {
+    if (power_user.play_sound_unfocused && browser_has_focus && !force) {
         return;
     }
 
@@ -369,7 +405,7 @@ function playMessageSound() {
  * @example
  * collapseNewlines("\n\n\n"); // "\n"
  */
-function collapseNewlines(x) {
+export function collapseNewlines(x) {
     return x.replaceAll(/\n+/g, '\n');
 }
 
@@ -390,7 +426,7 @@ function collapseNewlines(x) {
  * // and you HAVE to handle the cases where multiple pairs of asterisks exist in the same line
  * "^example * text* * harder problem *\n" // "^example *text* *harder problem*\n"
  */
-function fixMarkdown(text, forDisplay) {
+export function fixMarkdown(text, forDisplay) {
     // Find pairs of formatting characters and capture the text in between them
     const format = /([*_]{1,2})([\s\S]*?)\1/gm;
     let matches = [];
@@ -473,10 +509,20 @@ function switchMessageActions() {
 }
 
 function switchReducedMotion() {
+    const osReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (osReduced) {
+        power_user.reduced_motion = true;
+    }
     jQuery.fx.off = power_user.reduced_motion;
     const overrideDuration = power_user.reduced_motion ? 0 : ANIMATION_DURATION_DEFAULT;
     setAnimationDuration(overrideDuration);
     $('#reduced_motion').prop('checked', power_user.reduced_motion);
+    $('#reduced_motion').prop('disabled', osReduced);
+    $('#reduced_motion').closest('label').attr('title',
+        osReduced
+            ? t`Controlled by your operating system's reduced motion setting`
+            : t`Disable animations and transitions`,
+    );
     $('body').toggleClass('reduced-motion', power_user.reduced_motion);
 }
 
@@ -493,7 +539,6 @@ function switchSwipeNumAllMessages() {
 var originalSliderValues = [];
 
 async function switchLabMode({ noReset = false } = {}) {
-
     /*     if (power_user.enableZenSliders && power_user.enableLabMode) {
             toastr.warning("Can't start Lab Mode while Zen Sliders are active")
             return
@@ -528,8 +573,6 @@ async function switchLabMode({ noReset = false } = {}) {
         $('#amount_gen').attr('min', '1')
             .attr('max', '99999')
             .attr('step', '1');
-
-
     } else if (!noReset) {
         //re apply the original sliders values to each input
         originalSliderValues.forEach(function (slider) {
@@ -585,7 +628,6 @@ async function switchZenSliders() {
         });
         $('div[id$="_zenslider"]').remove();
     }
-
 }
 async function CreateZenSliders(elmnt) {
     var originalSlider = elmnt;
@@ -771,9 +813,8 @@ async function CreateZenSliders(elmnt) {
                 handle.text(handleText)
                     .css('margin-left', `${leftMargin}px`);
                 //console.log(`${newSlider.attr('id')} initial value:${handleText}, stepNum:${stepNumber}, numSteps:${numSteps}, left-margin:${leftMargin}`)
-            }
-            //handling creation of rep_pen_range for ooba
-            else if (newSlider.attr('id') == 'rep_pen_range_textgenerationwebui_zenslider') {
+            } else if (newSlider.attr('id') == 'rep_pen_range_textgenerationwebui_zenslider') {
+                //handling creation of rep_pen_range for ooba
                 if ($('#rep_pen_range_textgenerationwebui_zensliders').length !== 0) {
                     $('#rep_pen_range_textgenerationwebui_zensliders').remove();
                 }
@@ -782,22 +823,19 @@ async function CreateZenSliders(elmnt) {
                 leftMargin = ((stepNumber) / numSteps) * 50 * -1;
                 if (sliderValue === offVal) {
                     handleText = 'Off';
-                    handle.css('color', 'rgba(128,128,128,0.5');
-                }
-                else if (sliderValue === allVal) { handleText = 'All'; }
-                else { handle.css('color', ''); }
+                    handle.css('color', 'rgba(128,128,128,0.5)');
+                } else if (sliderValue === allVal) { handleText = 'All'; } else { handle.css('color', ''); }
                 handle.text(handleText)
                     .css('margin-left', `${leftMargin}px`);
                 //console.log(sliderValue, handleText, offVal, allVal)
                 //console.log(`${newSlider.attr('id')} sliderValue = ${sliderValue}, handleText:${handleText}, stepNum:${stepNumber}, numSteps:${numSteps}, left-margin:${leftMargin}`)
                 originalSlider.val(steps[sliderValue]);
-            }
-            //create all other sliders
-            else {
+            } else {
+                //create all other sliders
                 var numVal = Number(sliderValue).toFixed(decimals);
                 offVal = Number(offVal).toFixed(decimals);
                 if (numVal === offVal) {
-                    handle.text('Off').css('color', 'rgba(128,128,128,0.5');
+                    handle.text('Off').css('color', 'rgba(128,128,128,0.5)');
                 } else {
                     handle.text(numVal).css('color', '');
                 }
@@ -836,13 +874,13 @@ async function CreateZenSliders(elmnt) {
                     })
                     //trigger slider changes when user clicks away
                     .on('mouseup blur', function () {
-                        let manualInput = parseFloat(handle.text()).toFixed(decimals);
+                        let manualInput = parseFloat(parseFloat(handle.text()).toFixed(decimals));
                         if (isManualInput) {
                             //disallow manual inputs outside acceptable range
                             if (manualInput >= sliderMin && manualInput <= sliderMax) {
                                 //if value is ok, assign to slider and update handle text and position
                                 newSlider.val(manualInput);
-                                handleSlideEvent.call(newSlider, null, { value: parseFloat(manualInput) }, 'manual');
+                                handleSlideEvent.call(newSlider, null, { value: manualInput }, 'manual');
                                 valueBeforeManualInput = manualInput;
                             } else {
                                 //if value not ok, warn and reset to last known valid value
@@ -864,13 +902,13 @@ async function CreateZenSliders(elmnt) {
 
     function handleSlideEvent(event, ui, type) {
         var handle = $(this).find('.ui-slider-handle');
-        var numVal = Number(ui.value).toFixed(decimals);
-        offVal = Number(offVal).toFixed(decimals);
-        allVal = Number(allVal).toFixed(decimals);
+        var numVal = parseFloat(Number(ui.value).toFixed(decimals));
+        offVal = parseFloat(Number(offVal).toFixed(decimals));
+        allVal = parseFloat(Number(allVal).toFixed(decimals));
         console.log(numVal, sliderMin, sliderMax, numVal > sliderMax, numVal < sliderMin);
         if (numVal > sliderMax) { numVal = sliderMax; }
         if (numVal < sliderMin) { numVal = sliderMin; }
-        var stepNumber = ((ui.value - sliderMin) / stepScale).toFixed(0);
+        var stepNumber = parseFloat(((ui.value - sliderMin) / stepScale).toFixed(0));
         var handleText = (ui.value);
         var leftMargin = (stepNumber / numSteps) * 50 * -1;
         var perStepPercent = 1 / numSteps; //how far in % each step should be on the slider
@@ -889,29 +927,24 @@ async function CreateZenSliders(elmnt) {
                 width: ${newSlider.width()}
                 percent of max: ${percentOfMax}
                 left: ${leftPos}`) */
-        //special handling for response length slider, pulls text aliases for step values from an array
         if (newSlider.attr('id') == 'amount_gen_zenslider') {
+            //special handling for response length slider, pulls text aliases for step values from an array
             handleText = steps[stepNumber];
             handle.text(handleText);
             newSlider.val(stepNumber);
             numVal = steps[stepNumber];
-        }
-        //special handling for TextCompletion rep pen range slider, pulls text aliases for step values from an array
-        else if (newSlider.attr('id') == 'rep_pen_range_textgenerationwebui_zenslider') {
+        } else if (newSlider.attr('id') == 'rep_pen_range_textgenerationwebui_zenslider') {
+            //special handling for TextCompletion rep pen range slider, pulls text aliases for step values from an array
             handleText = steps[stepNumber];
             handle.text(handleText);
             newSlider.val(stepNumber);
-            if (numVal === offVal) { handle.text('Off').css('color', 'rgba(128,128,128,0.5'); }
-            else if (numVal === allVal) { handle.text('All'); }
-            else { handle.css('color', ''); }
+            if (numVal === offVal) { handle.text('Off').css('color', 'rgba(128,128,128,0.5)'); } else if (numVal === allVal) { handle.text('All'); } else { handle.css('color', ''); }
             numVal = steps[stepNumber];
-        }
-        //everything else uses the flat slider value
-        //also note: the above sliders are not custom inputtable due to the array aliasing
-        else {
+        } else {
+            //everything else uses the flat slider value
+            //also note: the above sliders are not custom inputtable due to the array aliasing
             //show 'off' if disabled value is set
-            if (numVal === offVal) { handle.text('Off').css('color', 'rgba(128,128,128,0.5'); }
-            else { handle.text(ui.value.toFixed(decimals)).css('color', ''); }
+            if (numVal === offVal) { handle.text('Off').css('color', 'rgba(128,128,128,0.5)'); } else { handle.text(ui.value.toFixed(decimals)).css('color', ''); }
             newSlider.val(handleText);
         }
         //for manually typed-in values we must adjust left position because JQUI doesn't do it for us
@@ -951,23 +984,21 @@ function switchSpoilerMode() {
         $('#descriptionWrapper').hide();
         $('#firstMessageWrapper').hide();
         $('#spoiler_free_desc').addClass('flex1');
-        $('#creator_notes_spoiler').show();
-    }
-    else {
+        $('#creators_note_desc_hidden').show();
+    } else {
         $('#descriptionWrapper').show();
         $('#firstMessageWrapper').show();
         $('#spoiler_free_desc').removeClass('flex1');
-        $('#creator_notes_spoiler').hide();
+        $('#creators_note_desc_hidden').hide();
     }
 }
 
 function peekSpoilerMode() {
     $('#descriptionWrapper').toggle();
     $('#firstMessageWrapper').toggle();
-    $('#creator_notes_spoiler').toggle();
     $('#spoiler_free_desc').toggleClass('flex1');
+    $('#creators_note_desc_hidden').toggle();
 }
-
 
 function switchMovingUI() {
     $('.drawer-content.maximized').each(function () {
@@ -1004,14 +1035,14 @@ function applyNoShadows() {
 function applyAvatarStyle() {
     $('body').toggleClass('big-avatars', power_user.avatar_style === avatar_styles.RECTANGULAR);
     $('body').toggleClass('square-avatars', power_user.avatar_style === avatar_styles.SQUARE);
+    $('body').toggleClass('rounded-avatars', power_user.avatar_style === avatar_styles.ROUNDED);
     $('#avatar_style').val(power_user.avatar_style).prop('selected', true);
 }
 
 function applyChatDisplay() {
-
-    if (!power_user.chat_display === (null || undefined)) {
+    if ([null, undefined].includes(power_user.chat_display)) {
         console.debug('applyChatDisplay: saw no chat display type defined');
-        return;
+        power_user.chat_display = chat_styles.DEFAULT;
     }
     console.debug(`poweruser.chat_display ${power_user.chat_display}`);
     $('#chat_display').val(power_user.chat_display).prop('selected', true);
@@ -1036,6 +1067,18 @@ function applyChatDisplay() {
             break;
         }
     }
+}
+
+function applyToastrPosition() {
+    if (!toastPositionClasses.includes(power_user.toastr_position)) {
+        power_user.toastr_position = defaultToastPosition;
+        console.warn(`applyToastrPosition: invalid toastr position, defaulting to ${defaultToastPosition}`);
+    }
+
+    toastr.options.positionClass = power_user.toastr_position;
+    fixToastrForDialogs();
+    $('#toastr_position').val(power_user.toastr_position);
+    $(`#toastr_position option[value="${power_user.toastr_position}"]`).prop('selected', true);
 }
 
 function applyChatWidth(type) {
@@ -1080,7 +1123,9 @@ function applyThemeColor(type) {
             document.documentElement.style.setProperty('--SmartThemeFastUIBGColor', power_user.fastui_bg_color);
         } */
     if (type === 'blurTint') {
+        let metaThemeColor = document.querySelector('meta[name=theme-color]');
         document.documentElement.style.setProperty('--SmartThemeBlurTintColor', power_user.blur_tint_color);
+        metaThemeColor.setAttribute('content', power_user.blur_tint_color);
     }
     if (type === 'chatTint') {
         document.documentElement.style.setProperty('--SmartThemeChatTintColor', power_user.chat_tint_color);
@@ -1122,7 +1167,6 @@ function applyShadowWidth() {
     document.documentElement.style.setProperty('--shadowWidth', String(power_user.shadow_width));
     $('#shadow_width_counter').val(power_user.shadow_width);
     $('#shadow_width').val(power_user.shadow_width);
-
 }
 
 function applyFontScale(type) {
@@ -1138,6 +1182,46 @@ function applyFontScale(type) {
 
     $('#font_scale_counter').val(power_user.font_scale);
     $('#font_scale').val(power_user.font_scale);
+}
+
+/**
+ * Checks if the chat needs to be reloaded to apply media display settings.
+ * @returns {boolean} True if the chat needs reload to apply media display settings
+ */
+function isMediaDisplayReloadNeeded() {
+    // A user is not currently in a chat.
+    const chatId = getCurrentChatId();
+    if (!chatId) {
+        return false;
+    }
+
+    const firstDisplayedIndex = getFirstDisplayedMessageId();
+    const hasUnprocessedMediaMessages = chat.some((message, index) => {
+        // Skip messages that are not currently displayed
+        if (index < firstDisplayedIndex) {
+            return false;
+        }
+        const hasMediaAttachments = Array.isArray(message?.extra?.media) && message.extra.media.length > 0;
+        const lacksMediaDisplay = !message?.extra?.media_display;
+        return hasMediaAttachments && lacksMediaDisplay;
+    });
+
+    return hasUnprocessedMediaMessages;
+}
+
+/**
+ * Shows a toast notification prompting the user to reload the chat if media display settings have changed
+ * and there are messages with media attachments that haven't been processed with the new display format.
+ */
+function showMediaDisplayReloadPrompt() {
+    if (!isMediaDisplayReloadNeeded()) {
+        return;
+    }
+    toastr.info(
+        t`Reload the chat to apply the changes. Click here to reload.`,
+        t`Media Style changed`,
+        { onclick: () => void reloadCurrentChat() },
+    );
 }
 
 function applyTheme(name) {
@@ -1198,6 +1282,12 @@ function applyTheme(name) {
             key: 'chat_display',
             action: () => {
                 applyChatDisplay();
+            },
+        },
+        {
+            key: 'toastr_position',
+            action: () => {
+                applyToastrPosition();
             },
         },
         {
@@ -1317,14 +1407,31 @@ function applyTheme(name) {
                 switchSwipeNumAllMessages();
             },
         },
+        {
+            key: 'click_to_edit',
+            action: () => {
+                $('#click_to_edit').prop('checked', power_user.click_to_edit);
+            },
+        },
+        {
+            key: 'media_display',
+            action: (oldValue, newValue) => {
+                $('#media_display').val(power_user.media_display);
+                if (oldValue !== newValue) {
+                    showMediaDisplayReloadPrompt();
+                }
+            },
+        },
     ];
 
     for (const { key, selector, type, action } of themeProperties) {
         if (theme[key] !== undefined) {
-            power_user[key] = theme[key];
-            if (selector) $(selector).attr('color', power_user[key]);
+            const oldValue = power_user[key];
+            const newValue = theme[key];
+            power_user[key] = newValue;
+            if (selector) $(selector).attr('color', newValue);
             if (type) applyThemeColor(type);
-            if (action) action();
+            if (action) action(oldValue, newValue);
         } else {
             console.debug(`Empty theme key: ${key}`);
         }
@@ -1365,7 +1472,7 @@ async function showDebugMenu() {
     callGenericPopup(template, POPUP_TYPE.TEXT, '', { wide: true, large: true, allowVerticalScrolling: true });
 }
 
-function applyPowerUserSettings() {
+export function applyPowerUserSettings() {
     switchUiMode();
     applyFontScale('forced');
     applyThemeColor();
@@ -1387,6 +1494,50 @@ function applyPowerUserSettings() {
     switchSwipeNumAllMessages();
 }
 
+export function applyStylePins() {
+    try {
+        const existingPins = document.querySelector('#chat > .style-pins');
+        if (existingPins) {
+            existingPins.remove();
+        }
+
+        if (!power_user.pin_styles) {
+            return;
+        }
+
+        const firstDisplayed = getFirstDisplayedMessageId();
+        if (firstDisplayed === 0 || !isFinite(firstDisplayed)) {
+            return;
+        }
+
+        const chatElement = document.getElementById('chat');
+        if (!chatElement) {
+            return;
+        }
+
+        const firstMessage = chat[0];
+        if (!firstMessage) {
+            return;
+        }
+
+        const formattedMessage = messageFormatting(firstMessage.mes, firstMessage.name, firstMessage.is_system, firstMessage.is_user, 0, {}, false);
+        const htmlElement = document.createElement('div');
+        htmlElement.innerHTML = formattedMessage;
+
+        const styleTags = htmlElement.querySelectorAll('style');
+        if (styleTags.length === 0) {
+            return;
+        }
+
+        const pinsElement = document.createElement('div');
+        pinsElement.classList.add('style-pins');
+        pinsElement.append(...Array.from(styleTags));
+        chatElement.prepend(pinsElement);
+    } catch (error) {
+        console.error('Error applying style pins:', error);
+    }
+}
+
 function getExampleMessagesBehavior() {
     if (power_user.strip_examples) {
         return 'strip';
@@ -1399,10 +1550,19 @@ function getExampleMessagesBehavior() {
     return 'normal';
 }
 
-async function loadPowerUserSettings(settings, data) {
+//MARK: loadPowerUser
+export async function loadPowerUserSettings(settings, data) {
     const defaultStscript = JSON.parse(JSON.stringify(power_user.stscript));
     // Load from settings.json
     if (settings.power_user !== undefined) {
+        // Migrate old preference to a new setting
+        if (settings.power_user.click_to_edit === undefined && settings.power_user.chat_display === chat_styles.DOCUMENT) {
+            settings.power_user.click_to_edit = true;
+        }
+        if (Object.hasOwn(settings.power_user, 'auto_sort_tags') && !Object.hasOwn(settings.power_user, 'tag_sort_mode')) {
+            settings.power_user.tag_sort_mode = settings.power_user.auto_sort_tags ? tag_sort_mode.ALPHABETICAL : tag_sort_mode.MANUAL;
+            delete settings.power_user.auto_sort_tags;
+        }
         Object.assign(power_user, settings.power_user);
     }
 
@@ -1412,6 +1572,9 @@ async function loadPowerUserSettings(settings, data) {
         if (power_user.stscript.autocomplete === undefined) {
             power_user.stscript.autocomplete = defaultStscript.autocomplete;
         } else {
+            if (power_user.stscript.autocomplete.state === undefined) {
+                power_user.stscript.autocomplete.state = defaultStscript.autocomplete.state;
+            }
             if (power_user.stscript.autocomplete.width === undefined) {
                 power_user.stscript.autocomplete.width = defaultStscript.autocomplete.width;
             }
@@ -1423,6 +1586,9 @@ async function loadPowerUserSettings(settings, data) {
             }
             if (power_user.stscript.autocomplete.select === undefined) {
                 power_user.stscript.autocomplete.select = defaultStscript.autocomplete.select;
+            }
+            if (power_user.stscript.autocomplete.showInAllMacroFields === undefined) {
+                power_user.stscript.autocomplete.showInAllMacroFields = defaultStscript.autocomplete.showInAllMacroFields;
             }
         }
         if (power_user.stscript.parser === undefined) {
@@ -1448,15 +1614,15 @@ async function loadPowerUserSettings(settings, data) {
         context_presets = data.context;
     }
 
-    if (power_user.chat_display === '') {
+    if (typeof power_user.chat_display !== 'number') {
         power_user.chat_display = chat_styles.DEFAULT;
     }
 
-    if (power_user.waifuMode === '') {
+    if (typeof power_user.waifuMode !== 'boolean') {
         power_user.waifuMode = false;
     }
 
-    if (power_user.chat_width === '') {
+    if (typeof power_user.chat_width !== 'number') {
         power_user.chat_width = 50;
     }
 
@@ -1469,6 +1635,14 @@ async function loadPowerUserSettings(settings, data) {
         power_user.tag_import_setting = power_user.import_card_tags ? tag_import_setting.ASK : tag_import_setting.NONE;
         delete power_user.import_card_tags;
     }
+
+    if (power_user?.instruct?.derived === true) {
+        power_user.instruct_derived = true;
+        delete power_user.instruct.derived;
+    }
+
+    // Reset the saved chat template hash
+    power_user.chat_template_hash = '';
 
     $('#single_line').prop('checked', power_user.single_line);
     $('#relaxed_api_urls').prop('checked', power_user.relaxed_api_urls);
@@ -1493,8 +1667,10 @@ async function loadPowerUserSettings(settings, data) {
     $('#persona_allow_multi_connections').prop('checked', power_user.persona_allow_multi_connections);
     $('#persona_auto_lock').prop('checked', power_user.persona_auto_lock);
     $('#encode_tags').prop('checked', power_user.encode_tags);
+    $('#experimental_macro_engine').prop('checked', power_user.experimental_macro_engine);
     $('#example_messages_behavior').val(getExampleMessagesBehavior());
     $(`#example_messages_behavior option[value="${getExampleMessagesBehavior()}"]`).prop('selected', true);
+    $('#instruct_derived').parent().find('i').toggleClass('toggleEnabled', !!power_user.instruct_derived);
     $('#context_derived').parent().find('i').toggleClass('toggleEnabled', !!power_user.context_derived);
     $('#context_size_derived').prop('checked', !!power_user.context_size_derived);
 
@@ -1505,8 +1681,8 @@ async function loadPowerUserSettings(settings, data) {
     $('#auto_scroll_chat_to_bottom').prop('checked', power_user.auto_scroll_chat_to_bottom);
     $('#bogus_folders').prop('checked', power_user.bogus_folders);
     $('#zoomed_avatar_magnification').prop('checked', power_user.zoomed_avatar_magnification);
-    $(`#tokenizer option[value="${power_user.tokenizer}"]`).attr('selected', true);
-    $(`#send_on_enter option[value=${power_user.send_on_enter}]`).attr('selected', true);
+    $(`#tokenizer option[value="${power_user.tokenizer}"]`).prop('selected', true);
+    $(`#send_on_enter option[value=${power_user.send_on_enter}]`).prop('selected', true);
     $('#confirm_message_delete').prop('checked', power_user.confirm_message_delete !== undefined ? !!power_user.confirm_message_delete : true);
     $('#spoiler_free_mode').prop('checked', power_user.spoiler_free_mode);
     $('#collapse-newlines-checkbox').prop('checked', power_user.collapse_newlines);
@@ -1542,13 +1718,16 @@ async function loadPowerUserSettings(settings, data) {
     $('#enableZenSliders').prop('checked', power_user.enableZenSliders).trigger('input');
     $('#enableLabMode').prop('checked', power_user.enableLabMode).trigger('input', { fromInit: true });
     $(`input[name="avatar_style"][value="${power_user.avatar_style}"]`).prop('checked', true);
-    $(`#chat_display option[value=${power_user.chat_display}]`).attr('selected', true).trigger('change');
+    $(`#chat_display option[value=${power_user.chat_display}]`).prop('selected', true).trigger('change');
+    $(`#toastr_position option[value=${power_user.toastr_position}]`).prop('selected', true).trigger('change');
     $('#chat_width_slider').val(power_user.chat_width);
     $('#token_padding').val(power_user.token_padding);
     $('#aux_field').val(power_user.aux_field);
     $('#tag_import_setting').val(power_user.tag_import_setting);
 
+    $('#stscript_autocomplete_state').val(power_user.stscript.autocomplete.state).trigger('input');
     $('#stscript_autocomplete_autoHide').prop('checked', power_user.stscript.autocomplete.autoHide ?? false).trigger('input');
+    $('#stscript_autocomplete_showInAllMacroFields').prop('checked', power_user.stscript.autocomplete.showInAllMacroFields ?? false).trigger('input');
     $('#stscript_matching').val(power_user.stscript.matching ?? 'fuzzy');
     $('#stscript_autocomplete_style').val(power_user.stscript.autocomplete.style ?? 'theme');
     document.body.setAttribute('data-stscript-style', power_user.stscript.autocomplete.style);
@@ -1572,7 +1751,10 @@ async function loadPowerUserSettings(settings, data) {
     $('#streaming_fps_counter').val(power_user.streaming_fps);
 
     $('#smooth_streaming').prop('checked', power_user.smooth_streaming);
+    $('#smooth_streaming_no_think').prop('checked', power_user.smooth_streaming_no_think);
     $('#smooth_streaming_speed').val(power_user.smooth_streaming_speed);
+
+    $('#stream_fade_in').prop('checked', power_user.stream_fade_in);
 
     $('#font_scale').val(power_user.font_scale);
     $('#font_scale_counter').val(power_user.font_scale);
@@ -1597,6 +1779,10 @@ async function loadPowerUserSettings(settings, data) {
     $('#auto-connect-checkbox').prop('checked', power_user.auto_connect);
     $('#auto-load-chat-checkbox').prop('checked', power_user.auto_load_chat);
     $('#forbid_external_media').prop('checked', power_user.forbid_external_media);
+    $('#pin_styles').prop('checked', power_user.pin_styles);
+    $('#click_to_edit').prop('checked', power_user.click_to_edit);
+    $('#media_display').val(power_user.media_display);
+    $('#image_overswipe').val(power_user.image_overswipe);
 
     for (const theme of themes) {
         const option = document.createElement('option');
@@ -1622,12 +1808,14 @@ async function loadPowerUserSettings(settings, data) {
     await loadInstructMode(data);
     await loadContextSettings();
     await loadSystemPrompts(data);
+    await loadReasoningTemplates(data);
     loadMaxContextUnlocked();
     switchWaifuMode();
     switchSpoilerMode();
     loadMovingUIState();
     loadCharListState();
     toggleMDHotkeyIconDisplay();
+    applyToastrPosition();
 }
 
 function toggleMDHotkeyIconDisplay() {
@@ -1644,7 +1832,7 @@ function loadCharListState() {
     document.body.classList.toggle('charListGrid', power_user.charListGrid);
 }
 
-function loadMovingUIState() {
+export function loadMovingUIState() {
     if (!isMobile()
         && power_user.movingUIState
         && power_user.movingUI === true) {
@@ -1734,7 +1922,7 @@ function switchMaxContextSize() {
 }
 
 // Fetch a compiled object of all preset settings
-function getContextSettings() {
+export function getContextSettings() {
     let compiledSettings = {};
 
     contextControls.forEach((control) => {
@@ -1754,6 +1942,47 @@ function getContextSettings() {
 // TODO: Maybe add a refresh button to reset settings to preset
 // TODO: Add "global state" if a preset doesn't set the power_user checkboxes
 async function loadContextSettings() {
+    /**
+     * Auto-fix missing fields in the story string
+     * @param {ContextSettings} contextSettings Context settings instance
+     */
+    function autoFixStoryString(contextSettings) {
+        // Already migrated, no need to fix
+        if (!contextSettings || Object.hasOwn(contextSettings, 'story_string_position')) {
+            return;
+        }
+
+        let storyString = contextSettings.story_string || '';
+
+        /**
+         * @param {string} field Missing field name
+         * @param {'start'|'end'} position Position of auto-fix
+         */
+        function autoFixMissingField(field, position) {
+            if (storyString.includes(`{{${field}}}`)) {
+                return;
+            }
+
+            console.warn(`[Story String Validation] Story String is missing a field: ${field}. Adding it at the ${position}.`);
+            const fieldTemplate = `{{#if ${field}}}{{${field}}}\n{{/if}}`;
+            const firstCurlyPosition = storyString.includes('{{') ? storyString.indexOf('{{') : 0;
+            const lastCurlyPosition = storyString.includes('}}') ? storyString.lastIndexOf('}}') + '}}'.length : storyString.length;
+            const lastTrimPosition = storyString.includes('{{trim}}') ? storyString.lastIndexOf('{{trim}}') : storyString.length;
+            const endPosition = Math.min(lastTrimPosition, lastCurlyPosition);
+            storyString = position === 'start'
+                ? storyString.substring(0, firstCurlyPosition) + fieldTemplate + storyString.substring(firstCurlyPosition)
+                : storyString.substring(0, endPosition) + fieldTemplate + storyString.substring(endPosition);
+        }
+
+        autoFixMissingField('anchorBefore', 'start');
+        autoFixMissingField('anchorAfter', 'end');
+
+        contextSettings.story_string = storyString;
+    }
+
+    // Migrate story string to add missing fields
+    autoFixStoryString(power_user.context);
+
     contextControls.forEach(control => {
         const $element = $(`#${control.id}`);
 
@@ -1775,7 +2004,10 @@ async function loadContextSettings() {
         // If the setting already exists, no need to duplicate it
         // TODO: Maybe check the power_user object for the setting instead of a flag?
         $element.on('input', async function () {
-            const value = control.isCheckbox ? !!$(this).prop('checked') : $(this).val();
+            let value = control.isCheckbox ? !!$(this).prop('checked') : $(this).val();
+            if (typeof control.defaultValue === 'number') {
+                value = Number(value);
+            }
             if (control.isGlobalSetting) {
                 power_user[control.property] = value;
             } else {
@@ -1787,6 +2019,10 @@ async function loadContextSettings() {
             }
             saveSettingsDebounced();
         });
+
+        if (control.trigger) {
+            $element.trigger('input');
+        }
     });
 
     context_presets.forEach((preset) => {
@@ -1806,7 +2042,11 @@ async function loadContextSettings() {
             return;
         }
 
+        // Migrate story string to add missing fields
+        autoFixStoryString(preset);
+
         power_user.context.preset = name;
+
         contextControls.forEach(control => {
             const presetValue = preset[control.property] ?? control.defaultValue;
 
@@ -1840,6 +2080,8 @@ async function loadContextSettings() {
                 }
             }
         }
+
+        updateBindModelTemplatesState();
 
         saveSettingsDebounced();
     });
@@ -1983,15 +2225,24 @@ export function fuzzySearchGroups(searchValue, fuzzySearchCaches = null) {
 /**
  * Renders a story string template with the given parameters.
  * @param {object} params Template parameters.
+ * @param {object} [options] Additional options.
+ * @param {string} [options.customStoryString] Custom story string template.
+ * @param {InstructSettings} [options.customInstructSettings] Custom instruct settings.
+ * @param {ContextSettings} [options.customContextSettings] Custom context settings.
  * @returns {string} The rendered story string.
  */
-export function renderStoryString(params) {
+export function renderStoryString(params, { customStoryString = null, customInstructSettings = null, customContextSettings = null } = {}) {
     try {
+        const instructSettings = structuredClone(customInstructSettings ?? power_user.instruct);
+        const contextSettings = structuredClone(customContextSettings ?? power_user.context);
+        const storyString = customStoryString ?? contextSettings.story_string;
+        const storyStringPosition = contextSettings.story_string_position ?? extension_prompt_types.IN_PROMPT;
+
         // Validate and log possible warnings/errors
-        validateStoryString(power_user.context.story_string, params);
+        validateStoryString(storyString, params);
 
         // compile the story string template into a function, with no HTML escaping
-        const compiledTemplate = Handlebars.compile(power_user.context.story_string, { noEscape: true });
+        const compiledTemplate = Handlebars.compile(storyString, { noEscape: true });
 
         // render the story string template with the given params
         let output = compiledTemplate(params);
@@ -2003,8 +2254,8 @@ export function renderStoryString(params) {
         output = output.replace(/^\n+/, '');
 
         // add a newline to the end of the story string if it doesn't have one
-        if (output.length > 0 && !output.endsWith('\n')) {
-            if (!power_user.instruct.enabled || power_user.instruct.wrap) {
+        if (output.length > 0 && !output.endsWith('\n') && storyStringPosition !== extension_prompt_types.IN_CHAT) {
+            if (!instructSettings.enabled || (instructSettings.wrap && !instructSettings.story_string_suffix)) {
                 output += '\n';
             }
         }
@@ -2238,7 +2489,7 @@ async function saveTheme(name = undefined, theme = undefined) {
             return;
         }
 
-        name = String(newName);
+        name = await getSanitizedFilename(String(newName));
     }
 
     if (typeof theme !== 'object') {
@@ -2266,10 +2517,9 @@ async function saveTheme(name = undefined, theme = undefined) {
         option.value = name;
         option.innerText = name;
         $('#themes').append(option);
-    }
-    else {
+    } else {
         themes[themeIndex] = theme;
-        $(`#themes option[value="${name}"]`).attr('selected', true);
+        $(`#themes option[value="${name}"]`).prop('selected', true);
     }
 
     power_user.theme = name;
@@ -2281,9 +2531,8 @@ async function saveTheme(name = undefined, theme = undefined) {
 /**
  * Gets a snapshot of the current theme settings.
  * @param {string} name Name of the theme
- * @returns {object} Theme object
  */
-function getThemeObject(name) {
+export function getThemeObject(name) {
     return {
         name,
         blur_strength: power_user.blur_strength,
@@ -2303,6 +2552,7 @@ function getThemeObject(name) {
         waifuMode: power_user.waifuMode,
         avatar_style: power_user.avatar_style,
         chat_display: power_user.chat_display,
+        toastr_position: power_user.toastr_position,
         noShadows: power_user.noShadows,
         chat_width: power_user.chat_width,
         timer_enabled: power_user.timer_enabled,
@@ -2322,13 +2572,15 @@ function getThemeObject(name) {
         reduced_motion: power_user.reduced_motion,
         compact_input_area: power_user.compact_input_area,
         show_swipe_num_all_messages: power_user.show_swipe_num_all_messages,
+        click_to_edit: power_user.click_to_edit,
+        media_display: power_user.media_display,
     };
 }
 
 /**
  * Applies imported theme properties to the theme object.
  * @param {object} parsed Parsed object to get the theme from.
- * @returns {object} Theme assigned to the parsed object.
+ * @returns {Theme} Theme assigned to the parsed object.
  */
 function getNewTheme(parsed) {
     const theme = getThemeObject(parsed.name);
@@ -2347,7 +2599,7 @@ async function saveMovingUI() {
         return;
     }
 
-    const name = String(popupResult);
+    const name = await getSanitizedFilename(String(popupResult));
 
     const movingUIPreset = {
         name,
@@ -2371,10 +2623,9 @@ async function saveMovingUI() {
             option.value = name;
             option.innerText = name;
             $('#movingUIPresets').append(option);
-        }
-        else {
+        } else {
             movingUIPresets[movingUIPresetIndex] = movingUIPreset;
-            $(`#movingUIPresets option[value="${name}"]`).attr('selected', true);
+            $(`#movingUIPresets option[value="${name}"]`).prop('selected', true);
         }
 
         power_user.movingUIPreset = name;
@@ -2552,7 +2803,7 @@ async function loadUntilMesId(mesId) {
     while (getFirstDisplayedMessageId() > mesId && getFirstDisplayedMessageId() !== 0) {
         await showMoreMessages();
         await delay(1);
-        target = $('#chat').find(`.mes[mesid=${mesId}]`);
+        target = $('#chat').find(`.mes[mesid="${mesId}"]`);
 
         if (target.length) {
             break;
@@ -2567,9 +2818,10 @@ async function loadUntilMesId(mesId) {
     return target;
 }
 
-async function doMesCut(_, text) {
+async function doMesCut(args, text) {
     console.debug(`was asked to cut message id #${text}`);
     const range = stringToRange(text, 0, chat.length - 1);
+    const deleteToolCalls = args?.toolcalls === undefined || isTrueBoolean(args.toolcalls);
 
     //reject invalid args or no args
     if (!range) {
@@ -2577,13 +2829,16 @@ async function doMesCut(_, text) {
         return;
     }
 
-    let totalMesToCut = (range.end - range.start) + 1;
-    let mesIDToCut = range.start;
+    const messagesToCut = chat.slice(range.start, range.end + 1);
     let cutText = '';
 
-    for (let i = 0; i < totalMesToCut; i++) {
-        cutText += (chat[mesIDToCut]?.mes || '') + '\n';
-        let done = false;
+    for (const message of messagesToCut) {
+        const mesIDToCut = chat.indexOf(message);
+        if (mesIDToCut === -1) {
+            continue;
+        }
+
+        cutText += (message?.mes || '') + '\n';
         let mesToCut = $('#chat').find(`.mes[mesid=${mesIDToCut}]`);
 
         if (!mesToCut.length) {
@@ -2595,19 +2850,15 @@ async function doMesCut(_, text) {
         }
 
         setEditedMessageId(mesIDToCut);
-        eventSource.once(event_types.MESSAGE_DELETED, () => {
-            done = true;
-        });
-        mesToCut.find('.mes_edit_delete').trigger('click', { fromSlashCommand: true });
-        while (!done) {
-            await delay(1);
-        }
+        await deleteMessage(mesIDToCut, null, false, deleteToolCalls);
     }
+
+    await saveChatConditional();
 
     return cutText;
 }
 
-async function doDelMode(_, text) {
+async function doDelMode(args, text) {
     //reject invalid args
     if (text && isNaN(text)) {
         toastr.warning('Must enter a number or nothing.');
@@ -2616,7 +2867,8 @@ async function doDelMode(_, text) {
 
     // Just enter the delete mode.
     if (!text) {
-        $('#option_delete_mes').trigger('click', { fromSlashCommand: true });
+        const deleteToolCalls = args?.toolcalls === undefined || isTrueBoolean(args.toolcalls);
+        $('#option_delete_mes').trigger('click', { fromSlashCommand: true, deleteToolCalls });
         return '';
     }
 
@@ -2633,7 +2885,7 @@ async function doDelMode(_, text) {
     }
 
     const range = `${chat.length - count}-${chat.length - 1}`;
-    return doMesCut(_, range);
+    return doMesCut(args, range);
 }
 
 function doResetPanels() {
@@ -2641,210 +2893,64 @@ function doResetPanels() {
     return '';
 }
 
-function setAvgBG() {
-    const bgimg = new Image();
-    bgimg.src = $('#bg1')
-        .css('background-image')
-        .replace(/^url\(['"]?/, '')
-        .replace(/['"]?\)$/, '');
+async function setAvgBG(args) {
+    const nameOverride = args?.name ? String(args.name).trim() : '';
+    const bgOverride = args?.bg ? String(args.bg).trim() : '';
+    const force = isTrueBoolean(args?.force?.toString());
 
-    /*     const charAvatar = new Image()
-        charAvatar.src = $("#avatar_load_preview")
-            .attr('src')
+    let bgUrl;
+
+    if (bgOverride) {
+        // Use the specified background file
+        const isCustom = isCustomBackgroundUrl(bgOverride);
+        bgUrl = isCustom ? bgOverride : getBackgroundPath(bgOverride);
+    } else {
+        // Use the currently active background
+        bgUrl = $('#bg1')
+            .css('background-image')
             .replace(/^url\(['"]?/, '')
             .replace(/['"]?\)$/, '');
-
-        const userAvatar = new Image()
-        userAvatar.src = $("#user_avatar_block .avatar.selected img")
-            .attr('src')
-            .replace(/^url\(['"]?/, '')
-            .replace(/['"]?\)$/, ''); */
-
-
-    bgimg.onload = function () {
-        var rgb = getAverageRGB(bgimg);
-        //console.log(`average color of the bg is:`)
-        //console.log(rgb);
-        $('#blur-tint-color-picker').attr('color', 'rgb(' + rgb.r + ',' + rgb.g + ',' + rgb.b + ')');
-
-        const backgroundColorString = $('#blur-tint-color-picker').attr('color')
-            .replace('rgba', '')
-            .replace('rgb', '')
-            .replace('(', '[')
-            .replace(')', ']');   //[50, 120, 200, 1]; // Example background color
-        const backgroundColorArray = JSON.parse(backgroundColorString); //[200, 200, 200, 1]
-        console.log(backgroundColorArray);
-        $('#main-text-color-picker').attr('color', getReadableTextColor(backgroundColorArray));
-        console.log($('#main-text-color-picker').attr('color')); // Output: 'rgba(0, 47, 126, 1)'
-    };
-
-    /*     charAvatar.onload = function () {
-            var rgb = getAverageRGB(charAvatar);
-            //console.log(`average color of the AI avatar is:`);
-            //console.log(rgb);
-            $("#bot-mes-blur-tint-color-picker").attr('color', 'rgb(' + rgb.r + ',' + rgb.g + ',' + rgb.b + ')');
-        }
-
-        userAvatar.onload = function () {
-            var rgb = getAverageRGB(userAvatar);
-            //console.log(`average color of the user avatar is:`);
-            //console.log(rgb);
-            $("#user-mes-blur-tint-color-picker").attr('color', 'rgb(' + rgb.r + ',' + rgb.g + ',' + rgb.b + ')');
-        } */
-
-    function getAverageRGB(imgEl) {
-
-        var blockSize = 5, // only visit every 5 pixels
-            defaultRGB = { r: 0, g: 0, b: 0 }, // for non-supporting envs
-            canvas = document.createElement('canvas'),
-            context = canvas.getContext && canvas.getContext('2d'),
-            data, width, height,
-            i = -4,
-            length,
-            rgb = { r: 0, g: 0, b: 0 },
-            count = 0;
-
-        if (!context) {
-            return defaultRGB;
-        }
-
-        height = canvas.height = imgEl.naturalHeight || imgEl.offsetHeight || imgEl.height;
-        width = canvas.width = imgEl.naturalWidth || imgEl.offsetWidth || imgEl.width;
-        context.drawImage(imgEl, 0, 0);
-
-        try {
-            data = context.getImageData(0, 0, width, height);
-        } catch (e) {
-            /* security error, img on diff domain */alert('x');
-            return defaultRGB;
-        }
-
-        length = data.data.length;
-        while ((i += blockSize * 4) < length) {
-            ++count;
-            rgb.r += data.data[i];
-            rgb.g += data.data[i + 1];
-            rgb.b += data.data[i + 2];
-        }
-
-        // ~~ used to floor values
-        rgb.r = ~~(rgb.r / count);
-        rgb.g = ~~(rgb.g / count);
-        rgb.b = ~~(rgb.b / count);
-
-        return rgb;
-
     }
 
-    /**
-     * Converts an HSL color value to RGB.
-     * @param {number} h Hue value
-     * @param {number} s Saturation value
-     * @param {number} l Luminance value
-     * @return {Array} The RGB representation
-     */
-    function hslToRgb(h, s, l) {
-        const hueToRgb = (p, q, t) => {
-            if (t < 0) t += 1;
-            if (t > 1) t -= 1;
-            if (t < 1 / 6) return p + (q - p) * 6 * t;
-            if (t < 1 / 2) return q;
-            if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
-            return p;
-        };
-
-        if (s === 0) {
-            return [l, l, l];
-        }
-
-        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-        const p = 2 * l - q;
-        const r = hueToRgb(p, q, h + 1 / 3);
-        const g = hueToRgb(p, q, h);
-        const b = hueToRgb(p, q, h - 1 / 3);
-
-        return [r * 255, g * 255, b * 255];
+    if (!bgUrl || bgUrl === 'none') {
+        toastr.warning('No background image set.');
+        return '';
     }
 
-    //this version keeps BG and main text in same hue
-    /* function getReadableTextColor(rgb) {
-         const [r, g, b] = rgb;
+    // Build theme name from background filename or use override
+    const bgName = deriveBackgroundName(bgUrl);
+    const themeName = nameOverride || `bgcol - ${bgName}`;
 
-         // Convert RGB to HSL
-         const rgbToHsl = (r, g, b) => {
-             const max = Math.max(r, g, b);
-             const min = Math.min(r, g, b);
-             const d = max - min;
-             const l = (max + min) / 2;
-
-             if (d === 0) return [0, 0, l];
-
-             const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-             const h = (() => {
-                 switch (max) {
-                     case r:
-                         return (g - b) / d + (g < b ? 6 : 0);
-                     case g:
-                         return (b - r) / d + 2;
-                     case b:
-                         return (r - g) / d + 4;
-                 }
-             })() / 6;
-
-             return [h, s, l];
-         };
-         const [h, s, l] = rgbToHsl(r / 255, g / 255, b / 255);
-
-         // Calculate appropriate text color based on background color
-         const targetLuminance = l > 0.5 ? 0.2 : 0.8;
-         const targetSaturation = s > 0.5 ? s - 0.2 : s + 0.2;
-         const [rNew, gNew, bNew] = hslToRgb(h, targetSaturation, targetLuminance);
-
-         // Return the text color in RGBA format
-         return `rgba(${rNew.toFixed(0)}, ${gNew.toFixed(0)}, ${bNew.toFixed(0)}, 1)`;
-     }*/
-
-    //this version makes main text complimentary color to BG color
-    function getReadableTextColor(rgb) {
-        const [r, g, b] = rgb;
-
-        // Convert RGB to HSL
-        const rgbToHsl = (r, g, b) => {
-            const max = Math.max(r, g, b);
-            const min = Math.min(r, g, b);
-            const d = max - min;
-            const l = (max + min) / 2;
-
-            if (d === 0) return [0, 0, l];
-
-            const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-            const h = (() => {
-                switch (max) {
-                    case r:
-                        return (g - b) / d + (g < b ? 6 : 0);
-                    case g:
-                        return (b - r) / d + 2;
-                    case b:
-                        return (r - g) / d + 4;
-                }
-            })() / 6;
-
-            return [h, s, l];
-        };
-        const [h, s, l] = rgbToHsl(r / 255, g / 255, b / 255);
-
-        // Calculate complementary color based on background color
-        const complementaryHue = (h + 0.5) % 1;
-        const complementarySaturation = s > 0.5 ? s - 0.6 : s + 0.6;
-        const complementaryLuminance = l > 0.5 ? 0.2 : 0.8;
-
-        // Convert complementary color back to RGB
-        const [rNew, gNew, bNew] = hslToRgb(complementaryHue, complementarySaturation, complementaryLuminance);
-
-        // Return the text color in RGBA format
-        return `rgba(${rNew.toFixed(0)}, ${gNew.toFixed(0)}, ${bNew.toFixed(0)}, 1)`;
+    // Check if a theme with the same name already exists
+    if (themes.some(t => t.name === themeName) && !force) {
+        toastr.warning('Pass "force=true" to overwrite.', `A theme named "${themeName}" already exists.`);
+        return '';
     }
 
+    const bgimg = new Image();
+    bgimg.crossOrigin = 'anonymous';
+    bgimg.src = bgUrl;
+
+    await new Promise((resolve, reject) => {
+        bgimg.onload = resolve;
+        bgimg.onerror = () => reject(new Error('Failed to load background image'));
+    });
+
+    // Extract dominant vivid color using Oklch-weighted sampling
+    const dominantRgb = extractDominantColor(bgimg);
+
+    // Generate a full theme palette from the dominant color
+    const palette = generateThemePalette(dominantRgb);
+
+    // Create theme object from current settings, then override colors
+    const theme = getThemeObject(themeName);
+    Object.assign(theme, palette);
+
+    // Save as a new theme
+    await saveTheme(themeName, theme);
+    applyTheme(themeName);
+
+    toastr.success(`Theme "${themeName}" generated and applied.`);
     return '';
 }
 
@@ -3021,7 +3127,7 @@ export function forceCharacterEditorTokenize() {
     $('#character_popup').trigger('input');
 }
 
-$(document).ready(() => {
+jQuery(() => {
     const adjustAutocompleteDebounced = debounce(() => {
         $('.ui-autocomplete-input').each(function () {
             const isOpen = $(this).autocomplete('widget')[0].style.display !== 'none';
@@ -3032,12 +3138,12 @@ $(document).ready(() => {
     });
 
     const reportZoomLevelDebounced = debounce(() => {
-        const zoomLevel = Number(window.devicePixelRatio).toFixed(2) || 1;
+        const zoomLevel = parseFloat(Number(window.devicePixelRatio).toFixed(2)) || 1;
         const winWidth = window.innerWidth;
         const winHeight = window.innerHeight;
         const originalWidth = winWidth * zoomLevel;
         const originalHeight = winHeight * zoomLevel;
-        console.log(`Window resize: ${coreTruthWinWidth}x${coreTruthWinHeight} -> ${window.innerWidth}x${window.innerHeight}`);
+        console.debug(`Window resize: ${coreTruthWinWidth}x${coreTruthWinHeight} -> ${window.innerWidth}x${window.innerHeight}`);
         console.debug(`Zoom: ${zoomLevel}, X:${winWidth}, Y:${winHeight}, original: ${originalWidth}x${originalHeight} `);
         return zoomLevel;
     });
@@ -3057,8 +3163,8 @@ $(document).ready(() => {
 
         //attempt to scale movingUI elements naturally across window resizing/zooms
         //this will still break if the zoom level causes mobile styles to come into play.
-        const scaleY = Number(window.innerHeight / coreTruthWinHeight).toFixed(4);
-        const scaleX = Number(window.innerWidth / coreTruthWinWidth).toFixed(4);
+        const scaleY = parseFloat(Number(window.innerHeight / coreTruthWinHeight).toFixed(4));
+        const scaleX = parseFloat(Number(window.innerWidth / coreTruthWinWidth).toFixed(4));
 
         if (Object.keys(power_user.movingUIState).length > 0) {
             for (var elmntName of Object.keys(power_user.movingUIState)) {
@@ -3106,7 +3212,7 @@ $(document).ready(() => {
     });
 
     // Settings that go to settings.json
-    $('#collapse-newlines-checkbox').change(function () {
+    $('#collapse-newlines-checkbox').on('change', function () {
         power_user.collapse_newlines = !!$(this).prop('checked');
         saveSettingsDebounced();
     });
@@ -3114,7 +3220,7 @@ $(document).ready(() => {
     // include newline is the child of trim sentences
     // if include newline is checked, trim sentences must be checked
     // if trim sentences is unchecked, include newline must be unchecked
-    $('#trim_sentences_checkbox').change(function () {
+    $('#trim_sentences_checkbox').on('change', function () {
         power_user.trim_sentences = !!$(this).prop('checked');
         saveSettingsDebounced();
     });
@@ -3135,6 +3241,16 @@ $(document).ready(() => {
         $('#context_derived').parent().find('i').toggleClass('toggleEnabled', !!power_user.context_derived);
     });
 
+    $('#instruct_derived').on('input', function () {
+        const value = !!$(this).prop('checked');
+        power_user.instruct_derived = value;
+        saveSettingsDebounced();
+    });
+
+    $('#instruct_derived').on('change', function () {
+        $('#instruct_derived').parent().find('i').toggleClass('toggleEnabled', !!power_user.instruct_derived);
+    });
+
     $('#context_size_derived').on('input', function () {
         const value = !!$(this).prop('checked');
         power_user.context_size_derived = value;
@@ -3145,7 +3261,20 @@ $(document).ready(() => {
         $('#context_size_derived').prop('checked', !!power_user.context_size_derived);
     });
 
-    $('#always-force-name2-checkbox').change(function () {
+    $('#context_story_string_position').on('input', function () {
+        const value = Number($(this).val());
+        $('#context_story_string_inject_settings').toggle(value === extension_prompt_types.IN_CHAT);
+    });
+
+    $('#bind_model_templates').on('input', function () {
+        if (bindModelTemplates(power_user, online_status)) {
+            saveSettingsDebounced();
+        }
+    });
+
+    $('#bind_model_templates').on('change', updateBindModelTemplatesState);
+
+    $('#always-force-name2-checkbox').on('change', function () {
         power_user.always_force_name2 = !!$(this).prop('checked');
         saveSettingsDebounced();
     });
@@ -3161,7 +3290,7 @@ $(document).ready(() => {
         saveSettingsDebounced();
     });
 
-    $('#chat-show-reply-prefix-checkbox').change(function () {
+    $('#chat-show-reply-prefix-checkbox').on('change', function () {
         power_user.show_user_prompt_bias = !!$(this).prop('checked');
         reloadCurrentChat();
         saveSettingsDebounced();
@@ -3207,14 +3336,14 @@ $(document).ready(() => {
         saveSettingsDebounced();
     });
 
-    $('#fast_ui_mode').change(function () {
+    $('#fast_ui_mode').on('change', function () {
         power_user.fast_ui_mode = $(this).prop('checked');
         switchUiMode();
         saveSettingsDebounced();
     });
 
     $('#waifuMode').on('change', () => {
-        power_user.waifuMode = $('#waifuMode').prop('checked');
+        power_user.waifuMode = !!$('#waifuMode').prop('checked');
         switchWaifuMode();
         saveSettingsDebounced();
     });
@@ -3225,13 +3354,13 @@ $(document).ready(() => {
         applyCustomCSS();
     });
 
-    $('#movingUImode').change(function () {
+    $('#movingUImode').on('change', function () {
         power_user.movingUI = $(this).prop('checked');
         switchMovingUI();
         saveSettingsDebounced();
     });
 
-    $('#noShadowsmode').change(function () {
+    $('#noShadowsmode').on('change', function () {
         power_user.noShadows = $(this).prop('checked');
         applyNoShadows();
         saveSettingsDebounced();
@@ -3253,9 +3382,16 @@ $(document).ready(() => {
         saveSettingsDebounced();
     });
 
+    $('#toastr_position').on('change', function () {
+        const value = $(this).find(':selected').val();
+        power_user.toastr_position = String(value);
+        applyToastrPosition();
+        saveSettingsDebounced();
+    });
+
     $('#chat_width_slider').on('input', function (e, data) {
         const applyMode = data?.forced ? 'forced' : 'normal';
-        power_user.chat_width = Number(e.target.value);
+        power_user.chat_width = Number($(this).val());
         applyChatWidth(applyMode);
         saveSettingsDebounced();
         setHotswapsDebounced();
@@ -3278,88 +3414,98 @@ $(document).ready(() => {
         saveSettingsDebounced();
     });
 
+    $('#smooth_streaming_no_think').on('input', function () {
+        power_user.smooth_streaming_no_think = !!$(this).prop('checked');
+        saveSettingsDebounced();
+    });
+
     $('#smooth_streaming_speed').on('input', function () {
         power_user.smooth_streaming_speed = Number($('#smooth_streaming_speed').val());
         saveSettingsDebounced();
     });
 
+    $('#stream_fade_in').on('input', function () {
+        power_user.stream_fade_in = !!$(this).prop('checked');
+        saveSettingsDebounced();
+    });
+
     $('input[name="font_scale"]').on('input', async function (e, data) {
         const applyMode = data?.forced ? 'forced' : 'normal';
-        power_user.font_scale = Number(e.target.value);
+        power_user.font_scale = Number($(this).val());
         $('#font_scale_counter').val(power_user.font_scale);
         applyFontScale(applyMode);
         saveSettingsDebounced();
     });
 
     $('input[name="blur_strength"]').on('input', async function (e) {
-        power_user.blur_strength = Number(e.target.value);
+        power_user.blur_strength = Number($(this).val());
         $('#blur_strength_counter').val(power_user.blur_strength);
         applyBlurStrength();
         saveSettingsDebounced();
     });
 
     $('input[name="shadow_width"]').on('input', async function (e) {
-        power_user.shadow_width = Number(e.target.value);
+        power_user.shadow_width = Number($(this).val());
         $('#shadow_width_counter').val(power_user.shadow_width);
         applyShadowWidth();
         saveSettingsDebounced();
     });
 
-    $('#main-text-color-picker').on('change', (evt) => {
+    $('#main-text-color-picker').on('change', (/** @type {ColorPickerEvent} */ evt) => {
         power_user.main_text_color = evt.detail.rgba;
         applyThemeColor('main');
         saveSettingsDebounced();
     });
 
-    $('#italics-color-picker').on('change', (evt) => {
+    $('#italics-color-picker').on('change', (/** @type {ColorPickerEvent} */ evt) => {
         power_user.italics_text_color = evt.detail.rgba;
         applyThemeColor('italics');
         saveSettingsDebounced();
     });
 
-    $('#underline-color-picker').on('change', (evt) => {
+    $('#underline-color-picker').on('change', (/** @type {ColorPickerEvent} */ evt) => {
         power_user.underline_text_color = evt.detail.rgba;
         applyThemeColor('underline');
         saveSettingsDebounced();
     });
 
-    $('#quote-color-picker').on('change', (evt) => {
+    $('#quote-color-picker').on('change', (/** @type {ColorPickerEvent} */ evt) => {
         power_user.quote_text_color = evt.detail.rgba;
         applyThemeColor('quote');
         saveSettingsDebounced();
     });
 
-    $('#blur-tint-color-picker').on('change', (evt) => {
+    $('#blur-tint-color-picker').on('change', (/** @type {ColorPickerEvent} */ evt) => {
         power_user.blur_tint_color = evt.detail.rgba;
         applyThemeColor('blurTint');
         saveSettingsDebounced();
     });
 
-    $('#chat-tint-color-picker').on('change', (evt) => {
+    $('#chat-tint-color-picker').on('change', (/** @type {ColorPickerEvent} */ evt) => {
         power_user.chat_tint_color = evt.detail.rgba;
         applyThemeColor('chatTint');
         saveSettingsDebounced();
     });
 
-    $('#user-mes-blur-tint-color-picker').on('change', (evt) => {
+    $('#user-mes-blur-tint-color-picker').on('change', (/** @type {ColorPickerEvent} */ evt) => {
         power_user.user_mes_blur_tint_color = evt.detail.rgba;
         applyThemeColor('userMesBlurTint');
         saveSettingsDebounced();
     });
 
-    $('#bot-mes-blur-tint-color-picker').on('change', (evt) => {
+    $('#bot-mes-blur-tint-color-picker').on('change', (/** @type {ColorPickerEvent} */ evt) => {
         power_user.bot_mes_blur_tint_color = evt.detail.rgba;
         applyThemeColor('botMesBlurTint');
         saveSettingsDebounced();
     });
 
-    $('#shadow-color-picker').on('change', (evt) => {
+    $('#shadow-color-picker').on('change', (/** @type {ColorPickerEvent} */ evt) => {
         power_user.shadow_color = evt.detail.rgba;
         applyThemeColor('shadow');
         saveSettingsDebounced();
     });
 
-    $('#border-color-picker').on('change', (evt) => {
+    $('#border-color-picker').on('change', (/** @type {ColorPickerEvent} */ evt) => {
         power_user.border_color = evt.detail.rgba;
         applyThemeColor('border');
         saveSettingsDebounced();
@@ -3683,7 +3829,8 @@ $(document).ready(() => {
         saveSettingsDebounced();
     });
 
-    $('#spoiler_free_desc_button').on('click', function () {
+    $('#spoiler_free_desc_button').on('click', function (e) {
+        e.stopPropagation();
         peekSpoilerMode();
         $(this).toggleClass('fa-eye fa-eye-slash');
     });
@@ -3693,7 +3840,7 @@ $(document).ready(() => {
         saveSettingsDebounced();
     });
 
-    $('#custom_stopping_strings_macro').change(function () {
+    $('#custom_stopping_strings_macro').on('change', function () {
         power_user.custom_stopping_strings_macro = !!$(this).prop('checked');
         saveSettingsDebounced();
     });
@@ -3722,6 +3869,28 @@ $(document).ready(() => {
         power_user.encode_tags = !!$(this).prop('checked');
         await reloadCurrentChat();
         saveSettingsDebounced();
+    });
+
+    $('#experimental_macro_engine').on('input', function () {
+        power_user.experimental_macro_engine = !!$(this).prop('checked');
+        saveSettingsDebounced();
+
+        // Check if the app is ready before showing the toast
+        if (!settingsReady) {
+            return;
+        }
+
+        eventSource.once(event_types.SETTINGS_UPDATED, function () {
+            toastr.warning(
+                t`Click here to reload.`,
+                t`Toggling the Experimental Macro Engine requires a reload.`,
+                {
+                    onclick: () => window.location.reload(),
+                    timeOut: 10000,
+                    preventDuplicates: true,
+                },
+            );
+        });
     });
 
     $('#disable_group_trimming').on('input', function () {
@@ -3758,8 +3927,18 @@ $(document).ready(() => {
         saveSettingsDebounced();
     });
 
+    $('#stscript_autocomplete_state').on('input', function () {
+        power_user.stscript.autocomplete.state = Number($(this).val());
+        saveSettingsDebounced();
+    });
+
     $('#stscript_autocomplete_autoHide').on('input', function () {
         power_user.stscript.autocomplete.autoHide = !!$(this).prop('checked');
+        saveSettingsDebounced();
+    });
+
+    $('#stscript_autocomplete_showInAllMacroFields').on('input', function () {
+        power_user.stscript.autocomplete.showInAllMacroFields = !!$(this).prop('checked');
         saveSettingsDebounced();
     });
 
@@ -3866,6 +4045,17 @@ $(document).ready(() => {
         reloadCurrentChat();
     });
 
+    $('#pin_styles').on('input', function () {
+        power_user.pin_styles = !!$(this).prop('checked');
+        saveSettingsDebounced();
+        applyStylePins();
+    });
+
+    $('#click_to_edit').on('input', function () {
+        power_user.click_to_edit = !!$(this).prop('checked');
+        saveSettingsDebounced();
+    });
+
     $('#ui_preset_import_button').on('click', function () {
         $('#ui_preset_import_file').trigger('click');
     });
@@ -3888,6 +4078,19 @@ $(document).ready(() => {
 
     $('#ui_preset_export_button').on('click', async function () {
         await exportTheme();
+    });
+
+    $('#media_display').on('input', async function () {
+        power_user.media_display = $(this).val().toString();
+        saveSettingsDebounced();
+        if (isMediaDisplayReloadNeeded()) {
+            await reloadCurrentChat();
+        }
+    });
+
+    $('#image_overswipe').on('input', function () {
+        power_user.image_overswipe = $(this).val().toString();
+        saveSettingsDebounced();
     });
 
     $(document).on('click', '#debug_table [data-debug-function]', function () {
@@ -3948,6 +4151,15 @@ $(document).ready(() => {
         name: 'del',
         callback: doDelMode,
         aliases: ['delete', 'delmode'],
+        namedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'toolcalls',
+                description: 'also delete associated tool-call messages',
+                typeList: [ARGUMENT_TYPE.BOOLEAN],
+                defaultValue: 'true',
+                enumList: commonEnumProviders.boolean('trueFalse')(),
+            }),
+        ],
         unnamedArgumentList: [
             new SlashCommandArgument(
                 'optional number', [ARGUMENT_TYPE.NUMBER], false,
@@ -3960,6 +4172,15 @@ $(document).ready(() => {
         name: 'cut',
         callback: doMesCut,
         returns: 'the text of cut messages separated by a newline',
+        namedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'toolcalls',
+                description: 'also delete associated tool-call messages',
+                typeList: [ARGUMENT_TYPE.BOOLEAN],
+                defaultValue: 'true',
+                enumList: commonEnumProviders.boolean('trueFalse')(),
+            }),
+        ],
         unnamedArgumentList: [
             SlashCommandArgument.fromProps({
                 description: 'number or range',
@@ -3996,7 +4217,27 @@ $(document).ready(() => {
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'bgcol',
         callback: setAvgBG,
-        helpString: '– WIP test of auto-bg avg coloring',
+        namedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'force',
+                description: 'force generation even if a theme with the same name already exists',
+                typeList: [ARGUMENT_TYPE.BOOLEAN],
+                defaultValue: 'false',
+                enumList: commonEnumProviders.boolean('trueFalse')(),
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'name',
+                description: 'override the generated theme name',
+                typeList: [ARGUMENT_TYPE.STRING],
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'bg',
+                description: 'background image filename to use instead of the current one',
+                typeList: [ARGUMENT_TYPE.STRING],
+                enumProvider: commonEnumProviders.backgrounds,
+            }),
+        ],
+        helpString: 'Generates a new theme based on a dominant color of the specified background image. Saves as "bgcol - background name".',
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'theme',
@@ -4217,7 +4458,7 @@ $(document).ready(() => {
                 enumList: commonEnumProviders.boolean('trueFalse')(),
             }),
         ],
-        unnamedArgumentList:[
+        unnamedArgumentList: [
             SlashCommandArgument.fromProps({
                 description: 'value',
                 typeList: [ARGUMENT_TYPE.STRING],

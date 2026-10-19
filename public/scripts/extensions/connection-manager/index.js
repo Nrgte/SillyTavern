@@ -1,7 +1,7 @@
-import { Fuse } from '../../../lib.js';
+import { DOMPurify, Fuse } from '../../../lib.js';
 
-import { event_types, eventSource, main_api, saveSettingsDebounced } from '../../../script.js';
-import { extension_settings, renderExtensionTemplateAsync } from '../../extensions.js';
+import { activateSendButtons, deactivateSendButtons, event_types, eventSource, main_api, online_status, saveSettingsDebounced } from '../../../script.js';
+import { extension_settings, getContext, renderExtensionTemplateAsync } from '../../extensions.js';
 import { callGenericPopup, Popup, POPUP_RESULT, POPUP_TYPE } from '../../popup.js';
 import { SlashCommand } from '../../slash-commands/SlashCommand.js';
 import { SlashCommandAbortController } from '../../slash-commands/SlashCommandAbortController.js';
@@ -9,10 +9,16 @@ import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '
 import { commonEnumProviders, enumIcons } from '../../slash-commands/SlashCommandCommonEnumsProvider.js';
 import { SlashCommandDebugController } from '../../slash-commands/SlashCommandDebugController.js';
 import { enumTypes, SlashCommandEnumValue } from '../../slash-commands/SlashCommandEnumValue.js';
+import { SlashCommandClosure } from '../../slash-commands/SlashCommandClosure.js';
 import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
 import { SlashCommandScope } from '../../slash-commands/SlashCommandScope.js';
-import { collapseSpaces, getUniqueName, isFalseBoolean, uuidv4 } from '../../utils.js';
+import { collapseSpaces, getUniqueName, isFalseBoolean, isTrueBoolean, uuidv4, waitUntilCondition } from '../../utils.js';
 import { t } from '../../i18n.js';
+import { getSecretLabelById } from '../../secrets.js';
+import { performFuzzySearch } from '/scripts/power-user.js';
+import { StreamingDisplay } from '/scripts/streaming-display.js';
+import { ConnectionManagerRequestService } from '../shared.js';
+import { formatReasoning } from '/scripts/reasoning.js';
 
 const MODULE_NAME = 'connection-manager';
 const NONE = '<None>';
@@ -39,6 +45,10 @@ const CC_COMMANDS = [
     'proxy',
     'stop-strings',
     'start-reply-with',
+    'reasoning-template',
+    'prompt-post-processing',
+    'secret-id',
+    'regex-preset',
 ];
 
 const TC_COMMANDS = [
@@ -54,6 +64,9 @@ const TC_COMMANDS = [
     'tokenizer',
     'stop-strings',
     'start-reply-with',
+    'reasoning-template',
+    'secret-id',
+    'regex-preset',
 ];
 
 const FANCY_NAMES = {
@@ -70,6 +83,10 @@ const FANCY_NAMES = {
     'tokenizer': 'Tokenizer',
     'stop-strings': 'Custom Stopping Strings',
     'start-reply-with': 'Start Reply With',
+    'reasoning-template': 'Reasoning Template',
+    'prompt-post-processing': 'Prompt Post-Processing',
+    'secret-id': 'Secret',
+    'regex-preset': 'Regex Preset',
 };
 
 /**
@@ -154,6 +171,13 @@ const profilesProvider = () => [
  * @property {string} [tokenizer] Tokenizer
  * @property {string} [stop-strings] Custom Stopping Strings
  * @property {string} [start-reply-with] Start Reply With
+ * @property {string} [reasoning-template] Reasoning Template
+ * @property {string} [prompt-post-processing] Prompt Post-Processing
+ * @property {string} [sysprompt] System Prompt Name
+ * @property {string} [sysprompt-state] Use System Prompt
+ * @property {string} [api-url] Server URL
+ * @property {string} [secret-id] Secret ID
+ * @property {string} [regex-preset] Regex Preset ID
  * @property {string[]} [exclude] Commands to exclude
  */
 
@@ -267,9 +291,14 @@ async function createConnectionProfile(forceName = null) {
     });
     const isNameTaken = (n) => extension_settings.connectionManager.profiles.some(p => p.name === n);
     const suggestedName = getUniqueName(collapseSpaces(`${profile.api ?? ''} ${profile.model ?? ''} - ${profile.preset ?? ''}`), isNameTaken);
-    const name = forceName ?? await callGenericPopup(template, POPUP_TYPE.INPUT, suggestedName, { rows: 2 });
-
+    let name = forceName ?? await callGenericPopup(template, POPUP_TYPE.INPUT, suggestedName);
+    // If it's cancelled, it will be false
     if (!name) {
+        return null;
+    }
+    name = DOMPurify.sanitize(String(name));
+    if (!name) {
+        toastr.error('Name cannot be empty.');
         return null;
     }
 
@@ -303,7 +332,8 @@ async function deleteConnectionProfile() {
         return;
     }
 
-    const name = extension_settings.connectionManager.profiles[index].name;
+    const profile = extension_settings.connectionManager.profiles[index];
+    const name = profile.name;
     const confirm = await Popup.show.confirm(t`Are you sure you want to delete the selected profile?`, name);
 
     if (!confirm) {
@@ -313,6 +343,8 @@ async function deleteConnectionProfile() {
     extension_settings.connectionManager.profiles.splice(index, 1);
     extension_settings.connectionManager.selectedProfile = null;
     saveSettingsDebounced();
+
+    await eventSource.emit(event_types.CONNECTION_PROFILE_DELETED, profile);
 }
 
 /**
@@ -328,6 +360,23 @@ function makeFancyProfile(profile) {
                 acc[value] = EMPTY;
             }
             return acc;
+        }
+
+        // UUID is not very useful in the UI, so we replace it with a label (if available)
+        if (key === 'secret-id') {
+            const label = getSecretLabelById(profile[key]);
+            if (label) {
+                acc[value] = label;
+                return acc;
+            }
+        }
+
+        if (key === 'regex-preset') {
+            const label = extension_settings.regex_presets?.find(p => p.id === profile[key])?.name;
+            if (label) {
+                acc[value] = label;
+                return acc;
+            }
         }
 
         acc[value] = profile[key];
@@ -430,7 +479,223 @@ async function renderDetailsContent(detailsContent) {
     }
 }
 
-(async function () {
+/**
+ * Callback for the /profile-genstream command
+ * Generates text using Connection Manager with streaming display support.
+ * @param {object} args Named arguments
+ * @param {string} value Unnamed argument (the prompt)
+ * @returns {Promise<string>} The generated text, optionally with formatted reasoning
+ */
+async function generateStreamCallback(args, value) {
+    if (!value) {
+        console.warn('WARN: No argument provided for /profile-genstream command');
+        return '';
+    }
+
+    // Check if Connection Manager is available
+    const context = getContext();
+    if (context.extensionSettings.disabledExtensions.includes('connection-manager')) {
+        toastr.error(t`Connection Manager is required for /profile-genstream. Use /gen or /genraw instead.`);
+        return '';
+    }
+
+    const profileIdOrName = args?.profile;
+    const includeReasoning = isTrueBoolean(args?.reasoning);
+    const systemPrompt = typeof args?.system == 'string' ? args.system : '';
+    const maxTokens = Number(args?.length ?? 2048) || 2048;
+    const lock = isTrueBoolean(args?.lock);
+    const generatingLabel = typeof args?.generating === 'string' ? args.generating : 'Generating...';
+    const completedLabel = typeof args?.completed === 'string' ? args.completed : 'Generated';
+    const enableStop = !isFalseBoolean(args?.stop);
+    const onStopClosure = args?.onStop instanceof SlashCommandClosure ? args.onStop : null;
+    const onCompleteClosure = args?.onComplete instanceof SlashCommandClosure ? args.onComplete : null;
+
+    // Parse delay: 'infinite' or negative = null (stay open), number = delay in ms
+    let completeDelay = 3000; // Default 3 seconds
+    if (args?.delay !== undefined) {
+        if (typeof args.delay === 'string' && args.delay.toLowerCase() === 'infinite') {
+            completeDelay = null; // Stay until user closes
+        } else {
+            const parsed = Number(args.delay);
+            if (!isNaN(parsed) && parsed >= 0) {
+                completeDelay = parsed;
+            } else if (!isNaN(parsed) && parsed < 0) {
+                completeDelay = null; // Negative = infinite
+            }
+        }
+    }
+
+    // Create abort controller for stop functionality (when stop is enabled)
+    const abortController = enableStop ? new AbortController() : null;
+
+    // Compose the stop handler: abort the request + optionally invoke user closure
+    const onStopHandler = enableStop ? async () => {
+        abortController.abort();
+        if (onStopClosure) {
+            try {
+                const localClosure = onStopClosure.getCopy();
+                localClosure.onProgress = () => { };
+                await localClosure.execute();
+            } catch (e) {
+                console.error('[GenStream] Error executing onStop closure', e);
+            }
+        }
+    } : null;
+
+    try {
+        if (lock) {
+            deactivateSendButtons();
+        }
+
+        // Determine which profile to use
+        // Use the currently selected profile if no profile specified
+        let effectiveProfileId = context.extensionSettings.connectionManager.selectedProfile;
+
+        const profiles = context.extensionSettings.connectionManager.profiles;
+
+        if (profileIdOrName) {
+            // Use try to find profile by id first, then fuse search
+            const profile = profiles.find(p => p.id === profileIdOrName);
+            if (profile) {
+                effectiveProfileId = profile.id;
+            } else {
+                const keys = [
+                    { name: 'name', weight: 10 },
+                ];
+                const fuseResults = performFuzzySearch('profile', profiles, keys, profileIdOrName);
+                if (fuseResults.length > 0) {
+                    effectiveProfileId = fuseResults[0].item.id;
+                } else {
+                    toastr.warning(t`Connection profile not found: ${profileIdOrName}`);
+                    return '';
+                }
+            }
+        }
+
+        if (!effectiveProfileId) {
+            toastr.error(t`No connection profile specified or selected. Use profile= argument or select a profile in Connection Manager.`);
+            return '';
+        }
+
+        // Create streaming display
+        const display = new StreamingDisplay();
+        display.show({
+            label: generatingLabel,
+            icon: ConnectionManagerRequestService.getProfileIcon(effectiveProfileId),
+            onStop: onStopHandler,
+        });
+
+        const messages = [
+            ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
+            { role: 'user', content: value },
+        ];
+
+        let finalText = '';
+        let finalReasoning = '';
+
+        /** Gets the final (if requested, formatted) text to return for this command @returns {string} */
+        function buildResultText() {
+            // Format output with reasoning if requested
+            if (includeReasoning && finalReasoning) {
+                const { formatted } = formatReasoning(finalReasoning, finalText);
+                return formatted;
+            }
+
+            return finalText;
+        }
+
+        try {
+            // Attempt streaming first
+            const streamResponse = await ConnectionManagerRequestService.sendRequest(
+                effectiveProfileId,
+                messages,
+                maxTokens,
+                { extractData: true, includePreset: true, stream: true, signal: abortController?.signal ?? undefined },
+            );
+
+            if (typeof streamResponse === 'function') {
+                const generator = streamResponse();
+                for await (const chunk of generator) {
+                    finalText = chunk.text;
+                    finalReasoning = chunk.state?.reasoning || '';
+                    display.updateReasoning(finalReasoning);
+                    display.updateContent(finalText);
+                }
+            } else {
+                // Non-streaming fallback within the try block
+                const extracted = streamResponse;
+                finalText = extracted?.content || '';
+                finalReasoning = extracted?.reasoning || '';
+                if (finalReasoning) {
+                    display.updateReasoning(finalReasoning);
+                }
+                display.updateContent(finalText);
+            }
+        } catch (error) {
+            // If the user clicked stop, don't retry — show stopped state and return empty
+            if (abortController?.signal?.aborted) {
+                display.markStopped({ label: `${generatingLabel} [Stopped]` });
+                return buildResultText();
+            }
+
+            console.warn('[Slash Commands] Streaming failed, falling back to non-streaming:', error);
+            display.hide({ instant: true });
+
+            // Retry with non-streaming
+            const response = await ConnectionManagerRequestService.sendRequest(
+                effectiveProfileId,
+                messages,
+                maxTokens,
+                { extractData: true, includePreset: true, stream: false },
+            );
+
+            const extracted = /** @type {import('../../custom-request.js').ExtractedData} */ (response);
+            finalText = extracted?.content || '';
+            finalReasoning = extracted?.reasoning || '';
+
+            // Show quick non-streaming display
+            display.show({
+                label: generatingLabel,
+                icon: ConnectionManagerRequestService.getProfileIcon(effectiveProfileId),
+            });
+            if (finalReasoning) {
+                display.updateReasoning(finalReasoning);
+            }
+            display.updateContent(finalText);
+        }
+
+        // Mark as complete with delay (null = stay open until user closes)
+        display.complete({ label: completedLabel, delay: completeDelay });
+
+        // Invoke onComplete closure if provided
+        if (onCompleteClosure) {
+            try {
+                const localClosure = onCompleteClosure.getCopy();
+                localClosure.onProgress = () => { };
+                await localClosure.execute();
+            } catch (e) {
+                console.error('[GenStream] Error executing onComplete closure', e);
+            }
+        }
+
+        if (!finalText) {
+            toastr.warning(t`Generation returned empty result`);
+            return '';
+        }
+
+        return buildResultText();
+    } catch (err) {
+        console.error('Error on /genstream generation', err);
+        toastr.error(err.message, t`API Error`, { preventDuplicates: true });
+        return '';
+    } finally {
+        if (lock) {
+            activateSendButtons();
+        }
+    }
+}
+
+export async function init() {
     extension_settings.connectionManager = extension_settings.connectionManager || structuredClone(DEFAULT_SETTINGS);
 
     for (const key of Object.keys(DEFAULT_SETTINGS)) {
@@ -512,6 +777,7 @@ async function renderDetailsContent(detailsContent) {
         saveSettingsDebounced();
         renderConnectionProfiles(profiles);
         await renderDetailsContent(detailsContent);
+        await eventSource.emit(event_types.CONNECTION_PROFILE_CREATED, profile);
         await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, profile.name);
     });
 
@@ -523,9 +789,11 @@ async function renderDetailsContent(detailsContent) {
             console.log('No profile selected');
             return;
         }
+        const oldProfile = structuredClone(profile);
         await updateConnectionProfile(profile);
         await renderDetailsContent(detailsContent);
         saveSettingsDebounced();
+        await eventSource.emit(event_types.CONNECTION_PROFILE_UPDATED, oldProfile, profile);
         await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, profile.name);
         toastr.success('Connection profile updated', '', { timeOut: 1500 });
     });
@@ -559,8 +827,7 @@ async function renderDetailsContent(detailsContent) {
             return acc;
         }, {});
         const template = $(await renderExtensionTemplateAsync(MODULE_NAME, 'edit', { name: profile.name, settings }));
-        const newName = await callGenericPopup(template, POPUP_TYPE.INPUT, profile.name, {
-            rows: 2,
+        let newName = await callGenericPopup(template, POPUP_TYPE.INPUT, profile.name, {
             customButtons: [{
                 text: t`Save and Update`,
                 classes: ['popup-button-ok'],
@@ -571,7 +838,13 @@ async function renderDetailsContent(detailsContent) {
             }],
         });
 
+        // If it's cancelled, it will be false
         if (!newName) {
+            return;
+        }
+        newName = DOMPurify.sanitize(String(newName));
+        if (!newName) {
+            toastr.error('Name cannot be empty.');
             return;
         }
 
@@ -584,6 +857,7 @@ async function renderDetailsContent(detailsContent) {
             return Object.entries(FANCY_NAMES).find(x => x[1] === String($(this).val()))?.[0];
         }).get();
 
+        const oldProfile = structuredClone(profile);
         if (newExcludeList.length !== profile.exclude.length || !newExcludeList.every(e => profile.exclude.includes(e))) {
             profile.exclude = newExcludeList;
             for (const command of newExcludeList) {
@@ -598,10 +872,11 @@ async function renderDetailsContent(detailsContent) {
 
         if (profile.name !== newName) {
             toastr.success('Connection profile renamed.');
-            profile.name = String(newName);
+            profile.name = newName;
         }
 
         saveSettingsDebounced();
+        await eventSource.emit(event_types.CONNECTION_PROFILE_UPDATED, oldProfile, profile);
         renderConnectionProfiles(profiles);
         await renderDetailsContent(detailsContent);
     });
@@ -635,6 +910,13 @@ async function renderDetailsContent(detailsContent) {
                 defaultValue: 'true',
                 enumList: commonEnumProviders.boolean('trueFalse')(),
             }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'timeout',
+                description: 'Maximum time to wait for the API connection to be established, in milliseconds. Set to 0 to disable. Only applies when await=true.',
+                isRequired: false,
+                typeList: [ARGUMENT_TYPE.NUMBER],
+                defaultValue: '2000',
+            }),
         ],
         callback: async (args, value) => {
             if (!value || typeof value !== 'string') {
@@ -666,6 +948,13 @@ async function renderDetailsContent(detailsContent) {
 
             if (shouldAwait) {
                 await awaitPromise;
+
+                // We should also await the connection to be established
+                const parsedTimeout = parseInt(args?.timeout?.toString());
+                const timeout = !isNaN(parsedTimeout) ? Math.max(0, parsedTimeout) : 2000;
+                if (timeout > 0) {
+                    await waitUntilCondition(() => online_status !== 'no_connection', timeout, 100, { rejectOnTimeout: false });
+                }
             }
 
             return profile.name;
@@ -704,6 +993,7 @@ async function renderDetailsContent(detailsContent) {
             saveSettingsDebounced();
             renderConnectionProfiles(profiles);
             await renderDetailsContent(detailsContent);
+            await eventSource.emit(event_types.CONNECTION_PROFILE_CREATED, profile);
             return profile.name;
         },
     }));
@@ -718,9 +1008,11 @@ async function renderDetailsContent(detailsContent) {
                 toastr.warning('No profile selected.');
                 return '';
             }
+            const oldProfile = structuredClone(profile);
             await updateConnectionProfile(profile);
             await renderDetailsContent(detailsContent);
             saveSettingsDebounced();
+            await eventSource.emit(event_types.CONNECTION_PROFILE_UPDATED, oldProfile, profile);
             return profile.name;
         },
     }));
@@ -753,4 +1045,114 @@ async function renderDetailsContent(detailsContent) {
             return JSON.stringify(profile);
         },
     }));
-})();
+
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'profile-genstream',
+        callback: generateStreamCallback,
+        returns: t`generated text`,
+        namedArgumentList: [
+            new SlashCommandNamedArgument(
+                'lock', t`lock user input during generation`, [ARGUMENT_TYPE.BOOLEAN], false, false, 'off', commonEnumProviders.boolean('onOff')(),
+            ),
+            SlashCommandNamedArgument.fromProps({
+                name: 'profile',
+                description: t`connection profile ID to use for generation`,
+                typeList: [ARGUMENT_TYPE.STRING],
+                enumProvider: commonEnumProviders.connectionProfiles(),
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'reasoning',
+                description: t`include formatted reasoning in the output`,
+                typeList: [ARGUMENT_TYPE.BOOLEAN],
+                defaultValue: 'false',
+                enumProvider: commonEnumProviders.boolean('trueFalse'),
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'system',
+                description: t`system prompt at the start`,
+                typeList: [ARGUMENT_TYPE.STRING],
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'length',
+                description: t`API response length in tokens`,
+                typeList: [ARGUMENT_TYPE.NUMBER],
+                defaultValue: '2048',
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'generating',
+                description: t`label/title for the generation display`,
+                typeList: [ARGUMENT_TYPE.STRING],
+                defaultValue: 'Generating...',
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'completed',
+                description: t`updated label/title for when generation completes`,
+                typeList: [ARGUMENT_TYPE.STRING],
+                defaultValue: 'Generated',
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'delay',
+                description: t`auto-hide delay in ms after generation completes. Use "infinite" or negative to keep until manually closed`,
+                typeList: [ARGUMENT_TYPE.NUMBER],
+                defaultValue: '3000',
+                enumList: [
+                    new SlashCommandEnumValue('infinite', 'Keep the streaming display open until manually closed', 'command', '♾️'),
+                    new SlashCommandEnumValue('any delay in seconds', null, 'number', '⌚', () => true, input => input),
+                ],
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'stop',
+                description: t`show a stop button on the streaming display that aborts generation when clicked`,
+                typeList: [ARGUMENT_TYPE.BOOLEAN],
+                defaultValue: 'true',
+                enumProvider: commonEnumProviders.boolean('trueFalse'),
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'onStop',
+                description: t`closure to execute when the stop button is clicked (in addition to aborting the request)`,
+                typeList: [ARGUMENT_TYPE.CLOSURE],
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'onComplete',
+                description: t`closure to execute after generation completes successfully`,
+                typeList: [ARGUMENT_TYPE.CLOSURE],
+            }),
+        ],
+        unnamedArgumentList: [
+            SlashCommandArgument.fromProps({
+                description: 'prompt',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: true,
+            }),
+        ],
+        helpString: `
+            <div>
+                ${t`Generates text using Connection Manager with streaming display. Shows live generation progress including reasoning (thinking) and content.`}
+            </div>
+            <div>
+                ${t`Requires Connection Manager extension. Uses the currently selected profile or the specified profile= argument.`}
+            </div>
+            <div>
+                ${t`Use reasoning=true to include formatted reasoning in the output (using the defined reasoning template). This can be parsed later with /reasoning-parse.`}
+            </div>
+            <div>
+                ${t`Use delay to control auto-hide behavior: number (ms), "infinite", or negative to keep the display open until manually closed. The display shows a green LED when complete.`}
+            </div>
+            <div>
+                ${t`A stop button is shown by default (stop=true). Click it to abort generation and return whatever was streamed so far. Use stop=false to hide the stop button.`}
+            </div>
+            <div>
+                ${t`Use onStop and onComplete closures for custom behavior when generation is stopped or completes.`}
+            </div>
+            <div>
+                ${t`Example: <pre><code>/profile-genstream profile=my-profile-id reasoning=true Summarize the following text</code></pre>`}
+            </div>
+            <div>
+                ${t`Example with infinite display: <pre><code>/profile-genstream delay=infinite Tell me a story</code></pre>`}
+            </div>
+            <div>
+                ${t`Example with custom stop handler: <pre><code>/profile-genstream onStop={: /echo "Generation stopped!" :} Tell me a story</code></pre>`}
+            </div>
+        `,
+    }));
+}

@@ -1,14 +1,15 @@
 import { localforage } from '../lib.js';
-import { characters, main_api, api_server, nai_settings, online_status, this_chid } from '../script.js';
+import { characters, event_types, eventSource, main_api, nai_settings, online_status, this_chid } from '../script.js';
 import { power_user, registerDebugFunction } from './power-user.js';
 import { chat_completion_sources, model_list, oai_settings } from './openai.js';
 import { groups, selected_group } from './group-chats.js';
 import { getStringHash } from './utils.js';
-import { kai_flags } from './kai-settings.js';
+import { kai_flags, kai_settings } from './kai-settings.js';
 import { textgen_types, textgenerationwebui_settings as textgen_settings, getTextGenServer, getTextGenModel } from './textgen-settings.js';
 import { getCurrentDreamGenModelTokenizer, getCurrentOpenRouterModelTokenizer, openRouterModels } from './textgen-models.js';
+export { BYTES_PER_TOKEN as CHARACTERS_PER_TOKEN_RATIO };
 
-export const CHARACTERS_PER_TOKEN_RATIO = 3.35;
+export const BYTES_PER_TOKEN = 3.35;
 export const TOKENIZER_WARNING_KEY = 'tokenizationWarningShown';
 export const TOKENIZER_SUPPORTED_KEY = 'tokenizationSupported';
 
@@ -152,6 +153,7 @@ const TOKENIZER_URLS = {
     },
 };
 
+const textEncoder = new TextEncoder();
 const objectStore = localforage.createInstance({ name: 'SillyTavern_ChatCompletions' });
 
 let tokenCache = {};
@@ -162,7 +164,8 @@ let tokenCache = {};
  * @returns {number} Token count.
  */
 export function guesstimate(str) {
-    return Math.ceil(str.length / CHARACTERS_PER_TOKEN_RATIO);
+    const byteLength = textEncoder.encode(str).length;
+    return Math.ceil(byteLength / BYTES_PER_TOKEN);
 }
 
 async function loadTokenCache() {
@@ -549,7 +552,7 @@ export function getTokenCount(str, padding = undefined) {
  * @deprecated Use counterWrapperOpenAIAsync instead.
  */
 function counterWrapperOpenAI(text) {
-    const message = { role: 'system', content: text };
+    const message = { content: text };
     return countTokensOpenAI(message, true);
 }
 
@@ -559,7 +562,7 @@ function counterWrapperOpenAI(text) {
  * @returns {Promise<number>} Token count.
  */
 function counterWrapperOpenAIAsync(text) {
-    const message = { role: 'system', content: text };
+    const message = { content: text };
     return countTokensOpenAIAsync(message, true);
 }
 
@@ -586,29 +589,12 @@ export function getTokenizerModel() {
     const nemoTokenizer = 'nemo';
     const deepseekTokenizer = 'deepseek';
 
-    // Assuming no one would use it for different models.. right?
-    if (oai_settings.chat_completion_source == chat_completion_sources.SCALE) {
-        return gpt4Tokenizer;
+    if (oai_settings.chat_completion_source == chat_completion_sources.AZURE_OPENAI) {
+        return oai_settings.azure_openai_model || turboTokenizer;
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.DEEPSEEK) {
         return deepseekTokenizer;
-    }
-
-    // Select correct tokenizer for WindowAI proxies
-    if (oai_settings.chat_completion_source == chat_completion_sources.WINDOWAI && oai_settings.windowai_model) {
-        if (oai_settings.windowai_model.includes('gpt-4')) {
-            return gpt4Tokenizer;
-        }
-        else if (oai_settings.windowai_model.includes('gpt-3.5-turbo')) {
-            return turboTokenizer;
-        }
-        else if (oai_settings.windowai_model.includes('claude')) {
-            return claudeTokenizer;
-        }
-        else if (oai_settings.windowai_model.includes('GPT-NeoXT')) {
-            return gpt2Tokenizer;
-        }
     }
 
     // And for OpenRouter (if not a site model, then it's impossible to determine the tokenizer)
@@ -620,48 +606,118 @@ export function getTokenizerModel() {
 
         if (model?.architecture?.tokenizer === 'Llama2') {
             return llamaTokenizer;
-        }
-        else if (model?.architecture?.tokenizer === 'Llama3') {
+        } else if (model?.architecture?.tokenizer === 'Llama3') {
             return llama3Tokenizer;
-        }
-        else if (model?.architecture?.tokenizer === 'Mistral') {
+        } else if (model?.architecture?.tokenizer === 'Mistral') {
             return mistralTokenizer;
-        }
-        else if (model?.architecture?.tokenizer === 'Yi') {
+        } else if (model?.architecture?.tokenizer === 'Yi') {
             return yiTokenizer;
-        }
-        else if (model?.architecture?.tokenizer === 'Gemini') {
+        } else if (model?.architecture?.tokenizer === 'Gemini') {
             return gemmaTokenizer;
-        }
-        else if (model?.architecture?.tokenizer === 'Qwen') {
+        } else if (model?.architecture?.tokenizer === 'Qwen') {
             return qwen2Tokenizer;
-        }
-        else if (model?.architecture?.tokenizer === 'Cohere') {
+        } else if (model?.architecture?.tokenizer === 'Cohere') {
             if (model?.id && model?.id.includes('command-a')) {
                 return commandATokenizer;
             }
             return commandRTokenizer;
+        } else if (oai_settings.openrouter_model.includes('gpt-4o')) {
+            return gpt4oTokenizer;
+        } else if (oai_settings.openrouter_model.includes('gpt-4')) {
+            return gpt4Tokenizer;
+        } else if (oai_settings.openrouter_model.includes('gpt-3.5-turbo')) {
+            return turboTokenizer;
+        } else if (oai_settings.openrouter_model.includes('claude')) {
+            return claudeTokenizer;
+        } else if (oai_settings.openrouter_model.includes('GPT-NeoXT')) {
+            return gpt2Tokenizer;
+        } else if (oai_settings.openrouter_model.includes('jamba')) {
+            return jambaTokenizer;
+        } else if (oai_settings.openrouter_model.includes('deepseek')) {
+            return deepseekTokenizer;
         }
-        else if (oai_settings.openrouter_model.includes('gpt-4o')) {
+    }
+
+    if (oai_settings.chat_completion_source == chat_completion_sources.ELECTRONHUB && oai_settings.electronhub_model) {
+        if (oai_settings.electronhub_model.includes('gpt-4o') || oai_settings.electronhub_model.includes('gpt-5') || oai_settings.electronhub_model.includes('gpt-6-astra')) {
+            return gpt4oTokenizer;
+        } else if (oai_settings.electronhub_model.includes('gpt-4.1') || oai_settings.electronhub_model.includes('gpt-4.5')) {
+            return gpt4oTokenizer;
+        } else if (oai_settings.electronhub_model.includes('gpt-4')) {
+            return gpt4Tokenizer;
+        } else if (oai_settings.electronhub_model.includes('gpt-3.5-turbo')) {
+            return turboTokenizer;
+        } else if (oai_settings.electronhub_model.includes('claude')) {
+            return claudeTokenizer;
+        } else if (oai_settings.electronhub_model.includes('jamba')) {
+            return jambaTokenizer;
+        } else if (oai_settings.electronhub_model.includes('deepseek') || oai_settings.electronhub_model.includes('sonar-reasoning') || oai_settings.electronhub_model.includes('r1')) {
+            return deepseekTokenizer;
+        } else if (oai_settings.electronhub_model.includes('qwen')) {
+            return qwen2Tokenizer;
+        } else if (oai_settings.electronhub_model.includes('gemma')) {
+            return gemmaTokenizer;
+        } else if (oai_settings.electronhub_model.includes('mistral')) {
+            return mistralTokenizer;
+        } else if (oai_settings.electronhub_model.includes('yi')) {
+            return yiTokenizer;
+        } else if (oai_settings.electronhub_model.includes('llama3') || oai_settings.electronhub_model.includes('llama-3') || oai_settings.electronhub_model.startsWith('l3')) {
+            return llama3Tokenizer;
+        } else if (oai_settings.electronhub_model.includes('llama')) {
+            return llamaTokenizer;
+        } else if (oai_settings.electronhub_model.includes('command-a')) {
+            return commandATokenizer;
+        } else if (oai_settings.electronhub_model.includes('command-r')) {
+            return commandRTokenizer;
+        } else if (oai_settings.electronhub_model.includes('nemo')) {
+            return nemoTokenizer;
+        }
+    }
+
+    if (oai_settings.chat_completion_source == chat_completion_sources.CHUTES && oai_settings.chutes_model) {
+        const model = oai_settings.chutes_model.toLowerCase();
+
+        if (model.includes('deepseek') || model.includes('mai-ds')) {
+            return deepseekTokenizer;
+        } else if (model.includes('qwen') || model.includes('qwq') || model.includes('tongyi') || model.includes('kimi')) {
+            return qwen2Tokenizer;
+        } else if (model.includes('llama') || model.includes('longcat') || model.includes('hermes')) {
+            return llama3Tokenizer;
+        } else if (model.includes('gemma')) {
+            return gemmaTokenizer;
+        } else if (model.includes('nemo')) {
+            return nemoTokenizer;
+        } else if (model.includes('mistral')) {
+            return mistralTokenizer;
+        } else if (model.includes('gpt-oss')) {
             return gpt4oTokenizer;
         }
-        else if (oai_settings.openrouter_model.includes('gpt-4')) {
-            return gpt4Tokenizer;
-        }
-        else if (oai_settings.openrouter_model.includes('gpt-3.5-turbo')) {
-            return turboTokenizer;
-        }
-        else if (oai_settings.openrouter_model.includes('claude')) {
-            return claudeTokenizer;
-        }
-        else if (oai_settings.openrouter_model.includes('GPT-NeoXT')) {
-            return gpt2Tokenizer;
-        }
-        else if (oai_settings.openrouter_model.includes('jamba')) {
-            return jambaTokenizer;
-        }
-        else if (oai_settings.openrouter_model.includes('deepseek')) {
+    }
+
+    if (oai_settings.chat_completion_source == chat_completion_sources.MINIMAX) {
+        // MiniMax uses a proprietary tokenizer; fall back to a coarse OpenAI estimation.
+        return 'gpt-3.5-turbo';
+    }
+
+    if (oai_settings.chat_completion_source == chat_completion_sources.WORKERS_AI && oai_settings.workers_ai_model) {
+        const model = oai_settings.workers_ai_model.toLowerCase();
+
+        if (model.includes('deepseek')) {
             return deepseekTokenizer;
+        } else if (model.includes('qwen') || model.includes('qwq') || model.includes('kimi')) {
+            return qwen2Tokenizer;
+        } else if (model.includes('llama-3') || model.includes('llama-4')) {
+            return llama3Tokenizer;
+        } else if (model.includes('llama')) {
+            return llamaTokenizer;
+        } else if (model.includes('gemma')) {
+            return gemmaTokenizer;
+        } else if (model.includes('mistral')) {
+            return mistralTokenizer;
+        } else if (model.includes('phi')) {
+            return turboTokenizer;
+        } else if (model.includes('gpt-oss')) {
+            return gpt4oTokenizer;
         }
     }
 
@@ -673,6 +729,10 @@ export function getTokenizerModel() {
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.MAKERSUITE) {
+        return gemmaTokenizer;
+    }
+
+    if (oai_settings.chat_completion_source == chat_completion_sources.VERTEXAI) {
         return gemmaTokenizer;
     }
 
@@ -725,19 +785,6 @@ export function getTokenizerModel() {
         }
     }
 
-    if (oai_settings.chat_completion_source === chat_completion_sources.ZEROONEAI) {
-        return yiTokenizer;
-    }
-
-    if (oai_settings.chat_completion_source === chat_completion_sources.BLOCKENTROPY) {
-        if (oai_settings.blockentropy_model.includes('llama3')) {
-            return llama3Tokenizer;
-        }
-        if (oai_settings.blockentropy_model.includes('miqu') || oai_settings.blockentropy_model.includes('mixtral')) {
-            return mistralTokenizer;
-        }
-    }
-
     // Default to Turbo 3.5
     return turboTokenizer;
 }
@@ -754,7 +801,7 @@ export function countTokensOpenAI(messages, full = false) {
         messages = [messages];
     }
 
-    let token_count = -1;
+    let token_count = 0;
 
     for (const message of messages) {
         const model = getTokenizerModel();
@@ -769,9 +816,7 @@ export function countTokensOpenAI(messages, full = false) {
 
         if (typeof cachedCount === 'number') {
             token_count += cachedCount;
-        }
-
-        else {
+        } else {
             jQuery.ajax({
                 async: false,
                 type: 'POST', //
@@ -806,7 +851,7 @@ export async function countTokensOpenAIAsync(messages, full = false) {
         messages = [messages];
     }
 
-    let token_count = -1;
+    let token_count = 0;
 
     for (const message of messages) {
         const model = getTokenizerModel();
@@ -821,9 +866,7 @@ export async function countTokensOpenAIAsync(messages, full = false) {
 
         if (typeof cachedCount === 'number') {
             token_count += cachedCount;
-        }
-
-        else {
+        } else {
             const data = await jQuery.ajax({
                 async: true,
                 type: 'POST', //
@@ -853,8 +896,7 @@ function getTokenCacheObject() {
     try {
         if (selected_group) {
             chatId = groups.find(x => x.id == selected_group)?.chat_id;
-        }
-        else if (this_chid !== undefined) {
+        } else if (this_chid !== undefined) {
             chatId = characters[this_chid].chat;
         }
     } catch {
@@ -916,7 +958,7 @@ function countTokensFromKoboldAPI(str, resolve) {
         url: TOKENIZER_URLS[tokenizers.API_KOBOLD].count,
         data: JSON.stringify({
             text: str,
-            url: api_server,
+            url: kai_settings.api_server,
         }),
         dataType: 'json',
         contentType: 'application/json',
@@ -939,8 +981,7 @@ function getTextgenAPITokenizationParams(str) {
         text: str,
         api_type: textgen_settings.type,
         url: getTextGenServer(),
-        vllm_model: textgen_settings.vllm_model,
-        aphrodite_model: textgen_settings.aphrodite_model,
+        model: getTextGenModel(),
     };
 }
 
@@ -1067,7 +1108,7 @@ function getTextTokensFromKoboldAPI(str, resolve) {
         url: TOKENIZER_URLS[tokenizers.API_KOBOLD].encode,
         data: JSON.stringify({
             text: str,
-            url: api_server,
+            url: kai_settings.api_server,
         }),
         dataType: 'json',
         contentType: 'application/json',
@@ -1178,6 +1219,13 @@ export async function initTokenizers() {
         textgen_types.VLLM,
         textgen_types.APHRODITE,
     );
+    eventSource.on(event_types.ONLINE_STATUS_CHANGED, async () => {
+        // Clear tokenizer warning when (re)connecting to an LLM backend that supports tokenization
+        if (main_api === 'textgenerationwebui' && TEXTGEN_TOKENIZERS.includes(textgen_settings.type)) {
+            sessionStorage.removeItem(TOKENIZER_WARNING_KEY);
+        }
+    });
     await loadTokenCache();
     registerDebugFunction('resetTokenCache', 'Reset token cache', 'Purges the calculated token counts. Use this if you want to force a full re-tokenization of all chats or suspect the token counts are wrong.', resetTokenCache);
 }
+

@@ -245,12 +245,12 @@ class AllTalkTtsProvider {
             // Sync the state with the checkbox in index.js
             if (this.settings.narrator_enabled) {
                 ttsPassAsterisksCheckbox.checked = false;
-                $('#tts_pass_asterisks').click(); // Simulate a click event
+                $('#tts_pass_asterisks').trigger('click'); // Simulate a click event
                 $('#tts_pass_asterisks').trigger('change');
             }
             if (!this.settings.narrator_enabled) {
                 ttsPassAsterisksCheckbox.checked = true;
-                $('#tts_pass_asterisks').click(); // Simulate a click event
+                $('#tts_pass_asterisks').trigger('click'); // Simulate a click event
                 $('#tts_pass_asterisks').trigger('change');
             }
             // Uncheck and set tts_narrate_quoted to false if narrator is enabled
@@ -258,9 +258,9 @@ class AllTalkTtsProvider {
                 ttsNarrateQuotedCheckbox.checked = true;
                 ttsNarrateDialoguesCheckbox.checked = true;
                 // Trigger click events instead of change events
-                $('#tts_narrate_quoted').click();
+                $('#tts_narrate_quoted').trigger('click');
                 $('#tts_narrate_quoted').trigger('change');
-                $('#tts_narrate_dialogues').click();
+                $('#tts_narrate_dialogues').trigger('click');
                 $('#tts_narrate_dialogues').trigger('change');
             }
             atNarratorSelect.value = this.settings.narrator_enabled.toString();
@@ -542,7 +542,6 @@ class AllTalkTtsProvider {
         // Switch Model Listener
         const modelSelect = document.getElementById('switch_model');
         if (modelSelect) {
-            const debouncedModelSelectChange = debounce(onModelSelectChange, 1400);
             modelSelect.addEventListener('change', debouncedModelSelectChange);
         }
 
@@ -677,12 +676,12 @@ class AllTalkTtsProvider {
                 // Sync the state with the checkbox in index.js
                 if (isNarratorEnabled) {
                     ttsPassAsterisksCheckbox.checked = false;
-                    $('#tts_pass_asterisks').click(); // Simulate a click event
+                    $('#tts_pass_asterisks').trigger('click'); // Simulate a click event
                     $('#tts_pass_asterisks').trigger('change');
                 }
                 if (!isNarratorEnabled) {
                     ttsPassAsterisksCheckbox.checked = true;
-                    $('#tts_pass_asterisks').click(); // Simulate a click event
+                    $('#tts_pass_asterisks').trigger('click'); // Simulate a click event
                     $('#tts_pass_asterisks').trigger('change');
                 }
                 // Uncheck and set tts_narrate_quoted to false if narrator is enabled
@@ -690,9 +689,9 @@ class AllTalkTtsProvider {
                     ttsNarrateQuotedCheckbox.checked = true;
                     ttsNarrateDialoguesCheckbox.checked = true;
                     // Trigger click events instead of change events
-                    $('#tts_narrate_quoted').click();
+                    $('#tts_narrate_quoted').trigger('click');
                     $('#tts_narrate_quoted').trigger('change');
-                    $('#tts_narrate_dialogues').click();
+                    $('#tts_narrate_dialogues').trigger('click');
                     $('#tts_narrate_dialogues').trigger('change');
                 }
                 this.onSettingsChange(); // Save the settings after change

@@ -3,6 +3,9 @@ module.exports = {
     extends: [
         'eslint:recommended',
     ],
+    plugins: [
+        'jsdoc',
+    ],
     env: {
         es6: true,
     },
@@ -67,6 +70,7 @@ module.exports = {
         '**/dist/**',
         '**/.git/**',
         'public/lib/**',
+        'public/scripts/extensions/third-party/**',
         'backups/**',
         'data/**',
         'cache/**',
@@ -78,6 +82,7 @@ module.exports = {
         'public/scripts/extensions/tts/lib/**',
     ],
     rules: {
+        'jsdoc/no-undefined-types': ['warn', { disableReporting: true, markVariablesAsUsed: true }],
         'no-unused-vars': ['error', { args: 'none' }],
         'no-control-regex': 'off',
         'no-constant-condition': ['error', { checkLoops: false }],
@@ -94,9 +99,32 @@ module.exports = {
         'no-cond-assign': 'error',
         'no-unneeded-ternary': 'error',
         'no-irregular-whitespace': ['error', { skipStrings: true, skipTemplates: true }],
-
+        'dot-notation': ['error', { 'allowPattern': '[A-Z]\\w*$' }],
         // These rules should eventually be enabled.
         'no-async-promise-executor': 'off',
         'no-inner-declarations': 'off',
+        // Additional formatting rules based on codebase conventions
+        'brace-style': ['error', '1tbs', { allowSingleLine: true }],
+        'array-bracket-spacing': ['error', 'never'],
+        'computed-property-spacing': ['error', 'never'],
+        'block-spacing': ['error', 'always'],
+        'keyword-spacing': ['error', { before: true, after: true }],
+        'space-before-blocks': ['error', 'always'],
+        'space-before-function-paren': ['error', { anonymous: 'always', named: 'never', asyncArrow: 'always' }],
+        'space-in-parens': ['error', 'never'],
+        'comma-spacing': ['error', { before: false, after: true }],
+        'key-spacing': ['error', { beforeColon: false, afterColon: true }],
+        'func-call-spacing': ['error', 'never'],
+        'no-multiple-empty-lines': ['error', { max: 2, maxEOF: 1, maxBOF: 0 }],
+        'padded-blocks': ['error', 'never'],
+        'no-whitespace-before-property': 'error',
+        'space-unary-ops': ['error', { words: true, nonwords: false }],
+        'arrow-spacing': ['error', { before: true, after: true }],
+        'template-curly-spacing': ['error', 'never'],
+        'rest-spread-spacing': ['error', 'never'],
+        'generator-star-spacing': ['error', { before: false, after: true }],
+        'yield-star-spacing': ['error', { before: false, after: true }],
+        'template-tag-spacing': ['error', 'never'],
+        'switch-colon-spacing': ['error', { after: true, before: false }],
     },
 };

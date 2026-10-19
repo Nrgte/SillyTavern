@@ -9,7 +9,7 @@ import { SlashCommandClosure } from './slash-commands/SlashCommandClosure.js';
 import { SlashCommandClosureResult } from './slash-commands/SlashCommandClosureResult.js';
 import { commonEnumProviders, enumIcons } from './slash-commands/SlashCommandCommonEnumsProvider.js';
 import { SlashCommandEnumValue, enumTypes } from './slash-commands/SlashCommandEnumValue.js';
-import { PARSER_FLAG, SlashCommandParser } from './slash-commands/SlashCommandParser.js';
+import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { slashCommandReturnHelper } from './slash-commands/SlashCommandReturnHelper.js';
 import { SlashCommandScope } from './slash-commands/SlashCommandScope.js';
 import { isFalseBoolean, convertValueType, isTrueBoolean } from './utils.js';
@@ -133,7 +133,7 @@ export function setGlobalVariable(name, value, args = {}) {
     return value;
 }
 
-function addLocalVariable(name, value) {
+export function addLocalVariable(name, value) {
     const currentValue = getLocalVariable(name) || 0;
     try {
         const parsedValue = JSON.parse(currentValue);
@@ -163,7 +163,7 @@ function addLocalVariable(name, value) {
     return newValue;
 }
 
-function addGlobalVariable(name, value) {
+export function addGlobalVariable(name, value) {
     const currentValue = getGlobalVariable(name) || 0;
     try {
         const parsedValue = JSON.parse(currentValue);
@@ -193,19 +193,19 @@ function addGlobalVariable(name, value) {
     return newValue;
 }
 
-function incrementLocalVariable(name) {
+export function incrementLocalVariable(name) {
     return addLocalVariable(name, 1);
 }
 
-function incrementGlobalVariable(name) {
+export function incrementGlobalVariable(name) {
     return addGlobalVariable(name, 1);
 }
 
-function decrementLocalVariable(name) {
+export function decrementLocalVariable(name) {
     return addLocalVariable(name, -1);
 }
 
-function decrementGlobalVariable(name) {
+export function decrementGlobalVariable(name) {
     return addGlobalVariable(name, -1);
 }
 
@@ -238,7 +238,7 @@ export function resolveVariable(name, scope = null) {
 export function getVariableMacros() {
     return [
         // Replace {{setvar::name::value}} with empty string and set the variable name to value
-        { regex: /{{setvar::([^:]+)::([^}]+)}}/gi, replace: (_, name, value) => { setLocalVariable(name.trim(), value); return ''; } },
+        { regex: /{{setvar::([^:]+)::([^}]*)}}/gi, replace: (_, name, value) => { setLocalVariable(name.trim(), value); return ''; } },
         // Replace {{addvar::name::value}} with empty string and add value to the variable value
         { regex: /{{addvar::([^:]+)::([^}]+)}}/gi, replace: (_, name, value) => { addLocalVariable(name.trim(), value); return ''; } },
         // Replace {{incvar::name}} with empty string and increment the variable name by 1
@@ -248,7 +248,7 @@ export function getVariableMacros() {
         // Replace {{getvar::name}} with the value of the variable name
         { regex: /{{getvar::([^}]+)}}/gi, replace: (_, name) => getLocalVariable(name.trim()) },
         // Replace {{setglobalvar::name::value}} with empty string and set the global variable name to value
-        { regex: /{{setglobalvar::([^:]+)::([^}]+)}}/gi, replace: (_, name, value) => { setGlobalVariable(name.trim(), value); return ''; } },
+        { regex: /{{setglobalvar::([^:]+)::([^}]*)}}/gi, replace: (_, name, value) => { setGlobalVariable(name.trim(), value); return ''; } },
         // Replace {{addglobalvar::name::value}} with empty string and add value to the global variable value
         { regex: /{{addglobalvar::([^:]+)::([^}]+)}}/gi, replace: (_, name, value) => { addGlobalVariable(name.trim(), value); return ''; } },
         // Replace {{incglobalvar::name}} with empty string and increment the global variable name by 1
@@ -263,24 +263,6 @@ export function getVariableMacros() {
 async function listVariablesCallback(args) {
     /** @type {import('./slash-commands/SlashCommandReturnHelper.js').SlashCommandReturnType} */
     let returnType = args.return;
-
-    // Old legacy return type handling
-    if (args.format) {
-        toastr.warning(`Legacy argument 'format' with value '${args.format}' is deprecated. Please use 'return' instead. Routing to the correct return type...`, 'Deprecation warning');
-        const type = String(args?.format).toLowerCase().trim();
-        switch (type) {
-            case 'none':
-                returnType = 'none';
-                break;
-            case 'chat':
-                returnType = 'chat-html';
-                break;
-            case 'popup':
-            default:
-                returnType = 'popup-html';
-                break;
-        }
-    }
 
     // Now the actual new return type handling
     const scope = String(args?.scope || '').toLowerCase().trim() || 'all';
@@ -321,7 +303,7 @@ async function listVariablesCallback(args) {
  */
 async function whileCallback(args, value) {
     if (args.guard instanceof SlashCommandClosure) throw new Error('argument \'guard\' cannot be a closure for command /while');
-    const isGuardOff = isFalseBoolean(args.guard);
+    const isGuardOff = isFalseBoolean(args.guard?.toString());
     const iterations = isGuardOff ? Number.MAX_SAFE_INTEGER : MAX_LOOPS;
     /**@type {string|SlashCommandClosure} */
     let command;
@@ -380,7 +362,7 @@ async function timesCallback(args, value) {
         [repeats, ...command] = /**@type {string}*/(value).split(' ');
         command = command.join(' ');
     }
-    const isGuardOff = isFalseBoolean(args.guard);
+    const isGuardOff = isFalseBoolean(args.guard?.toString());
     const iterations = Math.min(Number(repeats), isGuardOff ? Number.MAX_SAFE_INTEGER : MAX_LOOPS);
     let result;
     for (let i = 0; i < iterations; i++) {
@@ -388,8 +370,7 @@ async function timesCallback(args, value) {
             command.breakController = new SlashCommandBreakController();
             command.scope.setMacro('timesIndex', i);
             result = await command.execute();
-        }
-        else {
+        } else {
             result = await executeSubCommands(command.replace(/\{\{timesIndex\}\}/g, i.toString()), args._scope, args._parserFlags, args._abortController);
         }
         if (result.isAborted) break;
@@ -408,7 +389,7 @@ async function ifCallback(args, value) {
     const { a, b, rule } = parseBooleanOperands(args);
     const result = evalBoolean(rule, a, b);
 
-    /**@type {string|SlashCommandClosure} */
+    /** @type {string|SlashCommandClosure} */
     let command;
     if (value) {
         if (value[0] instanceof SlashCommandClosure) {
@@ -438,7 +419,7 @@ async function ifCallback(args, value) {
  * @param {string} name Local variable name
  * @returns {boolean} True if the local variable exists, false otherwise
  */
-function existsLocalVariable(name) {
+export function existsLocalVariable(name) {
     return chat_metadata.variables && chat_metadata.variables[name] !== undefined;
 }
 
@@ -447,7 +428,7 @@ function existsLocalVariable(name) {
  * @param {string} name Global variable name
  * @returns {boolean} True if the global variable exists, false otherwise
  */
-function existsGlobalVariable(name) {
+export function existsGlobalVariable(name) {
     return extension_settings.variables.global && extension_settings.variables.global[name] !== undefined;
 }
 
@@ -469,8 +450,8 @@ export function parseBooleanOperands(args) {
             return '';
         }
 
-        // parseFloat will return NaN for spaces.
-        const operandNumber = parseFloat(operand);
+        // Number parses spaces as 0, and parseFloat is weird
+        const operandNumber = typeof operand === 'string' && operand.trim().length ? Number(operand) : NaN;
 
         if (!isNaN(operandNumber)) {
             return operandNumber;
@@ -575,7 +556,7 @@ export function evalBoolean(rule, a, b) {
         case 'neq':
             return aString !== bString;
         default:
-            throw new Error(`Unknown boolean comparison rule for type number. Accepted: in, nin, eq, neq. Provided: ${rule}`);
+            throw new Error(`Unknown boolean comparison rule for type string. Accepted: in, nin, eq, neq. Provided: ${rule}`);
     }
 }
 
@@ -583,7 +564,7 @@ export function evalBoolean(rule, a, b) {
  * Executes a slash command from a string (may be enclosed in quotes) and returns the result.
  * @param {string} command Command to execute. May contain escaped macro and batch separators.
  * @param {SlashCommandScope} [scope] The scope to use.
- * @param {{[id:PARSER_FLAG]:boolean}} [parserFlags] The parser flags to use.
+ * @param {import('./slash-commands/SlashCommandParser.js').ParserFlags} [parserFlags] The parser flags to use.
  * @param {SlashCommandAbortController} [abortController] The abort controller to use.
  * @returns {Promise<SlashCommandClosureResult>} Closure execution result
  */
@@ -608,7 +589,7 @@ async function executeSubCommands(command, scope = null, parserFlags = null, abo
  * @param {string} name Variable name to delete
  * @returns {string} Empty string
  */
-function deleteLocalVariable(name) {
+export function deleteLocalVariable(name) {
     if (!existsLocalVariable(name)) {
         console.warn(`The local variable "${name}" does not exist.`);
         return '';
@@ -624,7 +605,7 @@ function deleteLocalVariable(name) {
  * @param {string} name Variable name to delete
  * @returns {string} Empty string
  */
-function deleteGlobalVariable(name) {
+export function deleteGlobalVariable(name) {
     if (!existsGlobalVariable(name)) {
         console.warn(`The global variable "${name}" does not exist.`);
         return '';
@@ -946,19 +927,6 @@ export function registerVariableCommands() {
                 defaultValue: 'popup-html',
                 enumList: slashCommandReturnHelper.enumList({ allowPipe: false, allowObject: true, allowChat: true, allowPopup: true, allowTextVersion: false }),
                 forceEnum: true,
-            }),
-            // TODO remove some day
-            SlashCommandNamedArgument.fromProps({
-                name: 'format',
-                description: '!!! DEPRECATED - use "return" instead !!! output format',
-                typeList: [ARGUMENT_TYPE.STRING],
-                isRequired: true,
-                forceEnum: true,
-                enumList: [
-                    new SlashCommandEnumValue('popup', 'Show variables in a popup.', enumTypes.enum, enumIcons.default),
-                    new SlashCommandEnumValue('chat', 'Post a system message to the chat.', enumTypes.enum, enumIcons.message),
-                    new SlashCommandEnumValue('none', 'Just return the variables as a JSON list.', enumTypes.enum, enumIcons.array),
-                ],
             }),
         ],
     }));

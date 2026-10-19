@@ -1,8 +1,8 @@
 import {
     characters,
     saveChat,
-    system_messages,
     system_message_types,
+    syncSwipeToMes,
     this_chid,
     openCharacterChat,
     chat_metadata,
@@ -12,18 +12,21 @@ import {
     chat,
     saveChatConditional,
     saveItemizedPrompts,
+    setActiveGroup,
+    getCurrentChatDetails,
 } from '../script.js';
-import { humanizedDateTime, getMessageTimeStamp } from './RossAscends-mods.js';
+import { humanizedDateTime } from './RossAscends-mods.js';
 import {
-    getGroupPastChats,
+    DEFAULT_AUTO_MODE_DELAY,
     group_activation_strategy,
+    group_generation_mode,
     groups,
     openGroupById,
     openGroupChat,
     saveGroupBookmarkChat,
     selected_group,
 } from './group-chats.js';
-import { hideLoader, showLoader } from './loader.js';
+import { loader } from './action-loader.js';
 import { getLastMessageId } from './macros.js';
 import { Popup } from './popup.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
@@ -32,67 +35,92 @@ import { commonEnumProviders } from './slash-commands/SlashCommandCommonEnumsPro
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { createTagMapFromList } from './tags.js';
 import { renderTemplateAsync } from './templates.js';
+import { compressRequest } from './request-compression.js';
 import { t } from './i18n.js';
 
 import {
     getUniqueName,
     isTrueBoolean,
+    uuidv4,
 } from './utils.js';
 
 const bookmarkNameToken = 'Checkpoint #';
 
+/**
+ * Gets the names of existing chats for the current character or group.
+ * @returns {Promise<string[]>} - Returns a promise that resolves to an array of existing chat names.
+ */
 async function getExistingChatNames() {
     if (selected_group) {
-        const data = await getGroupPastChats(selected_group);
-        return data.map(x => x.file_name);
-    } else {
-        const response = await fetch('/api/characters/chats', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({ avatar_url: characters[this_chid].avatar }),
-        });
-
-        if (response.ok) {
-            const data = await response.json();
-            return Object.values(data).map(x => x.file_name.replace('.jsonl', ''));
+        const group = groups.find(x => x.id == selected_group);
+        if (group && Array.isArray(group.chats)) {
+            return [...group.chats];
         }
+
+        return [];
     }
+
+    if (this_chid === undefined) {
+        return [];
+    }
+
+    const character = characters[this_chid];
+    if (!character) {
+        return [];
+    }
+
+    const response = await fetch('/api/characters/chats', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ avatar_url: character.avatar, simple: true }),
+    });
+
+    if (response.ok) {
+        const data = await response.json();
+        const chats = Object.values(data).map(x => x.file_name.replace('.jsonl', ''));
+        return [...chats];
+    }
+
+    return [];
 }
 
 async function getBookmarkName({ isReplace = false, forceName = null } = {}) {
-    const chatNames = await getExistingChatNames();
+    const mainChatName = (getCurrentChatDetails()).sessionName;
 
-    const body = await renderTemplateAsync('createCheckpoint', { isReplace: isReplace });
-    let name = forceName ?? await Popup.show.input('Create Checkpoint', body);
+    function buildCheckpointName(name, i) {
+        // Strip off existing suffixes, then build new name
+        let cleanName = name.replace(new RegExp(` - ${bookmarkNameToken}\\d+$`), '');
+        // Strip off legacy old name prefix too
+        cleanName = cleanName.replace(new RegExp(`^${bookmarkNameToken}\\d+ - `), '');
+        return `${cleanName} - ${bookmarkNameToken}${i}`;
+    }
+    const existingChats = await getExistingChatNames();
+    const suggestedName = getUniqueName(mainChatName, (x) => existingChats.includes(x), { nameBuilder: buildCheckpointName, startIndex: 1 });
+
+    const body = await renderTemplateAsync('createCheckpoint', { isReplace: isReplace, suggestedName: suggestedName });
+    let name = forceName ?? await Popup.show.input('Create Checkpoint', body, suggestedName);
     // Special handling for confirmed empty input (=> auto-generate name)
     if (name === '') {
-        for (let i = chatNames.length; i < 1000; i++) {
-            name = bookmarkNameToken + i;
-            if (!chatNames.includes(name)) {
-                break;
-            }
-        }
+        name = suggestedName;
     }
     if (!name) {
         return null;
     }
 
-    return `${name} - ${humanizedDateTime()}`;
+    return name;
 }
 
 function getMainChatName() {
     if (chat_metadata) {
-        if (chat_metadata['main_chat']) {
-            return chat_metadata['main_chat'];
-        }
-        // groups didn't support bookmarks before chat metadata was introduced
-        else if (selected_group) {
+        if (chat_metadata.main_chat) {
+            return chat_metadata.main_chat;
+        } else if (selected_group) {
+            // groups didn't support bookmarks before chat metadata was introduced
             return null;
-        }
-        else if (characters[this_chid].chat && characters[this_chid].chat.includes(bookmarkNameToken)) {
+        } else if (characters[this_chid].chat && characters[this_chid].chat.includes(bookmarkNameToken)) {
             const tokenIndex = characters[this_chid].chat.lastIndexOf(bookmarkNameToken);
-            chat_metadata['main_chat'] = characters[this_chid].chat.substring(0, tokenIndex).trim();
-            return chat_metadata['main_chat'];
+            chat_metadata.main_chat = characters[this_chid].chat.substring(0, tokenIndex).trim();
+            return chat_metadata.main_chat;
         }
     }
     return null;
@@ -106,7 +134,7 @@ export function showBookmarksButtons() {
             $('#option_convert_to_group').show();
         }
 
-        if (chat_metadata['main_chat']) {
+        if (chat_metadata.main_chat) {
             // In bookmark chat
             $('#option_back_to_main').show();
             $('#option_new_bookmark').show();
@@ -119,8 +147,7 @@ export function showBookmarksButtons() {
             $('#option_back_to_main').hide();
             $('#option_new_bookmark').show();
         }
-    }
-    catch {
+    } catch {
         $('#option_back_to_main').hide();
         $('#option_new_bookmark').hide();
         $('#option_convert_to_group').hide();
@@ -136,8 +163,28 @@ async function saveBookmarkMenu() {
     return await createNewBookmark(chat.length - 1);
 }
 
+/**
+ * Builds the branch chat snapshot, optionally selecting a specific swipe for the target message.
+ * @param {number} mesId
+ * @param {{swipeId?: number|null}} [options={}]
+ * @returns {ChatMessage[]|null}
+ */
+function getBranchChatSnapshot(mesId, { swipeId = null } = {}) {
+    const snapshot = structuredClone(chat.slice(0, Number(mesId) + 1));
+
+    if (swipeId === null) {
+        return snapshot;
+    }
+
+    if (!syncSwipeToMes(null, swipeId, snapshot[mesId])) {
+        return null;
+    }
+
+    return snapshot;
+}
+
 // Export is used by Timelines extension. Do not remove.
-export async function createBranch(mesId) {
+export async function createBranch(mesId, { swipeId = null } = {}) {
     if (!chat.length) {
         toastr.warning('The chat is empty.', 'Branch creation failed');
         return;
@@ -149,24 +196,51 @@ export async function createBranch(mesId) {
     }
 
     const lastMes = chat[mesId];
-    const mainChat = selected_group ? groups?.find(x => x.id == selected_group)?.chat_id : characters[this_chid].chat;
-    const newMetadata = { main_chat: mainChat };
-    let name = `Branch #${mesId} - ${humanizedDateTime()}`;
+    const mainChatName = (getCurrentChatDetails()).sessionName;
+    // Mint a fresh integrity slug so the branch is distinguishable from its parent (#5942)
+    const newMetadata = { main_chat: mainChatName, integrity: uuidv4() };
+    const selectedSwipeId = swipeId === null ? null : Number(swipeId);
+
+    if (selectedSwipeId !== null && (!Number.isInteger(selectedSwipeId) || selectedSwipeId < 0 || selectedSwipeId >= (lastMes?.swipes?.length ?? 0))) {
+        toastr.warning('Invalid swipe ID.', 'Branch creation failed');
+        return;
+    }
+
+    function buildBranchName(name, i) {
+        // Strip off existing suffixes, then build new name
+        let cleanName = name.replace(/ - Branch #\d+$/, '');
+        // Strip off legacy old name prefix too
+        cleanName = cleanName.replace(/^Branch #\d+ - /, '');
+        return `${cleanName} - Branch #${i}`;
+    }
+    const existingChats = await getExistingChatNames();
+    const name = getUniqueName(mainChatName, (x) => existingChats.includes(x), { nameBuilder: buildBranchName, startIndex: 1 });
+    if (!name) {
+        console.error('Could not generate a unique branch name.');
+        toastr.error('Could not generate a unique branch name.', 'Branch creation failed');
+        return;
+    }
+
+    const branchChatSnapshot = getBranchChatSnapshot(mesId, { swipeId: selectedSwipeId });
+    if (!branchChatSnapshot) {
+        toastr.warning('Could not prepare the selected swipe for branching.', 'Branch creation failed');
+        return;
+    }
 
     if (selected_group) {
-        await saveGroupBookmarkChat(selected_group, name, newMetadata, mesId);
+        await saveGroupBookmarkChat(selected_group, name, newMetadata, mesId, branchChatSnapshot);
     } else {
-        await saveChat(name, newMetadata, mesId);
+        await saveChat({ chatName: name, withMetadata: newMetadata, mesId, chatData: branchChatSnapshot });
     }
     // append to branches list if it exists
     // otherwise create it
     if (typeof lastMes.extra !== 'object') {
         lastMes.extra = {};
     }
-    if (typeof lastMes.extra['branches'] !== 'object') {
-        lastMes.extra['branches'] = [];
+    if (typeof lastMes.extra.branches !== 'object') {
+        lastMes.extra.branches = [];
     }
-    lastMes.extra['branches'].push(name);
+    lastMes.extra.branches.push(name);
     return name;
 }
 
@@ -206,16 +280,17 @@ export async function createNewBookmark(mesId, { forceName = null } = {}) {
     }
 
     const mainChat = selected_group ? groups?.find(x => x.id == selected_group)?.chat_id : characters[this_chid].chat;
-    const newMetadata = { main_chat: mainChat };
+    // Mint a fresh integrity slug so the checkpoint is distinguishable from its parent (#5942)
+    const newMetadata = { main_chat: mainChat, integrity: uuidv4() };
     await saveItemizedPrompts(name);
 
     if (selected_group) {
         await saveGroupBookmarkChat(selected_group, name, newMetadata, mesId);
     } else {
-        await saveChat(name, newMetadata, mesId);
+        await saveChat({ chatName: name, withMetadata: newMetadata, mesId });
     }
 
-    lastMes.extra['bookmark_link'] = name;
+    lastMes.extra.bookmark_link = name;
 
     const mes = $(`.mes[mesid="${mesId}"]`);
     updateBookmarkDisplay(mes, name);
@@ -277,28 +352,36 @@ export async function convertSoloToGroupChat() {
     const chatName = humanizedDateTime();
     const chats = [chatName];
     const members = [character.avatar];
-    const activationStrategy = group_activation_strategy.NATURAL;
-    const allowSelfResponses = false;
     const favChecked = character.fav || character.fav == 'true';
-    /** @type {any} */
+    /** @type {ChatMetadata} */
     const metadata = Object.assign({}, chat_metadata);
     delete metadata.main_chat;
+    /** @type {ChatHeader} */
+    const chatHeader = {
+        chat_metadata: metadata,
+        user_name: 'unused',
+        character_name: 'unused',
+    };
+    /** @type {Omit<Group, 'id'>} */
+    const groupCreateModel = {
+        name: name,
+        members: members,
+        avatar_url: avatar,
+        allow_self_responses: false,
+        activation_strategy: group_activation_strategy.NATURAL,
+        disabled_members: [],
+        fav: favChecked,
+        chat_id: chatName,
+        chats: chats,
+        hideMutedSprites: false,
+        generation_mode: group_generation_mode.SWAP,
+        auto_mode_delay: DEFAULT_AUTO_MODE_DELAY,
+    };
 
     const createGroupResponse = await fetch('/api/groups/create', {
         method: 'POST',
         headers: getRequestHeaders(),
-        body: JSON.stringify({
-            name: name,
-            members: members,
-            avatar_url: avatar,
-            allow_self_responses: activationStrategy,
-            activation_strategy: allowSelfResponses,
-            disabled_members: [],
-            chat_metadata: metadata,
-            fav: favChecked,
-            chat_id: chatName,
-            chats: chats,
-        }),
+        body: JSON.stringify(groupCreateModel),
     });
 
     if (!createGroupResponse.ok) {
@@ -306,6 +389,7 @@ export async function convertSoloToGroupChat() {
         return;
     }
 
+    /** @type {Group} */
     const group = await createGroupResponse.json();
 
     // Convert tags list and assign to group
@@ -315,39 +399,36 @@ export async function convertSoloToGroupChat() {
     await getCharacters();
 
     // Convert chat to group format
-    const groupChat = chat.slice();
+    const groupChat = [...chat].map(m => structuredClone(m));
     const genIdFirst = Date.now();
 
     for (let index = 0; index < groupChat.length; index++) {
         const message = groupChat[index];
-
-        // Save group-chat marker
-        if (index == 0) {
-            message.is_group = true;
-        }
 
         // Skip messages we don't care about
         if (message.is_user || message.is_system || message.extra?.type === system_message_types.NARRATOR || message.force_avatar !== undefined) {
             continue;
         }
 
+        if (!message.extra || typeof message.extra !== 'object') {
+            message.extra = {};
+        }
+
         // Set force fields for solo character
         message.name = character.name;
         message.original_avatar = character.avatar;
         message.force_avatar = getThumbnailUrl('avatar', character.avatar);
-
         // Allow regens of a single message in group
-        if (typeof message.extra !== 'object') {
-            message.extra = { gen_id: genIdFirst + index };
-        }
+        message.extra.gen_id = genIdFirst + index;
     }
 
     // Save group chat
-    const createChatResponse = await fetch('/api/chats/group/save', {
+    const createChatRequest = await compressRequest({
         method: 'POST',
         headers: getRequestHeaders(),
-        body: JSON.stringify({ id: chatName, chat: groupChat }),
+        body: JSON.stringify({ id: chatName, chat: [chatHeader, ...groupChat] }),
     });
+    const createChatResponse = await fetch('/api/chats/group/save', createChatRequest);
 
     if (!createChatResponse.ok) {
         console.error('Group chat creation unsuccessful');
@@ -356,23 +437,29 @@ export async function convertSoloToGroupChat() {
     }
 
     // Click on the freshly selected group to open it
+    setActiveGroup(group.id);
     await openGroupById(group.id);
 
-    toastr.success('The chat has been successfully converted!');
+    toastr.success(t`The chat has been successfully converted!`);
 }
 
 /**
  * Creates a new branch from the message with the given ID
  * @param {number} mesId Message ID
+ * @param {{swipeId?: number|null}} [options={}] Branch options
  * @returns {Promise<string?>} Branch file name
  */
-export async function branchChat(mesId) {
+export async function branchChat(mesId, { swipeId = null } = {}) {
     if (this_chid === undefined && !selected_group) {
         toastr.info('No character selected.', 'Create Branch');
         return null;
     }
 
-    const fileName = await createBranch(mesId);
+    const fileName = await createBranch(mesId, { swipeId });
+    if (!fileName) {
+        return null;
+    }
+
     await saveItemizedPrompts(fileName);
 
     if (selected_group) {
@@ -609,21 +696,27 @@ export function initBookmarks() {
 
         const fileName = $(this).hasClass('mes_bookmark')
             ? $(this).closest('.mes').attr('bookmark_link')
-            : $(this).attr('file_name').replace('.jsonl', '');
+            : $(this).attr('file_name');
 
         if (!fileName) {
             return;
         }
 
+        const loaderHandle = loader.show({
+            slug: 'chat-load',
+            title: t`Chat History`,
+            message: t`Loading chat…`,
+            toastMode: loader.ToastMode.STATIC,
+        });
+
         try {
-            showLoader();
             if (selected_group) {
                 await openGroupChat(selected_group, fileName);
             } else {
                 await openCharacterChat(fileName);
             }
         } finally {
-            await hideLoader();
+            await loaderHandle.hide();
         }
 
         $('#shadow_select_chat_popup').css('display', 'none');

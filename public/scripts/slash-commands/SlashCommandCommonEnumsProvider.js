@@ -40,6 +40,10 @@ export const enumIcons = {
     server: '🖥️',
     popup: '🗔',
     image: '🖼️',
+    video: '🎥',
+    key: '🔑',
+    spinner: '♻️',
+    stop: '🛑',
 
     true: '✔️',
     false: '❌',
@@ -153,7 +157,7 @@ export const commonEnumProviders = {
             ...isAll || types.includes('scope') ? scope.allVariableNames.map(name => new SlashCommandEnumValue(name, null, enumTypes.variable, enumIcons.scopeVariable)) : [],
             ...isAll || types.includes('local') ? Object.keys(chat_metadata.variables ?? []).map(name => new SlashCommandEnumValue(name, null, enumTypes.name, enumIcons.localVariable)) : [],
             ...isAll || types.includes('global') ? Object.keys(extension_settings.variables.global ?? []).map(name => new SlashCommandEnumValue(name, null, enumTypes.macro, enumIcons.globalVariable)) : [],
-        ].filter((item, idx, list)=>idx == list.findIndex(it=>it.value == item.value));
+        ].filter((item, idx, list) => idx == list.findIndex(it => it.value == item.value));
     },
 
     /**
@@ -210,9 +214,13 @@ export const commonEnumProviders = {
     /**
      * All possible personas
      *
-     * @returns {SlashCommandEnumValue[]}
+     * @returns {() => SlashCommandEnumValue[]}
      */
-    personas: () => Object.values(power_user.personas).map(persona => new SlashCommandEnumValue(persona, null, enumTypes.name, enumIcons.persona)),
+    personas: ({ allowPersonaKey = false } = {}) => () => Object.entries(power_user.personas).map(([personaKey, personaName]) => {
+        const existsMultiple = Object.values(power_user.personas).filter(p => p === personaName).length > 1;
+        const returnValue = allowPersonaKey && existsMultiple ? personaKey : personaName;
+        return new SlashCommandEnumValue(returnValue, allowPersonaKey && existsMultiple ? personaName : null, enumTypes.name, enumIcons.persona);
+    }),
 
     /**
      * All possible tags, or only those that have been assigned
@@ -230,9 +238,9 @@ export const commonEnumProviders = {
      * All possible tags for a given char/group entity
      *
      * @param {('all' | 'existing' | 'not-existing')?} [mode='all'] - Which types of tags to show
-     * @returns {() => SlashCommandEnumValue[]}
+     * @returns {(executor:SlashCommandExecutor, scope:SlashCommandScope) => SlashCommandEnumValue[]}
      */
-    tagsForChar: (mode = 'all') => (/** @type {SlashCommandExecutor} */ executor) => {
+    tagsForChar: (mode = 'all') => (executor, _scope) => {
         // Try to see if we can find the char during execution to filter down the tags list some more. Otherwise take all tags.
         const charName = executor.namedArgumentList.find(it => it.name == 'name')?.value;
         if (charName instanceof SlashCommandClosure) throw new Error('Argument \'name\' does not support closures');
@@ -259,6 +267,22 @@ export const commonEnumProviders = {
             ...allowIdAfter ? [new SlashCommandEnumValue(String(chat.length), '>> After Last Message >>', enumTypes.enum, '➕')] : [],
             ...allowVars ? commonEnumProviders.variables('all')(executor, scope) : [],
         ];
+    },
+
+    /**
+     * Media items attached to a specific message
+     * @returns {(executor:SlashCommandExecutor, scope:SlashCommandScope) => SlashCommandEnumValue[]}
+     */
+    messageMedia: () => (executor, _scope) => {
+        const messageId = Number(executor.namedArgumentList.find(it => ['mesId', 'id'].includes(it.name))?.value || '');
+        if (isNaN(messageId) || messageId === null || messageId < 0 || messageId >= chat.length) {
+            return [];
+        }
+        const message = chat[messageId];
+        if (!Array.isArray(message?.extra?.media)) {
+            return [];
+        }
+        return message.extra.media.map((media, index) => new SlashCommandEnumValue(index.toString(), media.title || message.extra.title || '[Untitled]', enumTypes.enum, enumIcons[media.type] || enumIcons.file));
     },
 
     /**
@@ -311,4 +335,44 @@ export const commonEnumProviders = {
         new SlashCommandEnumValue('null', null, enumTypes.type, enumIcons.null),
         new SlashCommandEnumValue('undefined', null, enumTypes.type, enumIcons.undefined),
     ],
+
+    messageRoles: () => [
+        new SlashCommandEnumValue('user', null, enumTypes.enum, enumIcons.user),
+        new SlashCommandEnumValue('assistant', null, enumTypes.enum, enumIcons.assistant),
+        new SlashCommandEnumValue('system', null, enumTypes.enum, enumIcons.system),
+    ],
+
+    backgrounds: () => Array.from(document.querySelectorAll('.bg_example'))
+        .map(it => new SlashCommandEnumValue(it.getAttribute('bgfile')))
+        .filter(it => it.value?.length),
+
+    connectionProfiles: ({ includeNone = false } = {}) => () => [
+        ...includeNone ? [new SlashCommandEnumValue('<None>')] : [],
+        ...extension_settings.connectionManager.profiles.map(p => new SlashCommandEnumValue(p.name, null, enumTypes.name, enumIcons.server)),
+    ],
+};
+
+
+/**
+ * A collection of common enum match providers
+ *
+ * Can be used on `SlashCommandEnumValue` and their `matchProvider` property.
+ */
+export const commonEnumMatchProviders = {
+    /**
+     * Provides autocomplete matching for folder-like enum values.
+     * Matches if the input starts with the check or vice versa (case-insensitive).
+     * @param {string} input - The input string to match against
+     * @param {string} check - The check string to match with
+     * @param {object} [options={}] - Options
+     * @param {boolean} [options.trueOnEmpty=true] - Whether to return true when input is empty
+     * @returns {boolean} - True if the strings match according to the folder matching rules
+     */
+    folderEnum: (input, check, { trueOnEmpty = true } = {}) => {
+        if (!check) return false;
+        if (!input) return trueOnEmpty;
+        const inputLower = input.toLowerCase();
+        const checkLower = check.toLowerCase();
+        return inputLower.startsWith(checkLower) || checkLower.startsWith(inputLower);
+    },
 };

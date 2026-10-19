@@ -10,7 +10,6 @@ import {
     INFERMATICAI_KEYS,
     OPENROUTER_KEYS,
     VLLM_KEYS,
-    DREAMGEN_KEYS,
     FEATHERLESS_KEYS,
     OPENAI_KEYS,
 } from '../../constants.js';
@@ -45,7 +44,8 @@ async function parseOllamaStream(jsonStream, request, response) {
                     break;
                 }
                 const text = json.response || '';
-                const chunk = { choices: [{ text }] };
+                const thinking = json.thinking || '';
+                const chunk = { choices: [{ text, thinking }] };
                 response.write(`data: ${JSON.stringify(chunk)}\n\n`);
                 partialData = '';
             }
@@ -73,15 +73,20 @@ async function parseOllamaStream(jsonStream, request, response) {
 
 /**
  * Abort KoboldCpp generation request.
+ * @param {import('express').Request} request the generation request
  * @param {string} url Server base URL
  * @returns {Promise<void>} Promise resolving when we are done
  */
-async function abortKoboldCppRequest(url) {
+async function abortKoboldCppRequest(request, url) {
     try {
         console.info('Aborting Kobold generation...');
-        const abortResponse = await fetch(`${url}/api/extra/abort`, {
+        const args = {
             method: 'POST',
-        });
+            headers: {},
+        };
+
+        setAdditionalHeaders(request, args, url);
+        const abortResponse = await fetch(`${url}/api/extra/abort`, args);
 
         if (!abortResponse.ok) {
             console.error('Error sending abort request to Kobold:', abortResponse.status, abortResponse.statusText);
@@ -238,7 +243,11 @@ router.post('/props', async function (request, response) {
         setAdditionalHeaders(request, args, baseUrl);
 
         const apiType = request.body.api_type;
-        const propsUrl = baseUrl + '/props';
+        let propsUrl = baseUrl + '/props';
+        if (apiType === TEXTGEN_TYPES.LLAMACPP && request.body.model) {
+            propsUrl += `?model=${encodeURIComponent(request.body.model)}`;
+            console.debug(`Querying llama-server props with model parameter: ${request.body.model}`);
+        }
         const propsReply = await fetch(propsUrl, args);
 
         if (!propsReply.ok) {
@@ -248,10 +257,10 @@ router.post('/props', async function (request, response) {
         /** @type {any} */
         const props = await propsReply.json();
         // TEMPORARY: llama.cpp's /props endpoint has a bug which replaces the last newline with a \0
-        if (apiType === TEXTGEN_TYPES.LLAMACPP && props['chat_template'].endsWith('\u0000')) {
-            props['chat_template'] = props['chat_template'].slice(0, -1) + '\n';
+        if (apiType === TEXTGEN_TYPES.LLAMACPP && props.chat_template && props.chat_template.endsWith('\u0000')) {
+            props.chat_template = props.chat_template.slice(0, -1) + '\n';
         }
-        props['chat_template_hash'] = createHash('sha256').update(props['chat_template']).digest('hex');
+        props.chat_template_hash = createHash('sha256').update(props.chat_template).digest('hex');
         console.debug(`Model properties: ${JSON.stringify(props)}`);
         return response.send(props);
     } catch (error) {
@@ -276,7 +285,7 @@ router.post('/generate', async function (request, response) {
         request.socket.removeAllListeners('close');
         request.socket.on('close', async function () {
             if (request.body.api_type === TEXTGEN_TYPES.KOBOLDCPP && !response.writableEnded) {
-                await abortKoboldCppRequest(trimV1(baseUrl));
+                await abortKoboldCppRequest(request, trimV1(baseUrl));
             }
 
             controller.abort();
@@ -340,9 +349,6 @@ router.post('/generate', async function (request, response) {
         }
 
         if (request.body.api_type === TEXTGEN_TYPES.DREAMGEN) {
-            request.body = _.pickBy(request.body, (_, key) => DREAMGEN_KEYS.includes(key));
-            // NOTE: DreamGen sometimes get confused by the unusual formatting in the character cards.
-            request.body.stop?.push('### User', '## User');
             args.body = JSON.stringify(request.body);
         }
 
@@ -361,6 +367,12 @@ router.post('/generate', async function (request, response) {
             } else {
                 delete request.body.provider;
             }
+
+            if (Array.isArray(request.body.quantizations) && request.body.quantizations.length > 0) {
+                request.body.provider ??= {};
+                request.body.provider.quantizations = request.body.quantizations;
+            }
+
             request.body = _.pickBy(request.body, (_, key) => OPENROUTER_KEYS.includes(key));
             args.body = JSON.stringify(request.body);
         }
@@ -374,7 +386,7 @@ router.post('/generate', async function (request, response) {
             const keepAlive = Number(getConfigValue('ollama.keepAlive', -1, 'number'));
             const numBatch = Number(getConfigValue('ollama.batchSize', -1, 'number'));
             if (numBatch > 0) {
-                request.body['num_batch'] = numBatch;
+                request.body.num_batch = numBatch;
             }
             args.body = JSON.stringify({
                 model: request.body.model,
@@ -392,9 +404,8 @@ router.post('/generate', async function (request, response) {
         } else if (request.body.stream) {
             const completionsStream = await fetch(url, args);
             // Pipe remote SSE stream to Express response
-            forwardFetchResponse(completionsStream, response);
-        }
-        else {
+            await forwardFetchResponse(completionsStream, response);
+        } else {
             const completionsReply = await fetch(url, args);
 
             if (completionsReply.ok) {
@@ -404,7 +415,7 @@ router.post('/generate', async function (request, response) {
 
                 // Map InfermaticAI response to OAI completions format
                 if (apiType === TEXTGEN_TYPES.INFERMATICAI) {
-                    data['choices'] = (data?.choices || []).map(choice => ({ text: choice?.message?.content || choice.text, logprobs: choice?.logprobs, index: choice?.index }));
+                    data.choices = (data?.choices || []).map(choice => ({ text: choice?.message?.content || choice.text, logprobs: choice?.logprobs, index: choice?.index }));
                 }
 
                 return response.send(data);
@@ -450,7 +461,7 @@ ollama.post('/download', async function (request, response) {
 
         if (!fetchResponse.ok) {
             console.error('Download error:', fetchResponse.status, fetchResponse.statusText);
-            return response.status(fetchResponse.status).send({ error: true });
+            return response.status(500).send({ error: true });
         }
 
         console.debug('Ollama pull response:', await fetchResponse.json());
@@ -482,7 +493,8 @@ ollama.post('/caption-image', async function (request, response) {
         });
 
         if (!fetchResponse.ok) {
-            console.error('Ollama caption error:', fetchResponse.status, fetchResponse.statusText);
+            const errorText = await fetchResponse.text();
+            console.error('Ollama caption error:', fetchResponse.status, fetchResponse.statusText, errorText);
             return response.status(500).send({ error: true });
         }
 
@@ -506,51 +518,6 @@ ollama.post('/caption-image', async function (request, response) {
 
 const llamacpp = express.Router();
 
-llamacpp.post('/caption-image', async function (request, response) {
-    try {
-        if (!request.body.server_url) {
-            return response.sendStatus(400);
-        }
-
-        console.debug('LlamaCpp caption request:', request.body);
-        const baseUrl = trimV1(request.body.server_url);
-
-        const fetchResponse = await fetch(`${baseUrl}/completion`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                prompt: `USER:[img-1]${String(request.body.prompt).trim()}\nASSISTANT:`,
-                image_data: [{ data: request.body.image, id: 1 }],
-                temperature: 0.1,
-                stream: false,
-                stop: ['USER:', '</s>'],
-            }),
-        });
-
-        if (!fetchResponse.ok) {
-            console.error('LlamaCpp caption error:', fetchResponse.status, fetchResponse.statusText);
-            return response.status(500).send({ error: true });
-        }
-
-        /** @type {any} */
-        const data = await fetchResponse.json();
-        console.debug('LlamaCpp caption response:', data);
-
-        const caption = data?.content || '';
-
-        if (!caption) {
-            console.error('LlamaCpp caption is empty.');
-            return response.status(500).send({ error: true });
-        }
-
-        return response.send({ caption });
-
-    } catch (error) {
-        console.error(error);
-        return response.sendStatus(500);
-    }
-});
-
 llamacpp.post('/props', async function (request, response) {
     try {
         if (!request.body.server_url) {
@@ -573,7 +540,6 @@ llamacpp.post('/props', async function (request, response) {
         console.debug('LlamaCpp props response:', data);
 
         return response.send(data);
-
     } catch (error) {
         console.error(error);
         return response.sendStatus(500);
@@ -623,7 +589,6 @@ llamacpp.post('/slots', async function (request, response) {
         console.debug('LlamaCpp slots response:', data);
 
         return response.send(data);
-
     } catch (error) {
         console.error(error);
         return response.sendStatus(500);
@@ -654,19 +619,19 @@ tabby.post('/download', async function (request, response) {
             /** @type {any} */
             const permissionJson = await permissionResponse.json();
 
-            if (permissionJson['permission'] !== 'admin') {
+            if (permissionJson.permission !== 'admin') {
                 return response.status(403).send({ error: true });
             }
         } else {
             console.error('API Permission error:', permissionResponse.status, permissionResponse.statusText);
-            return response.status(permissionResponse.status).send({ error: true });
+            return response.status(500).send({ error: true });
         }
 
         const fetchResponse = await fetch(`${baseUrl}/v1/download`, args);
 
         if (!fetchResponse.ok) {
             console.error('Download error:', fetchResponse.status, fetchResponse.statusText);
-            return response.status(fetchResponse.status).send({ error: true });
+            return response.status(500).send({ error: true });
         }
 
         return response.send({ ok: true });

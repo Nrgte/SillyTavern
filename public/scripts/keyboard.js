@@ -8,10 +8,11 @@ const interactableSelectors = [
     '.inline-drawer-icon', // Buttons/icons inside the drawer menus
     '.paginationjs-pages li a', // Pagination buttons
     '.group_select, .character_select, .bogus_folder_select', // Cards to select char, group or folder in character list and other places
+    '.swipe_picker_block', // Swipe picker entries in the swipe history popup
     '.avatar-container', // Persona list blocks
     '.tag .tag_remove', // Remove button in removable tags
     '.bg_example', // Background elements in the background menu
-    '.bg_example .bg_button', // The inline buttons on the backgrounds
+    '.bg_example .jg-button, .bg_example .mobile-only-menu-toggle', // The inline buttons on the backgrounds
     '#options a', // Option entries in the popup options menu
     '.mes_buttons .mes_button', // Small inline buttons on the chat messages
     '.extraMesButtons>div:not(.mes_button)', // The extra/extension buttons inline on the chat messages
@@ -19,6 +20,12 @@ const interactableSelectors = [
     '.stscript_btn', // STscript buttons in the chat bar
     '.select2_choice_clickable+span.select2-container .select2-selection__choice__display', // select2 control elements if they are meant to be clickable
     '.avatar_load_preview', // Char display avatar selection
+    '.bg_tabs_list .bg_tab_button', // Background tabs
+    '.select_chat_block', // The blocks to select a past chat in the past chats menu
+    '.select_chat_block .exportRawChatButton', // Export raw chat button in the past chats menu
+    '.select_chat_block .exportChatButton', // Export chat button in the past chats menu
+    '.select_chat_block .PastChat_cross', // Delete chat button in the past chats menu
+    '.select_chat_block .renameChatButton', // The button to rename a past chat in the past chats menu
 ];
 
 if (CSS.supports('selector(:has(*))')) {

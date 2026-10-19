@@ -14,8 +14,9 @@ export default function getWebpackServeMiddleware() {
         const publicLibConfig = getPublicLibConfig();
         const outputPath = publicLibConfig.output?.path;
         const outputFile = publicLibConfig.output?.filename;
+        const parsedPath = path.parse(req.path);
 
-        if (req.method === 'GET' && path.parse(req.path).base === outputFile) {
+        if (req.method === 'GET' && parsedPath.dir === '/' && parsedPath.base === outputFile) {
             return res.sendFile(outputFile, { root: outputPath });
         }
 
@@ -25,16 +26,18 @@ export default function getWebpackServeMiddleware() {
     /**
      * Wait until Webpack is done compiling.
      * @param {object} param Parameters.
-     * @param {boolean} [param.forceDist] Whether to force the use the /dist folder.
+     * @param {boolean} [param.forceDist=false] Whether to force the use the /dist folder.
+     * @param {boolean} [param.pruneCache=false] Whether to prune old cache directories before compiling.
      * @returns {Promise<void>}
      */
-    devMiddleware.runWebpackCompiler = ({ forceDist = false } = {}) => {
-        const publicLibConfig = getPublicLibConfig(forceDist);
+    devMiddleware.runWebpackCompiler = ({ forceDist = false, pruneCache = false } = {}) => {
+        console.log();
+        console.log('Compiling frontend libraries...');
+
+        const publicLibConfig = getPublicLibConfig({ forceDist, pruneCache });
         const compiler = webpack(publicLibConfig);
 
         return new Promise((resolve) => {
-            console.log();
-            console.log('Compiling frontend libraries...');
             compiler.run((_error, stats) => {
                 const output = stats?.toString(publicLibConfig.stats);
                 if (output) {

@@ -1,6 +1,6 @@
 import { characterGroupOverlay } from '../script.js';
-import { BulkEditOverlay, BulkEditOverlayState } from './BulkEditOverlay.js';
-
+import { BulkEditOverlay, BulkEditOverlayState, CharacterContextMenu } from './BulkEditOverlay.js';
+import { event_types, eventSource } from './events.js';
 
 let is_bulk_edit = false;
 
@@ -55,7 +55,7 @@ function onSelectAllButtonClick() {
 
     if (!atLeastOneSelected) {
         // If none was selected, trigger click on all to deselect all of them
-        for(const character of characters) {
+        for (const character of characters) {
             const checked = $(character).find('.bulk_select_checkbox:checked') ?? false;
             if (checked && character instanceof HTMLElement) {
                 characterGroupOverlay.toggleSingleCharacter(character);
@@ -121,4 +121,8 @@ export function initBulkEdit() {
     $('#bulkEditButton').on('click', onEditButtonClick);
     $('#bulkSelectAllButton').on('click', onSelectAllButtonClick);
     $('#bulkDeleteButton').on('click', onDeleteButtonClick);
+
+    const characterContextMenu = new CharacterContextMenu(characterGroupOverlay);
+    eventSource.on(event_types.CHARACTER_PAGE_LOADED, characterGroupOverlay.onPageLoad);
+    console.debug('Character context menu initialized', characterContextMenu);
 }

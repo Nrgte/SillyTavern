@@ -1,6 +1,4 @@
-import { SlashCommandNamedArgumentAutoCompleteOption } from '../slash-commands/SlashCommandNamedArgumentAutoCompleteOption.js';
 import { AutoCompleteOption } from './AutoCompleteOption.js';
-
 
 
 export class AutoCompleteNameResultBase {
@@ -8,8 +6,8 @@ export class AutoCompleteNameResultBase {
     /**@type {number} */ start;
     /**@type {AutoCompleteOption[]} */ optionList = [];
     /**@type {boolean} */ canBeQuoted = false;
-    /**@type {()=>string} */ makeNoMatchText = ()=>`No matches found for "${this.name}"`;
-    /**@type {()=>string} */ makeNoOptionsText = ()=>'No options';
+    /**@type {()=>string} */ makeNoMatchText = () => `No matches found for "${this.name}"`;
+    /**@type {()=>string} */ makeNoOptionsText = () => 'No options';
 
 
     /**
@@ -25,7 +23,7 @@ export class AutoCompleteNameResultBase {
         this.start = start;
         this.optionList = optionList;
         this.canBeQuoted = canBeQuoted;
-        this.noMatchText = makeNoMatchText ?? this.makeNoMatchText;
-        this.noOptionstext = makeNoOptionsText ?? this.makeNoOptionsText;
+        if (makeNoMatchText) this.makeNoMatchText = makeNoMatchText;
+        if (makeNoOptionsText) this.makeNoOptionsText = makeNoOptionsText;
     }
 }

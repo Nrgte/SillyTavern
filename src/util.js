@@ -7,6 +7,8 @@ import { createRequire } from 'node:module';
 import { Buffer } from 'node:buffer';
 import { promises as dnsPromise } from 'node:dns';
 import os from 'node:os';
+import crypto from 'node:crypto';
+import readline from 'node:readline';
 
 import yaml from 'yaml';
 import { sync as commandExistsSync } from 'command-exists';
@@ -15,13 +17,17 @@ import yauzl from 'yauzl';
 import mime from 'mime-types';
 import { default as simpleGit } from 'simple-git';
 import chalk from 'chalk';
-import { LOG_LEVELS } from './constants.js';
 import bytes from 'bytes';
+import { LOG_LEVELS, CHAT_COMPLETION_SOURCES, MEDIA_REQUEST_TYPE } from './constants.js';
+import { serverDirectory } from './server-directory.js';
+import { sync as writeFileAtomicSync } from 'write-file-atomic';
+import { isFirefox } from './express-common.js';
 
 /**
  * Parsed config object.
  */
 let CACHED_CONFIG = null;
+let CONFIG_PATH = null;
 
 /**
  * Converts a configuration key to an environment variable key.
@@ -32,22 +38,37 @@ let CACHED_CONFIG = null;
 export const keyToEnv = (key) => 'SILLYTAVERN_' + String(key).toUpperCase().replace(/\./g, '_');
 
 /**
+ * Set the config file path.
+ * @param {string} configFilePath Path to the config file
+ */
+export function setConfigFilePath(configFilePath) {
+    if (CONFIG_PATH !== null) {
+        console.error(color.red('Config file path already set. Please restart the server to change the config file path.'));
+    }
+    CONFIG_PATH = path.resolve(configFilePath);
+}
+
+/**
  * Returns the config object from the config.yaml file.
  * @returns {object} Config object
  */
 export function getConfig() {
+    if (CONFIG_PATH === null) {
+        console.trace();
+        console.error(color.red('No config file path set. Please set the config file path using setConfigFilePath().'));
+        process.exit(1);
+    }
     if (CACHED_CONFIG) {
         return CACHED_CONFIG;
     }
-
-    if (!fs.existsSync('./config.yaml')) {
+    if (!fs.existsSync(CONFIG_PATH)) {
         console.error(color.red('No config file found. Please create a config.yaml file. The default config file can be found in the /default folder.'));
         console.error(color.red('The program will now exit.'));
         process.exit(1);
     }
 
     try {
-        const config = yaml.parse(fs.readFileSync(path.join(process.cwd(), './config.yaml'), 'utf8'));
+        const config = yaml.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
         CACHED_CONFIG = config;
         return config;
     } catch (error) {
@@ -121,24 +142,22 @@ export async function getVersion() {
 
     try {
         const require = createRequire(import.meta.url);
-        const pkgJson = require(path.join(process.cwd(), './package.json'));
+        const pkgJson = require(path.join(serverDirectory, './package.json'));
         pkgVersion = pkgJson.version;
         if (commandExistsSync('git')) {
-            const git = simpleGit();
-            const cwd = process.cwd();
-            gitRevision = await git.cwd(cwd).revparse(['--short', 'HEAD']);
-            gitBranch = await git.cwd(cwd).revparse(['--abbrev-ref', 'HEAD']);
-            commitDate = await git.cwd(cwd).show(['-s', '--format=%ci', gitRevision]);
+            const git = simpleGit({ baseDir: serverDirectory });
+            gitRevision = await git.revparse(['--short', 'HEAD']);
+            gitBranch = await git.revparse(['--abbrev-ref', 'HEAD']);
+            commitDate = await git.show(['-s', '--format=%ci', gitRevision]);
 
-            const trackingBranch = await git.cwd(cwd).revparse(['--abbrev-ref', '@{u}']);
+            const trackingBranch = await git.revparse(['--abbrev-ref', '@{u}']);
 
             // Might fail, but exception is caught. Just don't run anything relevant after in this block...
-            const localLatest = await git.cwd(cwd).revparse(['HEAD']);
-            const remoteLatest = await git.cwd(cwd).revparse([trackingBranch]);
+            const localLatest = await git.revparse(['HEAD']);
+            const remoteLatest = await git.revparse([trackingBranch]);
             isLatest = localLatest === remoteLatest;
         }
-    }
-    catch {
+    } catch {
         // suppress exception
     }
 
@@ -172,16 +191,11 @@ export function getHexString(length) {
 
 /**
  * Formats a byte size into a human-readable string with units
- * @param {number} bytes - The size in bytes to format
+ * @param {number} numBytes - The size in bytes to format
  * @returns {string} The formatted string (e.g., "1.5 MB")
  */
-export function formatBytes(bytes) {
-    if (bytes === 0) return '0 B';
-
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+export function formatBytes(numBytes) {
+    return bytes.format(numBytes) ?? '';
 }
 
 /**
@@ -191,35 +205,205 @@ export function formatBytes(bytes) {
  * @returns {Promise<Buffer|null>} Buffer containing the extracted file. Null if the file was not found.
  */
 export async function extractFileFromZipBuffer(archiveBuffer, fileExtension) {
-    return await new Promise((resolve, reject) => yauzl.fromBuffer(Buffer.from(archiveBuffer), { lazyEntries: true }, (err, zipfile) => {
-        if (err) reject(err);
+    return await new Promise((resolve) => {
+        try {
+            yauzl.fromBuffer(Buffer.from(archiveBuffer), { lazyEntries: true }, (err, zipfile) => {
+                if (err) {
+                    console.warn(`Error opening ZIP file: ${err.message}`);
+                    return resolve(null);
+                }
 
-        zipfile.readEntry();
-        zipfile.on('entry', (entry) => {
-            if (entry.fileName.endsWith(fileExtension) && !entry.fileName.startsWith('__MACOSX')) {
-                console.info(`Extracting ${entry.fileName}`);
-                zipfile.openReadStream(entry, (err, readStream) => {
-                    if (err) {
-                        reject(err);
+                zipfile.readEntry();
+
+                zipfile.on('entry', (entry) => {
+                    if (entry.fileName.endsWith(fileExtension) && !entry.fileName.startsWith('__MACOSX')) {
+                        zipfile.openReadStream(entry, (err, readStream) => {
+                            if (err) {
+                                console.warn(`Error opening read stream: ${err.message}`);
+                                return zipfile.readEntry();
+                            } else {
+                                const chunks = [];
+                                readStream.on('data', (chunk) => {
+                                    chunks.push(chunk);
+                                });
+
+                                readStream.on('end', () => {
+                                    const buffer = Buffer.concat(chunks);
+                                    resolve(buffer);
+                                    zipfile.readEntry(); // Continue to the next entry
+                                });
+
+                                readStream.on('error', (err) => {
+                                    console.warn(`Error reading stream: ${err.message}`);
+                                    zipfile.readEntry();
+                                });
+                            }
+                        });
                     } else {
+                        zipfile.readEntry();
+                    }
+                });
+
+                zipfile.on('error', (err) => {
+                    console.warn('ZIP processing error', err);
+                    resolve(null);
+                });
+
+                zipfile.on('end', () => resolve(null));
+            });
+        } catch (error) {
+            console.warn('Failed to process ZIP buffer', error);
+            resolve(null);
+        }
+    });
+}
+
+/**
+ * Normalizes a ZIP entry path for safe extraction.
+ * @param {string} entryName The entry name from the ZIP archive
+ * @returns {string|null} Normalized path or null if invalid
+ */
+export function normalizeZipEntryPath(entryName) {
+    if (typeof entryName !== 'string') {
+        return null;
+    }
+
+    let normalized = entryName.replace(/\\/g, '/').trim();
+
+    if (!normalized) {
+        return null;
+    }
+
+    normalized = normalized.replace(/^\.\/+/g, '');
+    normalized = path.posix.normalize(normalized);
+
+    if (!normalized || normalized === '.' || normalized.startsWith('..')) {
+        return null;
+    }
+
+    if (normalized.startsWith('/')) {
+        normalized = normalized.slice(1);
+    }
+
+    return normalized;
+}
+
+/**
+ * Extracts multiple files from an ArrayBuffer containing a ZIP archive.
+ * @param {ArrayBufferLike} archiveBuffer Buffer containing a ZIP archive
+ * @param {string[]} fileNames Array of file paths to extract
+ * @returns {Promise<Map<string, Buffer>>} Map of normalized paths to their extracted buffers
+ */
+export async function extractFilesFromZipBuffer(archiveBuffer, fileNames) {
+    const targets = new Map();
+
+    if (Array.isArray(fileNames)) {
+        for (const fileName of fileNames) {
+            const normalized = normalizeZipEntryPath(fileName);
+            if (normalized && !targets.has(normalized)) {
+                targets.set(normalized, true);
+            }
+        }
+    }
+
+    if (targets.size === 0) {
+        return new Map();
+    }
+
+    return await new Promise((resolve) => {
+        const results = new Map();
+
+        try {
+            yauzl.fromBuffer(Buffer.from(archiveBuffer), { lazyEntries: true }, (err, zipfile) => {
+                if (err) {
+                    console.warn(`Error opening ZIP file: ${err.message}`);
+                    return resolve(results);
+                }
+
+                let finished = false;
+                const finalize = () => {
+                    if (finished) {
+                        return;
+                    }
+                    finished = true;
+                    resolve(results);
+                };
+
+                zipfile.readEntry();
+
+                zipfile.on('entry', (entry) => {
+                    const normalizedEntry = normalizeZipEntryPath(entry.fileName);
+                    if (!normalizedEntry || !targets.has(normalizedEntry)) {
+                        return zipfile.readEntry();
+                    }
+
+                    zipfile.openReadStream(entry, (streamErr, readStream) => {
+                        if (streamErr) {
+                            console.warn(`Error opening read stream: ${streamErr.message}`);
+                            return zipfile.readEntry();
+                        }
+
                         const chunks = [];
                         readStream.on('data', (chunk) => {
                             chunks.push(chunk);
                         });
 
                         readStream.on('end', () => {
-                            const buffer = Buffer.concat(chunks);
-                            resolve(buffer);
-                            zipfile.readEntry(); // Continue to the next entry
+                            results.set(normalizedEntry, Buffer.concat(chunks));
+                            targets.delete(normalizedEntry);
+
+                            if (targets.size === 0) {
+                                finalize();
+                            } else {
+                                zipfile.readEntry();
+                            }
                         });
-                    }
+
+                        readStream.on('error', (streamError) => {
+                            console.warn(`Error reading stream: ${streamError.message}`);
+                            zipfile.readEntry();
+                        });
+                    });
                 });
-            } else {
-                zipfile.readEntry();
-            }
-        });
-        zipfile.on('end', () => resolve(null));
-    }));
+
+                zipfile.on('error', (zipError) => {
+                    console.warn('ZIP processing error', zipError);
+                    finalize();
+                });
+
+                zipfile.on('close', () => {
+                    finalize();
+                });
+
+                zipfile.on('end', () => {
+                    finalize();
+                });
+            });
+        } catch (error) {
+            console.warn('Failed to process ZIP buffer', error);
+            resolve(results);
+        }
+    });
+}
+
+/**
+ * Ensures a directory exists, creating it if necessary.
+ * @param {string} dirPath Path to the directory
+ * @returns {boolean} True if the directory exists or was created, false on error
+ */
+export function ensureDirectory(dirPath) {
+    try {
+        if (!fs.existsSync(dirPath)) {
+            fs.mkdirSync(dirPath, { recursive: true });
+        } else if (!fs.statSync(dirPath).isDirectory()) {
+            console.warn(`ensureDirectory: Path ${dirPath} exists and is not a directory.`);
+            return false;
+        }
+        return true;
+    } catch (error) {
+        console.error(`ensureDirectory: Failed to prepare directory ${dirPath}`, error);
+        return false;
+    }
 }
 
 /**
@@ -245,7 +429,6 @@ export async function getImageBuffers(zipFilePath) {
                 zipfile.on('entry', (entry) => {
                     const mimeType = mime.lookup(entry.fileName);
                     if (mimeType && mimeType.startsWith('image/') && !entry.fileName.startsWith('__MACOSX')) {
-                        console.info(`Extracting ${entry.fileName}`);
                         zipfile.openReadStream(entry, (err, readStream) => {
                             if (err) {
                                 reject(err);
@@ -303,6 +486,20 @@ export async function readAllChunks(readableStream) {
     });
 }
 
+/**
+ * Creates a precisely-sized ArrayBuffer from a Uint8Array view such as a Node Buffer.
+ * This avoids leaking unrelated bytes from the underlying backing store.
+ * @param {Uint8Array} view Source byte view
+ * @returns {ArrayBuffer} Exact ArrayBuffer slice for the provided view
+ */
+export function getArrayBufferSlice(view) {
+    if (!(view instanceof Uint8Array)) {
+        throw new TypeError('Expected Uint8Array');
+    }
+
+    return view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength);
+}
+
 function isObject(item) {
     return (item && typeof item === 'object' && !Array.isArray(item));
 }
@@ -332,9 +529,15 @@ export const color = chalk;
  * @returns {string} A UUIDv4 string
  */
 export function uuidv4() {
+    // Node v16.7.0+
     if ('crypto' in globalThis && 'randomUUID' in globalThis.crypto) {
         return globalThis.crypto.randomUUID();
     }
+    // Node v14.17.0+
+    if ('randomUUID' in crypto) {
+        return crypto.randomUUID();
+    }
+    // Very insecure UUID generator, but it's better than nothing.
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
         const r = Math.random() * 16 | 0;
         const v = c === 'x' ? r : (r & 0x3 | 0x8);
@@ -342,17 +545,27 @@ export function uuidv4() {
     });
 }
 
-export function humanizedISO8601DateTime(date) {
-    let baseDate = typeof date === 'number' ? new Date(date) : new Date();
-    let humanYear = baseDate.getFullYear();
-    let humanMonth = (baseDate.getMonth() + 1);
-    let humanDate = baseDate.getDate();
-    let humanHour = (baseDate.getHours() < 10 ? '0' : '') + baseDate.getHours();
-    let humanMinute = (baseDate.getMinutes() < 10 ? '0' : '') + baseDate.getMinutes();
-    let humanSecond = (baseDate.getSeconds() < 10 ? '0' : '') + baseDate.getSeconds();
-    let humanMillisecond = (baseDate.getMilliseconds() < 10 ? '0' : '') + baseDate.getMilliseconds();
-    let HumanizedDateTime = (humanYear + '-' + humanMonth + '-' + humanDate + ' @' + humanHour + 'h ' + humanMinute + 'm ' + humanSecond + 's ' + humanMillisecond + 'ms');
-    return HumanizedDateTime;
+/**
+ * Gets a humanized date time string from a given timestamp.
+ * @param {number} timestamp Timestamp in milliseconds
+ * @returns {string} Humanized date time string in the format `YYYY-MM-DD@HHhMMmSSsMSms`
+ */
+export function humanizedDateTime(timestamp = Date.now()) {
+    const date = new Date(timestamp);
+    const dt = {
+        year: date.getFullYear(),
+        month: date.getMonth() + 1,
+        day: date.getDate(),
+        hour: date.getHours(),
+        minute: date.getMinutes(),
+        second: date.getSeconds(),
+        millisecond: date.getMilliseconds(),
+    };
+    for (const key in dt) {
+        const padLength = key === 'millisecond' ? 3 : 2;
+        dt[key] = dt[key].toString().padStart(padLength, '0');
+    }
+    return `${dt.year}-${dt.month}-${dt.day}@${dt.hour}h${dt.minute}m${dt.second}s${dt.millisecond}ms`;
 }
 
 export function tryParse(str) {
@@ -376,6 +589,41 @@ export function clientRelativePath(root, inputPath) {
     }
 
     return inputPath.slice(root.length).split(path.sep).join('/');
+}
+
+/**
+ * Returns a name that is unique among the names that exist.
+ * @param {string} baseName The name to check.
+ * @param {{ (name: string): boolean; }} exists Function to check if name exists.
+ * @param {Object} [options] The options.
+ * @param {((baseName: string, i: number) => string)|null} [options.nameBuilder=null] Function to build the name.
+ *        Starts with the index provided by `startIndex` (default is 1). If not provided, uses "${baseName} (${i})".
+ * @param {number} [options.maxTries=1000] The maximum number of tries to find a unique name. Default is 1000.
+ * @param {number} [options.startIndex=1] The index to start with when building the name. Default is 1.
+ *        When set to 0, the intention is to also check if the basename (without applied index) is free.
+ * @returns {string|null} A unique name. Null if no unique name could be found in `maxTries`.
+ */
+export function getUniqueName(baseName, exists, { nameBuilder = null, maxTries = 1000, startIndex = 1 } = {}) {
+    nameBuilder ??= (baseName, i) => i === 0 ? baseName : `${baseName} (${i})`;
+    let i = startIndex;
+    let name;
+    while (i < maxTries + startIndex) {
+        name = nameBuilder(baseName, i);
+        if (!exists(name)) {
+            return name;
+        }
+        i++;
+    }
+    return null;
+}
+
+/**
+ * Provides safe replacements for characters in filenames. Intended for use with sanitize() from the sanitize-filename package.
+ * @param {string} char Character to sanitize
+ * @returns {string} Safe replacement character
+ */
+export function sanitizeSafeCharacterReplacements(char) {
+    return '_';
 }
 
 /**
@@ -419,7 +667,7 @@ export function removeOldBackups(directory, prefix, limit = null) {
                 break;
             }
 
-            fs.rmSync(oldest);
+            fs.unlinkSync(oldest);
         }
     }
 }
@@ -428,41 +676,62 @@ export function removeOldBackups(directory, prefix, limit = null) {
  * Get a list of images in a directory.
  * @param {string} directoryPath Path to the directory containing the images
  * @param {'name' | 'date'} sortBy Sort images by name or date
+ * @param {number} type Bitwise flag representing media types to include
  * @returns {string[]} List of image file names
  */
-export function getImages(directoryPath, sortBy = 'name') {
-    function getSortFunction() {
-        switch (sortBy) {
-            case 'name':
-                return Intl.Collator().compare;
-            case 'date':
-                return (a, b) => fs.statSync(path.join(directoryPath, a)).mtimeMs - fs.statSync(path.join(directoryPath, b)).mtimeMs;
-            default:
-                return (_a, _b) => 0;
-        }
-    }
-
-    return fs
-        .readdirSync(directoryPath)
+export function getImages(directoryPath, sortBy = 'name', type = MEDIA_REQUEST_TYPE.IMAGE) {
+    const files = fs
+        .readdirSync(directoryPath, { withFileTypes: true })
+        .filter(dirent => dirent.isFile())
+        .map(dirent => dirent.name)
         .filter(file => {
-            const type = mime.lookup(file);
-            return type && type.startsWith('image/');
-        })
-        .sort(getSortFunction());
+            const fileType = mime.lookup(file);
+            if (!fileType) {
+                return false;
+            }
+            if ((type & MEDIA_REQUEST_TYPE.IMAGE) && fileType.startsWith('image/')) {
+                return true;
+            }
+            if ((type & MEDIA_REQUEST_TYPE.VIDEO) && fileType.startsWith('video/')) {
+                return true;
+            }
+            if ((type & MEDIA_REQUEST_TYPE.AUDIO) && fileType.startsWith('audio/')) {
+                return true;
+            }
+            return false;
+        });
+
+    switch (sortBy) {
+        case 'name':
+            return files.sort(Intl.Collator().compare);
+        case 'date': {
+            const mtimes = new Map();
+            for (const file of files) {
+                try {
+                    mtimes.set(file, fs.statSync(path.join(directoryPath, file)).mtimeMs);
+                } catch (err) {
+                    if (err?.code !== 'ENOENT') {
+                        throw err;
+                    }
+                    mtimes.set(file, 0);
+                }
+            }
+            return files.sort((a, b) => mtimes.get(a) - mtimes.get(b));
+        }
+        default:
+            return files;
+    }
 }
 
 /**
  * Pipe a fetch() response to an Express.js Response, including status code.
  * @param {import('node-fetch').Response} from The Fetch API response to pipe from.
  * @param {import('express').Response} to The Express response to pipe to.
+ * @returns {Promise<void>}
  */
-export function forwardFetchResponse(from, to) {
+export async function forwardFetchResponse(from, to) {
     let statusCode = from.status;
     let statusText = from.statusText;
-
-    if (!from.ok) {
-        console.warn(`Streaming request failed with status ${statusCode} ${statusText}`);
-    }
 
     // Avoid sending 401 responses as they reset the client Basic auth.
     // This can produce an interesting artifact as "400 Unauthorized", but it's not out of spec.
@@ -475,6 +744,21 @@ export function forwardFetchResponse(from, to) {
 
     to.statusCode = statusCode;
     to.statusMessage = statusText;
+
+    if (!from.ok) {
+        try {
+            const rawErrorText = await from.text();
+            const detail = rawErrorText || 'Unknown error occurred';
+
+            console.warn(`Streaming request failed with status ${from.status} ${statusText}: ${detail}`);
+            to.end(rawErrorText, 'utf-8');
+        } catch {
+            console.warn(`Streaming request failed with status ${from.status} ${statusText}: Unknown error occurred`);
+            to.end();
+        }
+
+        return;
+    }
 
     if (from.body && to.socket) {
         from.body.pipe(to);
@@ -571,8 +855,7 @@ export function mergeObjectWithYaml(obj, yamlString) {
                     Object.assign(obj, item);
                 }
             }
-        }
-        else if (parsedObject && typeof parsedObject === 'object') {
+        } else if (parsedObject && typeof parsedObject === 'object') {
             Object.assign(obj, parsedObject);
         }
     } catch {
@@ -617,6 +900,15 @@ export function excludeKeysByYaml(obj, yamlString) {
  */
 export function trimV1(str) {
     return String(str ?? '').replace(/\/$/, '').replace(/\/v1$/, '');
+}
+
+/**
+ * Removes trailing slash from a string.
+ * @param {string} str Input string
+ * @returns {string} String with trailing slash removed
+ */
+export function trimTrailingSlash(str) {
+    return String(str ?? '').replace(/\/$/, '');
 }
 
 /**
@@ -753,7 +1045,6 @@ export async function canResolve(name, useIPv6 = true, useIPv4 = true) {
         }
 
         return v6Resolved || v4Resolved;
-
     } catch (error) {
         return false;
     }
@@ -1049,8 +1340,261 @@ export function safeReadFileSync(filePath, options = { encoding: 'utf-8' }) {
 export function setWindowTitle(title) {
     if (process.platform === 'win32') {
         process.title = title;
-    }
-    else {
+    } else {
         process.stdout.write(`\x1b]2;${title}\x1b\x5c`);
+    }
+}
+
+/**
+ * Parses a JSON string and applies a mutation function to the parsed object.
+ * @param {string} jsonString JSON string to parse
+ * @param {function(any): void} mutation Mutation function to apply to the parsed JSON object
+ * @returns {string} Mutated JSON string
+ */
+export function mutateJsonString(jsonString, mutation) {
+    try {
+        const json = JSON.parse(jsonString);
+        mutation(json);
+        return JSON.stringify(json);
+    } catch (error) {
+        console.error('Error parsing or mutating JSON:', error);
+        return jsonString;
+    }
+}
+
+/**
+ * Sets the permissions of a file or directory to be writable.
+ * @param {string} targetPath Path to the file or directory
+ */
+export function setPermissionsSync(targetPath) {
+    /**
+     * Appends writable permission to the file mode.
+     * @param {string} filePath Path to the file
+     * @param {fs.Stats} stats File stats
+     */
+    function appendWritablePermission(filePath, stats) {
+        const currentMode = stats.mode;
+        const newMode = currentMode | 0o200;
+        if (newMode != currentMode) {
+            fs.chmodSync(filePath, newMode);
+        }
+    }
+
+    try {
+        const stats = fs.statSync(targetPath);
+
+        if (stats.isDirectory()) {
+            appendWritablePermission(targetPath, stats);
+            const files = fs.readdirSync(targetPath);
+
+            files.forEach((file) => {
+                setPermissionsSync(path.join(targetPath, file));
+            });
+        } else {
+            appendWritablePermission(targetPath, stats);
+        }
+    } catch (error) {
+        console.error(`Error setting write permissions for ${targetPath}:`, error);
+    }
+}
+
+/**
+ * Checks if a child path is under a parent path.
+ * @param {string} parentPath Parent path
+ * @param {string} childPath Child path
+ * @returns {boolean} Returns true if the child path is under the parent path, false otherwise
+ */
+export function isPathUnderParent(parentPath, childPath) {
+    const normalizedParent = path.normalize(parentPath);
+    const normalizedChild = path.normalize(childPath);
+
+    const relativePath = path.relative(normalizedParent, normalizedChild);
+
+    return relativePath !== '..' && !relativePath.startsWith('..' + path.sep) && !path.isAbsolute(relativePath);
+}
+
+/**
+ * Checks if the given request is a file URL.
+ * @param {string | URL | Request} request The request to check
+ * @return {boolean} Returns true if the request is a file URL, false otherwise
+ */
+export function isFileURL(request) {
+    if (typeof request === 'string') {
+        return request.startsWith('file://');
+    }
+    if (request instanceof URL) {
+        return request.protocol === 'file:';
+    }
+    if (request instanceof Request) {
+        return request.url.startsWith('file://');
+    }
+    return false;
+}
+
+/**
+ * Gets the URL from the request.
+ * @param {string | URL | Request} request The request to get the URL from
+ * @return {string} The URL of the request
+ */
+export function getRequestURL(request) {
+    if (typeof request === 'string') {
+        return request;
+    }
+    if (request instanceof URL) {
+        return request.href;
+    }
+    if (request instanceof Request) {
+        return request.url;
+    }
+    throw new TypeError('Invalid request type');
+}
+
+/**
+ * Flattens and simplifies a JSON schema to be compatible with the strict requirements
+ * of Google's Generative AI API.
+ * @param {object} schema The JSON schema to process.
+ * @param {string} api The API source.
+ * @returns {object} The flattened and simplified schema.
+ */
+export function flattenSchema(schema, api) {
+    if (!schema || typeof schema !== 'object') {
+        return schema;
+    }
+
+    const schemaCopy = structuredClone(schema);
+    const isGoogleApi = [CHAT_COMPLETION_SOURCES.VERTEXAI, CHAT_COMPLETION_SOURCES.MAKERSUITE].includes(api);
+
+    const definitions = schemaCopy.$defs || {};
+    delete schemaCopy.$defs;
+
+    function resolve(obj, parents = []) {
+        if (!obj || typeof obj !== 'object') {
+            return obj;
+        }
+        if (Array.isArray(obj)) {
+            return obj.map(item => resolve(item, parents));
+        }
+
+        // 1. Resolve $refs first
+        if (obj.$ref?.startsWith('#/$defs/')) {
+            const defName = obj.$ref.split('/').pop();
+            if (parents.includes(defName)) return {}; // Prevent infinite recursion
+            if (definitions[defName]) {
+                return resolve(structuredClone(definitions[defName]), [...parents, defName]);
+            }
+            return {}; // Broken reference
+        }
+
+        // 2. Process the object's properties
+        const result = {};
+        for (const key in obj) {
+            if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
+
+            // For Google, filter unsupported top-level keywords
+            if (isGoogleApi && ['default', 'additionalProperties', 'exclusiveMinimum', 'propertyNames'].includes(key)) {
+                continue;
+            }
+
+            result[key] = resolve(obj[key], parents);
+        }
+
+        return result;
+    }
+
+    const flattenedSchema = resolve(schemaCopy);
+    delete flattenedSchema.$schema;
+    return flattenedSchema;
+}
+
+/**
+ * Writes to a file, creating it's parent directories if needed.
+ * @param {string} filePath
+ * @param {string} data
+ */
+export function tryWriteFileSync(filePath, data) {
+    const directory = path.dirname(filePath);
+    //Ensure the directory exists.
+    if (!fs.existsSync(directory)) {
+        fs.mkdirSync(directory, { recursive: true });
+    }
+    writeFileAtomicSync(filePath, data, 'utf8');
+}
+
+/**
+* Attempts to read a file as utf8.
+* @param {string} filePath
+* @returns {string|null}
+*/
+export function tryReadFileSync(filePath) {
+    try {
+        if (fs.existsSync(filePath)) {
+            return fs.readFileSync(filePath, 'utf8');
+        }
+    } catch (error) {
+        console.error(`Error reading ${filePath}: ${error.message}`);
+    }
+    return null;
+}
+
+/**
+* Attempts to delete a file.
+* @param {string} filePath Target file.
+* @returns {boolean} Returns true if the file was found and deleted.
+*/
+export function tryDeleteFile(filePath) {
+    if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        console.info(`Deleted file: ${filePath}`);
+        return true;
+    } else {
+        console.error(`File not found '${filePath}'`);
+        return false;
+    }
+}
+
+/**
+ * Reads the first line of a file asynchronously.
+ * @param {string} filePath Path to the file
+ * @returns {Promise<string>} The first line of the file
+ */
+export function readFirstLine(filePath) {
+    const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
+    const rl = readline.createInterface({ input: stream });
+    return new Promise((resolve, reject) => {
+        let resolved = false;
+        rl.on('line', line => {
+            resolved = true;
+            rl.close();
+            stream.close();
+            resolve(line);
+        });
+
+        rl.on('error', error => {
+            resolved = true;
+            reject(error);
+        });
+
+        // Handle empty files
+        stream.on('end', () => {
+            if (!resolved) {
+                resolved = true;
+                resolve('');
+            }
+        });
+    });
+}
+
+/**
+ * If the file is an image, and the request's user agent matches Firefox, then the response's headers are set to invalidate the cache.
+ * Without this, Firefox ignores updated images even after a refresh.
+ * https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Cache-Control
+ * @param {string} file File path
+ * @param {import('express').Request} request Request object
+ * @param {import('express').Response} response Response object
+ */
+export function invalidateFirefoxCache(file, request, response) {
+    const mimeType = isFirefox(request) && mime.lookup(file);
+    if (mimeType && mimeType.startsWith('image/')) {
+        response.setHeader('Cache-Control', 'must-understand, no-store');
     }
 }

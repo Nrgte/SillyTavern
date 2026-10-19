@@ -1,10 +1,12 @@
 import fetch from 'node-fetch';
 import express from 'express';
+import ipRegex from 'ip-regex';
 
 import { decode } from 'html-entities';
 import { readSecret, SECRET_KEYS } from './secrets.js';
 import { trimV1 } from '../util.js';
 import { setAdditionalHeaders } from '../additional-headers.js';
+import { getUntrustedRequestAgent } from '../private-request-filter.js';
 
 export const router = express.Router();
 
@@ -51,7 +53,7 @@ async function extractTranscript(videoPageBody, lang) {
         } catch (e) {
             return undefined;
         }
-    })()?.['playerCaptionsTracklistRenderer'];
+    })()?.playerCaptionsTracklistRenderer;
 
     if (!captions) {
         throw new Error('Transcript disabled');
@@ -341,6 +343,52 @@ router.post('/serper', async (request, response) => {
     }
 });
 
+router.post('/zai', async (request, response) => {
+    try {
+        const key = readSecret(request.user.directories, SECRET_KEYS.ZAI);
+
+        if (!key) {
+            console.error('No Z.AI key found');
+            return response.sendStatus(400);
+        }
+
+        const { query } = request.body;
+
+        if (!query) {
+            console.error('No query provided for /zai');
+            return response.sendStatus(400);
+        }
+
+        console.debug('Z.AI web search query', query);
+
+        const result = await fetch('https://api.z.ai/api/paas/v4/web_search', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${key}`,
+            },
+            body: JSON.stringify({
+                // TODO: There's only one engine option for now
+                search_engine: 'search-prime',
+                search_query: query,
+            }),
+        });
+
+        if (!result.ok) {
+            const text = await result.text();
+            console.error('Z.AI request failed', result.statusText, text);
+            return response.status(500).send(text);
+        }
+
+        const data = await result.json();
+        console.debug('Z.AI web search response', data);
+        return response.json(data);
+    } catch (error) {
+        console.error(error);
+        return response.sendStatus(500);
+    }
+});
+
 router.post('/visit', async (request, response) => {
     try {
         const url = request.body.url;
@@ -369,8 +417,14 @@ router.post('/visit', async (request, response) => {
                 throw new Error('Invalid port');
             }
 
-            // Reject IP addresses
-            if (urlObj.hostname.match(/^\d+\.\d+\.\d+\.\d+$/)) {
+            // Reject IP addresses. A bracketed IPv6 literal keeps its brackets in URL.hostname.
+            const bareHostname = urlObj.hostname.replace(/^\[|\]$/g, '');
+            if (ipRegex.v4({ exact: true }).test(bareHostname) || ipRegex.v6({ exact: true }).test(bareHostname)) {
+                throw new Error('Invalid hostname');
+            }
+
+            // Reject localhost and .localhost domains to prevent SSRF bypass
+            if (urlObj.hostname === 'localhost' || urlObj.hostname.endsWith('.localhost')) {
                 throw new Error('Invalid hostname');
             }
         } catch (error) {
@@ -380,7 +434,10 @@ router.post('/visit', async (request, response) => {
 
         console.info('Visiting web URL', url);
 
-        const result = await fetch(url, { headers: visitHeaders });
+        // The URL checks above only guard the literal input. The agent enforces the actual network
+        // boundary: it blocks connections to private addresses after DNS resolution, on every redirect
+        // hop, and pins the connection to the validated IP to prevent DNS rebinding.
+        const result = await fetch(url, { headers: visitHeaders, agent: getUntrustedRequestAgent() });
 
         if (!result.ok) {
             console.error(`Visit failed ${result.status} ${result.statusText}`);

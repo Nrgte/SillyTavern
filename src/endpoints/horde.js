@@ -87,7 +87,7 @@ async function mergeModelsAndMetadata(models, metadata) {
     return models.map(model => {
         const metadataModel = metadata[model.name];
         if (!metadataModel) {
-            return  { ...model, is_whitelisted: false };
+            return { ...model, is_whitelisted: false };
         }
         return { ...model, ...metadataModel, is_whitelisted: true };
     });
@@ -113,8 +113,7 @@ router.post('/text-models', async (request, response) => {
         try {
             const metadata = await getHordeTextModelMetadata();
             data = await mergeModelsAndMetadata(data, metadata);
-        }
-        catch (error) {
+        } catch (error) {
             console.error('Failed to fetch metadata:', error);
         }
 
@@ -256,7 +255,6 @@ router.post('/caption-image', async (request, response) => {
             console.info(status);
 
             if (status.state === HordeAsyncRequestStates.done) {
-
                 if (status.forms === undefined) {
                     console.error('Image interrogation request failed: no forms found.');
                     return response.sendStatus(500);
@@ -278,7 +276,6 @@ router.post('/caption-image', async (request, response) => {
                 return response.sendStatus(503);
             }
         }
-
     } catch (error) {
         console.error(error);
         response.sendStatus(500);
@@ -294,8 +291,15 @@ router.post('/user-info', async (request, response) => {
 
     try {
         const ai_horde = await getHordeClient();
+        const sharedKey = await (async () => {
+            try {
+                return await ai_horde.getSharedKey(api_key_horde);
+            } catch {
+                return null;
+            }
+        })();
         const user = await ai_horde.findUser({ token: api_key_horde });
-        return response.send(user);
+        return response.send({ user, sharedKey, anonymous: false });
     } catch (error) {
         console.error(error);
         return response.sendStatus(500);

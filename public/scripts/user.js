@@ -1,5 +1,6 @@
 import { getRequestHeaders } from '../script.js';
 import { POPUP_RESULT, POPUP_TYPE, callGenericPopup } from './popup.js';
+import { canViewSecrets } from './secrets.js';
 import { renderTemplateAsync } from './templates.js';
 import { ensureImageFormatSupported, getBase64Async, humanFileSize } from './utils.js';
 
@@ -9,8 +10,8 @@ import { ensureImageFormatSupported, getBase64Async, humanFileSize } from './uti
 export let currentUser = null;
 export let accountsEnabled = false;
 
-// Extend the session every 30 minutes
-const SESSION_EXTEND_INTERVAL = 30 * 60 * 1000;
+// Extend the session every 10 minutes
+const SESSION_EXTEND_INTERVAL = 10 * 60 * 1000;
 
 /**
  * Enable or disable user account controls in the UI.
@@ -83,7 +84,7 @@ async function getUsers() {
     try {
         const response = await fetch('/api/users/get', {
             method: 'POST',
-            headers: getRequestHeaders(),
+            headers: getRequestHeaders({ omitContentType: true }),
         });
 
         if (!response.ok) {
@@ -266,6 +267,11 @@ async function backupUserData(handle, callback) {
             throw new Error('Failed to backup user data');
         }
 
+        const includesSecrets = await canViewSecrets();
+        if (includesSecrets === false) {
+            toastr.warning('The backup will not include secrets due to a server configuration.', 'Secrets Not Included');
+        }
+
         const blob = await response.blob();
         const header = response.headers.get('Content-Disposition');
         const parts = header.split(';');
@@ -327,8 +333,7 @@ async function changePassword(handle, callback) {
 
         toastr.success('Password changed successfully', 'Password Changed');
         callback();
-    }
-    catch (error) {
+    } catch (error) {
         console.error('Error changing password:', error);
     }
 }
@@ -455,7 +460,6 @@ async function changeName(handle, name, callback) {
 
         toastr.success('Name changed successfully', 'Name Changed');
         callback();
-
     } catch (error) {
         console.error('Error changing name:', error);
     }
@@ -495,7 +499,6 @@ async function restoreSnapshot(name, callback) {
     } catch (error) {
         console.error('Error restoring snapshot:', error);
     }
-
 }
 
 /**
@@ -535,7 +538,7 @@ async function getSnapshots() {
     try {
         const response = await fetch('/api/settings/get-snapshots', {
             method: 'POST',
-            headers: getRequestHeaders(),
+            headers: getRequestHeaders({ omitContentType: true }),
         });
 
         if (!response.ok) {
@@ -561,7 +564,7 @@ async function makeSnapshot(callback) {
     try {
         const response = await fetch('/api/settings/make-snapshot', {
             method: 'POST',
-            headers: getRequestHeaders(),
+            headers: getRequestHeaders({ omitContentType: true }),
         });
 
         if (!response.ok) {
@@ -601,7 +604,6 @@ async function viewSettingsSnapshots() {
                     const content = await loadSnapshotContent(snapshot.name);
                     contentBlock.val(content);
                 }
-
             });
             template.find('.snapshotList').append(snapshotBlock);
         }
@@ -620,7 +622,7 @@ async function resetEverything(callback) {
     try {
         const step1Response = await fetch('/api/users/reset-step1', {
             method: 'POST',
-            headers: getRequestHeaders(),
+            headers: getRequestHeaders({ omitContentType: true }),
         });
 
         if (!step1Response.ok) {
@@ -667,7 +669,6 @@ async function resetEverything(callback) {
     } catch (error) {
         console.error('Error resetting everything:', error);
     }
-
 }
 
 async function openUserProfile() {
@@ -860,7 +861,7 @@ async function openAdminPanel() {
 async function logout() {
     await fetch('/api/users/logout', {
         method: 'POST',
-        headers: getRequestHeaders(),
+        headers: getRequestHeaders({ omitContentType: true }),
     });
 
     // On an explicit logout stop auto login
@@ -903,8 +904,8 @@ async function slugify(text) {
 async function extendUserSession() {
     try {
         const response = await fetch('/api/ping?extend=1', {
-            method: 'GET',
-            headers: getRequestHeaders(),
+            method: 'POST',
+            headers: getRequestHeaders({ omitContentType: true }),
         });
 
         if (!response.ok) {
