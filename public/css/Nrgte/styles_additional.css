@@ -1,0 +1,85 @@
+/*
+ * fork: additional fork-local styles (theme-aware scrollbars,
+ * floating window stacking order).
+ *
+ * Kept in a separate file, loaded in index.html immediately after
+ * style.css, so that style.css stays pristine and easy to merge
+ * with upstream. Cascade position matches appending to style.css.
+ */
+
+/* =====================================================================
+   fork: theme-aware scrollbars
+   Upstream paints the thumb light grey (--grey7070a) and leaves the track
+   to the light `color-scheme` default (see `body { color-scheme: only light }`),
+   which reads as a glaring white bar on the dark themes.
+   Derive the colors from the theme's main text color instead, so any theme
+   (dark or light) gets scrollbars that fit its palette.
+   Colors are overridden only; the upstream geometry (width, radius, border,
+   min size, cursors) is left untouched.
+   ===================================================================== */
+:root {
+    --fork--scrollbar-thumb: color-mix(in srgb, var(--SmartThemeBodyColor) 40%, transparent);
+    --fork--scrollbar-thumb-hover: color-mix(in srgb, var(--SmartThemeBodyColor) 60%, transparent);
+    --fork--scrollbar-track: transparent;
+    --fork--scrollbar-track-hover: color-mix(in srgb, var(--SmartThemeBodyColor) 12%, transparent);
+
+    /* Standard properties for engines without ::-webkit-scrollbar (Firefox).
+       scrollbar-color IS inherited, so it recolors every scrollable element there.
+       scrollbar-width is NOT inherited, and on Chrome 121+ a non-auto value on an
+       element disables its ::-webkit-scrollbar styling (this is what broke ST's
+       scrollbars in Chrome 121, see upstream issue #1762) — so it must stay on
+       :root, where it only affects the viewport scroller. Never set it on inner
+       elements. */
+    scrollbar-color: var(--fork--scrollbar-thumb) var(--fork--scrollbar-track);
+    scrollbar-width: thin;
+}
+
+::-webkit-scrollbar-track {
+    background-color: var(--fork--scrollbar-track);
+}
+
+::-webkit-scrollbar-track:hover {
+    background-color: var(--fork--scrollbar-track-hover);
+}
+
+::-webkit-scrollbar-thumb:vertical,
+::-webkit-scrollbar-thumb:horizontal {
+    background-color: var(--fork--scrollbar-thumb);
+}
+
+::-webkit-scrollbar-thumb:vertical:hover,
+::-webkit-scrollbar-thumb:horizontal:hover {
+    background-color: var(--fork--scrollbar-thumb-hover);
+}
+
+/* =====================================================================
+   fork: floating window stacking order
+   `#top-settings-holder` is a stacking context (position: relative,
+   z-index: 3005), so everything inside it — the nav drawers (AI
+   Response Config, characters/personas), the chat history modal,
+   message confirms, the export format dropdown, the background
+   selection menu — is capped at 3005 from the outside and renders
+   BEHIND the `#movingDivs` windows (z-index: 4000, e.g. the group
+   member list popout). The existing `:has()` escape hatch only
+   raises the holder for the character popup and non-fill drawers.
+   Raise the whole holder to the same 4005 tier so panels inside it
+   draw in front of detached windows (this also keeps the top-bar
+   toggles clickable when a floating window covers the top row).
+   `#groupMemberListPopout` gets one tier below the other
+   `#movingDivs` windows (Author's Note, gallery, memory, zoomed
+   avatars): they all share z-index: 4000 and equal values fall back
+   to DOM order, and the member list is (re-)appended last on every
+   open, so it currently ends up in front of them all.
+   Desktop-only: at the mobile breakpoint (max-width: 1000px) the
+   `#movingDivs` windows are full-screen sheets, where the
+   last-appended one being on top is the wanted behavior.
+   ===================================================================== */
+#top-settings-holder {
+    z-index: 4005;
+}
+
+@media screen and (min-width: 1001px) {
+    #movingDivs>#groupMemberListPopout {
+        z-index: 3999;
+    }
+}

@@ -34,6 +34,8 @@
     <link rel="apple-touch-icon" sizes="114x114" href="img/apple-icon-114x114.png" />
     <link rel="apple-touch-icon" sizes="144x144" href="img/apple-icon-144x144.png" />
     <link rel="stylesheet" type="text/css" href="style.css">
+    <!-- fork: additional fork-local styles (kept out of style.css so it stays pristine for upstream merges) -->
+    <link rel="stylesheet" type="text/css" href="css/Nrgte/styles_additional.css">
     <link rel="stylesheet" type="text/css" href="css/st-tailwind.css">
     <link rel="stylesheet" type="text/css" href="css/rm-groups.css">
     <link rel="stylesheet" type="text/css" href="css/group-avatars.css">
@@ -8216,6 +8218,8 @@
     <script type="module" src="lib/eventemitter.js"></script>
     <script type="module" src="scripts/i18n.js"></script>
     <script type="module" src="script.js"></script>
+    <!-- fork: Nrgte-owned runtime identity guard (nothing else imports it) -->
+    <script type="module" src="scripts/Nrgte/identity-guard.js"></script>
     <script>
         window.addEventListener('load', (event) => {
             const documentHeight = () => {

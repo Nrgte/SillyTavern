@@ -56,6 +56,10 @@
     flex-direction: column;
     padding: 0;
     z-index: 31;
+    /* fork: dock to top-left instead of bottom-left, which is covered by the group member list popout (#movingDivs>div, z-index 4000) */
+    top: 0;
+    bottom: auto;
+    left: 0;
 
     >.qr--header {
         flex: 0 0 auto;
@@ -75,6 +79,9 @@
 
     >.qr--body {
         overflow-y: auto;
+        /* fork: reserve room for the colored set's 5px inset via padding so the margin never overflows the fixed popout width (would add a horizontal scrollbar) */
+        padding-left: 5px;
+        padding-right: 5px;
     }
 }
 

@@ -74,9 +74,26 @@ export class QuickReplySet {
             this.dom.append(qr.render());
         });
     }
+    /**
+     * fork: the color picker can save fully transparent colors like 'rgba(233, 69, 69, 0)'.
+     * Those slip past the literal 'transparent' check in updateColor() and would still apply the
+     * qr--color class, whose 5px inset margin overflows the fixed-width popout and produces an
+     * unnecessary horizontal scrollbar.
+     */
+    static isTransparentColor(color) {
+        if (!color || color === 'transparent' || color === 'none') {
+            return true;
+        }
+        const m = /rgba?\(\s*[\d.]+%?\s*,\s*[\d.]+%?\s*,\s*[\d.]+%?\s*(?:\/|,)\s*([\d.]+%?)\s*\)/i.exec(color);
+        if (m) {
+            return parseFloat(m[1]) === 0;
+        }
+        return false;
+    }
+
     updateColor() {
         if (!this.dom) return;
-        if (this.color && this.color != 'transparent') {
+        if (this.color && !QuickReplySet.isTransparentColor(this.color)) {
             this.dom.style.setProperty('--qr--color', this.color);
             this.dom.classList.add('qr--color');
             if (this.onlyBorderColor) {
