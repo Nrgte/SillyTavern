@@ -1,6 +1,6 @@
 /*
  * fork: additional fork-local styles (theme-aware scrollbars,
- * floating window stacking order).
+ * floating window stacking order, mid-generation message editing).
  *
  * Kept in a separate file, loaded in index.html immediately after
  * style.css, so that style.css stays pristine and easy to merge
@@ -82,4 +82,30 @@
     #movingDivs>#groupMemberListPopout {
         z-index: 3999;
     }
+}
+
+/* =====================================================================
+   fork: keep user messages editable while a generation is in flight
+   Upstream hides the action bar of the LAST message while
+   body[data-generating]/body[data-swiping] is set (see the
+   `body:is([data-generating...], [data-swiping...])` rule in
+   style.css). With the default non-streaming generation the
+   character's reply does not exist in the DOM until the request
+   completes, so the user's just-sent message IS the last message
+   for the whole request and its edit pencil disappears — even
+   though editing it cannot affect the in-flight response (the
+   prompt was already assembled and sent before is_send_press was
+   set). The only genuine conflict is the in-progress streaming
+   message, which is always the last message and never a user
+   message, so re-show the bar only when the last message carries
+   is_user="true" (set on every .mes by updateMessageElement).
+   This rule outranks the upstream one on specificity
+   (1 id + 4 class-level vs 1 id + 3), and this file loads after
+   style.css anyway, so no !important is needed.
+   `display: flex` restores the normal cascade value for both
+   elements (.mes_buttons sets it itself; .mes_reasoning_actions
+   gets it from .flex-container in st-tailwind.css).
+   ===================================================================== */
+body:is([data-generating="true"], [data-swiping="true"]) #chat .last_mes[is_user="true"] :is(.mes_buttons, .mes_reasoning_actions) {
+    display: flex;
 }

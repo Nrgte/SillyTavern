@@ -1,0 +1,98 @@
+/* Lorebook Insight extension */
+
+/* Per-message button inside the extra message actions row */
+.lb_insight_button {
+    color: var(--theme2, #707070);
+}
+
+.lb_insight_button:hover {
+    color: var(--theme2, #a0a0a0);
+}
+
+/* Popup content */
+.lb_insight_popup {
+    max-height: 65vh;
+    overflow-y: auto;
+    padding: 4px 6px;
+}
+
+.lb_insight_popup h3 {
+    margin-top: 0;
+}
+
+.lb_insight_item {
+    border: 1px solid var(--border_color, #444);
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+}
+
+.lb_insight_item_header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.lb_insight_item_book {
+    font-weight: bold;
+    overflow-wrap: anywhere;
+}
+
+.lb_insight_item_uid {
+    color: var(--dim_text, #999);
+    flex-shrink: 0;
+}
+
+.lb_insight_item_line {
+    margin-top: 4px;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+
+.lb_insight_item_label {
+    color: var(--dim_text, #999);
+    margin-right: 4px;
+}
+
+.lb_insight_item_comment {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid var(--border_color, #444);
+    color: var(--dim_text, #aaa);
+    overflow-wrap: anywhere;
+}
+
+/* Activation-reason badge */
+.lb_insight_activation {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    margin-top: 6px;
+}
+
+.lb_insight_activation_type {
+    font-size: 0.75em;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 1px 8px;
+    border-radius: 9px;
+    background: var(--input_background, #333);
+    border: 1px solid var(--border_color, #555);
+    color: var(--theme2, #aaa);
+}
+
+.lb_insight_kw {
+    font-family: monospace;
+    font-size: 0.9em;
+    padding: 0 4px;
+    border-radius: 4px;
+    background: var(--input_background, #333);
+}
+
+.lb_insight_dim {
+    color: var(--dim_text, #999);
+    font-size: 0.9em;
+}
